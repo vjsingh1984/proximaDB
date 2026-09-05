@@ -13,66 +13,52 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-if TYPE_CHECKING:
-    from ..models.batch_edges_response_data import BatchEdgesResponseData
-
-
-T = TypeVar("T", bound="BatchEdgesResponse")
+T = TypeVar("T", bound="GraphComponentsData")
 
 
 @_attrs_define
-class BatchEdgesResponse:
-    """Server returns a `GraphResponse<BatchResults<Edge>>` envelope.
-
+class GraphComponentsData:
+    """
     Attributes:
-        success (bool | Unset):
-        data (BatchEdgesResponseData | Unset):
+        components (list[list[str]]):
     """
 
-    success: bool | Unset = UNSET
-    data: BatchEdgesResponseData | Unset = UNSET
+    components: list[list[str]]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.batch_edges_response_data import BatchEdgesResponseData
+        components = []
+        for components_item_data in self.components:
+            components_item = components_item_data
 
-        success = self.success
-
-        data: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.data, Unset):
-            data = self.data.to_dict()
+            components.append(components_item)
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({})
-        if success is not UNSET:
-            field_dict["success"] = success
-        if data is not UNSET:
-            field_dict["data"] = data
+        field_dict.update(
+            {
+                "components": components,
+            }
+        )
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.batch_edges_response_data import BatchEdgesResponseData
-
         d = dict(src_dict)
-        success = d.pop("success", UNSET)
+        components = []
+        _components = d.pop("components")
+        for components_item_data in _components:
+            components_item = cast(list[str], components_item_data)
 
-        _data = d.pop("data", UNSET)
-        data: BatchEdgesResponseData | Unset
-        if isinstance(_data, Unset):
-            data = UNSET
-        else:
-            data = BatchEdgesResponseData.from_dict(_data)
+            components.append(components_item)
 
-        batch_edges_response = cls(
-            success=success,
-            data=data,
+        graph_components_data = cls(
+            components=components,
         )
 
-        batch_edges_response.additional_properties = d
-        return batch_edges_response
+        graph_components_data.additional_properties = d
+        return graph_components_data
 
     @property
     def additional_keys(self) -> list[str]:

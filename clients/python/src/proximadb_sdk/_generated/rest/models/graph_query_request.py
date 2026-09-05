@@ -13,83 +13,72 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="EmbeddingInput")
+T = TypeVar("T", bound="GraphQueryRequest")
 
 
 @_attrs_define
-class EmbeddingInput:
+class GraphQueryRequest:
     """
     Attributes:
-        vector (list[float]):
-        model_id (None | str | Unset):
-        modality (None | str | Unset):
+        query (str):
+        language (str | Unset): Accepted but currently unused server-side. Default: 'native'.
+        timeout_ms (int | None | Unset): Accepted but currently unused server-side.
     """
 
-    vector: list[float]
-    model_id: None | str | Unset = UNSET
-    modality: None | str | Unset = UNSET
+    query: str
+    language: str | Unset = "native"
+    timeout_ms: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        vector = self.vector
+        query = self.query
 
-        model_id: None | str | Unset
-        if isinstance(self.model_id, Unset):
-            model_id = UNSET
-        else:
-            model_id = self.model_id
+        language = self.language
 
-        modality: None | str | Unset
-        if isinstance(self.modality, Unset):
-            modality = UNSET
+        timeout_ms: int | None | Unset
+        if isinstance(self.timeout_ms, Unset):
+            timeout_ms = UNSET
         else:
-            modality = self.modality
+            timeout_ms = self.timeout_ms
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "vector": vector,
+                "query": query,
             }
         )
-        if model_id is not UNSET:
-            field_dict["model_id"] = model_id
-        if modality is not UNSET:
-            field_dict["modality"] = modality
+        if language is not UNSET:
+            field_dict["language"] = language
+        if timeout_ms is not UNSET:
+            field_dict["timeout_ms"] = timeout_ms
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        vector = cast(list[float], d.pop("vector"))
+        query = d.pop("query")
 
-        def _parse_model_id(data: object) -> None | str | Unset:
+        language = d.pop("language", UNSET)
+
+        def _parse_timeout_ms(data: object) -> int | None | Unset:
             if data is None:
                 return data
             if isinstance(data, Unset):
                 return data
-            return cast(None | str | Unset, data)
+            return cast(int | None | Unset, data)
 
-        model_id = _parse_model_id(d.pop("model_id", UNSET))
+        timeout_ms = _parse_timeout_ms(d.pop("timeout_ms", UNSET))
 
-        def _parse_modality(data: object) -> None | str | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            return cast(None | str | Unset, data)
-
-        modality = _parse_modality(d.pop("modality", UNSET))
-
-        embedding_input = cls(
-            vector=vector,
-            model_id=model_id,
-            modality=modality,
+        graph_query_request = cls(
+            query=query,
+            language=language,
+            timeout_ms=timeout_ms,
         )
 
-        embedding_input.additional_properties = d
-        return embedding_input
+        graph_query_request.additional_properties = d
+        return graph_query_request
 
     @property
     def additional_keys(self) -> list[str]:

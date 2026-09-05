@@ -369,6 +369,146 @@ def test_catalog_routing_surface_has_the_complete_operation_set(openapi_spec):
         )
 
 
+def test_graph_surface_has_the_complete_operation_set(openapi_spec):
+    """TD-SPECRAT-1 wave 6: graph surface — envelope-corrected + gap ops."""
+    expected_operations = {
+        "createGraph",
+        "listGraphs",
+        "getGraph",
+        "deleteGraph",
+        "updateGraphSchema",
+        "createNode",
+        "getNode",
+        "updateNode",
+        "deleteNode",
+        "getNodeNeighbors",
+        "createEdge",
+        "getEdge",
+        "updateEdge",
+        "deleteEdge",
+        "batchCreateNodes",
+        "batchCreateEdges",
+        "traverseGraph",
+        "walkGraph",
+        "stepGraph",
+        "shortestPath",
+        "executeGraphQuery",
+        "queryNodes",
+        "queryEdges",
+        "getConnectedComponents",
+        "checkCycles",
+        "addUniqueConstraint",
+        "removeUniqueConstraint",
+        "getGraphStats",
+        # The two utoipa-annotated ops (root crate, drift-gated core —
+        # NOT the supplement): counted in the 23 paths.
+        "fusion_search_v2",
+        "impact_analysis_v2",
+    }
+    graph_paths = {
+        path: item
+        for path, item in openapi_spec["paths"].items()
+        if path.startswith("/api/v2/graphs")
+    }
+    actual_operations = {
+        operation["operationId"]
+        for item in graph_paths.values()
+        for method, operation in item.items()
+        if method in {"get", "put", "post", "delete", "patch"}
+    }
+
+    assert len(graph_paths) == 23
+    assert actual_operations == expected_operations
+
+    # Wave 6 corrected the published response shape: every graph op
+    # returns the {success, data?, error?, metadata?} envelope. The
+    # previously-published FLAT models could not parse the real wire
+    # format — pin the envelope + payload property sets so neither can
+    # silently regress.
+    schemas = openapi_spec["components"]["schemas"]
+    envelope = {"success", "data", "error", "metadata"}
+    for envelope_schema in (
+        "GraphNodeResponse",
+        "GraphEdgeResponse",
+        "GraphNodeListResponse",
+        "GraphCollectionResponse",
+        "GraphCollectionListResponse",
+        "GraphTraversalResponse",
+        "GraphStatsResponse",
+        "GraphBatchNodesResponse",
+        "GraphBatchEdgesResponse",
+        "GraphNodeQueryResponse",
+        "GraphEdgeQueryResponse",
+        "GraphShortestPathResponse",
+        "GraphQueryResponse",
+        "GraphComponentsResponse",
+        "GraphCyclesResponse",
+        "GraphDdlResponse",
+    ):
+        actual = set(schemas[envelope_schema]["properties"])
+        assert (
+            actual == envelope
+        ), f"{envelope_schema} drifted: missing={envelope - actual} extra={actual - envelope}"
+        assert schemas[envelope_schema]["required"] == ["success"]
+
+    expected_payloads = {
+        "CanonicalNode": {
+            "id",
+            "labels",
+            "properties",
+            "embedding",
+            "created_at",
+            "updated_at",
+        },
+        "CanonicalEdge": {
+            "id",
+            "from_node_id",
+            "to_node_id",
+            "edge_type",
+            "properties",
+            "weight",
+            "created_at",
+            "updated_at",
+        },
+        "GraphStats": {
+            "total_nodes",
+            "total_edges",
+            "label_stats",
+            "edge_type_stats",
+            "total_properties",
+            "memory_usage_bytes",
+            "average_degree",
+            "max_degree",
+            "connected_components",
+        },
+        "GraphTraversalData": {"nodes", "edges", "paths", "stats"},
+        "GraphShortestPathData": {"path", "total_weight", "found"},
+        "GraphNodeBatchResults": {
+            "created_count",
+            "updated_count",
+            "failed_count",
+            "results",
+            "errors",
+        },
+        "GraphNodeQueryResults": {"items", "total_count", "has_more", "next_token"},
+        "GraphErrorBody": {"code", "message", "details"},
+    }
+    for schema_name, expected in expected_payloads.items():
+        actual = set(schemas[schema_name]["properties"])
+        assert (
+            actual == expected
+        ), f"{schema_name} drifted: missing={expected - actual} extra={actual - expected}"
+    assert schemas["GraphErrorBody"]["properties"]["code"]["enum"] == [
+        "NOT_FOUND",
+        "ALREADY_EXISTS",
+        "INVALID_ARGUMENT",
+        "CONSTRAINT_VIOLATION",
+        "INTERNAL_ERROR",
+        "TIMEOUT",
+        "PERMISSION_DENIED",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Capturing transport
 # ---------------------------------------------------------------------------

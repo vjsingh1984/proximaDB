@@ -14,44 +14,44 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
-    from ..models.edge_response import EdgeResponse
-    from ..models.node_response import NodeResponse
+    from ..models.canonical_edge import CanonicalEdge
+    from ..models.canonical_node import CanonicalNode
+    from ..models.graph_traversal_stats import GraphTraversalStats
 
 
-T = TypeVar("T", bound="TraverseResponse")
+T = TypeVar("T", bound="GraphTraversalData")
 
 
 @_attrs_define
-class TraverseResponse:
+class GraphTraversalData:
     """
     Attributes:
-        nodes (list[NodeResponse] | Unset):
-        edges (list[EdgeResponse] | Unset):
+        nodes (list[CanonicalNode]):
+        edges (list[CanonicalEdge]):
         paths (list[list[str]] | Unset):
+        stats (GraphTraversalStats | Unset):
     """
 
-    nodes: list[NodeResponse] | Unset = UNSET
-    edges: list[EdgeResponse] | Unset = UNSET
+    nodes: list[CanonicalNode]
+    edges: list[CanonicalEdge]
     paths: list[list[str]] | Unset = UNSET
+    stats: GraphTraversalStats | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.edge_response import EdgeResponse
-        from ..models.node_response import NodeResponse
+        from ..models.canonical_edge import CanonicalEdge
+        from ..models.canonical_node import CanonicalNode
+        from ..models.graph_traversal_stats import GraphTraversalStats
 
-        nodes: list[dict[str, Any]] | Unset = UNSET
-        if not isinstance(self.nodes, Unset):
-            nodes = []
-            for nodes_item_data in self.nodes:
-                nodes_item = nodes_item_data.to_dict()
-                nodes.append(nodes_item)
+        nodes = []
+        for nodes_item_data in self.nodes:
+            nodes_item = nodes_item_data.to_dict()
+            nodes.append(nodes_item)
 
-        edges: list[dict[str, Any]] | Unset = UNSET
-        if not isinstance(self.edges, Unset):
-            edges = []
-            for edges_item_data in self.edges:
-                edges_item = edges_item_data.to_dict()
-                edges.append(edges_item)
+        edges = []
+        for edges_item_data in self.edges:
+            edges_item = edges_item_data.to_dict()
+            edges.append(edges_item)
 
         paths: list[list[str]] | Unset = UNSET
         if not isinstance(self.paths, Unset):
@@ -61,41 +61,45 @@ class TraverseResponse:
 
                 paths.append(paths_item)
 
+        stats: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.stats, Unset):
+            stats = self.stats.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({})
-        if nodes is not UNSET:
-            field_dict["nodes"] = nodes
-        if edges is not UNSET:
-            field_dict["edges"] = edges
+        field_dict.update(
+            {
+                "nodes": nodes,
+                "edges": edges,
+            }
+        )
         if paths is not UNSET:
             field_dict["paths"] = paths
+        if stats is not UNSET:
+            field_dict["stats"] = stats
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.edge_response import EdgeResponse
-        from ..models.node_response import NodeResponse
+        from ..models.canonical_edge import CanonicalEdge
+        from ..models.canonical_node import CanonicalNode
+        from ..models.graph_traversal_stats import GraphTraversalStats
 
         d = dict(src_dict)
-        _nodes = d.pop("nodes", UNSET)
-        nodes: list[NodeResponse] | Unset = UNSET
-        if _nodes is not UNSET:
-            nodes = []
-            for nodes_item_data in _nodes:
-                nodes_item = NodeResponse.from_dict(nodes_item_data)
+        nodes = []
+        _nodes = d.pop("nodes")
+        for nodes_item_data in _nodes:
+            nodes_item = CanonicalNode.from_dict(nodes_item_data)
 
-                nodes.append(nodes_item)
+            nodes.append(nodes_item)
 
-        _edges = d.pop("edges", UNSET)
-        edges: list[EdgeResponse] | Unset = UNSET
-        if _edges is not UNSET:
-            edges = []
-            for edges_item_data in _edges:
-                edges_item = EdgeResponse.from_dict(edges_item_data)
+        edges = []
+        _edges = d.pop("edges")
+        for edges_item_data in _edges:
+            edges_item = CanonicalEdge.from_dict(edges_item_data)
 
-                edges.append(edges_item)
+            edges.append(edges_item)
 
         _paths = d.pop("paths", UNSET)
         paths: list[list[str]] | Unset = UNSET
@@ -106,14 +110,22 @@ class TraverseResponse:
 
                 paths.append(paths_item)
 
-        traverse_response = cls(
+        _stats = d.pop("stats", UNSET)
+        stats: GraphTraversalStats | Unset
+        if isinstance(_stats, Unset):
+            stats = UNSET
+        else:
+            stats = GraphTraversalStats.from_dict(_stats)
+
+        graph_traversal_data = cls(
             nodes=nodes,
             edges=edges,
             paths=paths,
+            stats=stats,
         )
 
-        traverse_response.additional_properties = d
-        return traverse_response
+        graph_traversal_data.additional_properties = d
+        return graph_traversal_data
 
     @property
     def additional_keys(self) -> list[str]:

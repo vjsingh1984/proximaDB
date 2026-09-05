@@ -79,7 +79,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CapabilitiesResponse"
-  # ── Graph surface (v2) — handlers live in the proximadb-api crate. ──────
+  # ── Graph surface (v2) — handlers live in the proximadb-api crate
+  # (crates/platform/proximadb-api/src/rest/canonical/graph.rs). Every
+  # operation returns the graph envelope: {success, data?, error?,
+  # metadata?} (schemas Graph*Response below) — this wave (6) corrected
+  # the previously-published FLAT response models, which could not parse
+  # the real wire format. Error statuses (400/404/500) carry the same
+  # envelope with success=false and a SCREAMING_SNAKE_CASE error code.
+  # Extractor rejections (malformed JSON) are plain text (axum default).
+  # NOT exposed here, deliberately: /rag (501 until the port lands),
+  # branch-merge (free-form response, TD deferral), and the legacy
+  # 308-redirect shims (/api/v2/nodes|edges|stats — clients must use the
+  # canonical graph-scoped paths).
   /api/v2/graphs:
     post:
       tags: [Graphs]
@@ -92,25 +103,26 @@ paths:
             schema:
               $ref: "#/components/schemas/CreateGraphRequest"
       responses:
-        "200":
-          description: Graph collection metadata.
+        "201":
+          description: Graph collection created (envelope; data = serialized collection).
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/GraphCollectionResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
+        "400": { $ref: "#/components/responses/GraphBadRequest" }
+        "500": { $ref: "#/components/responses/GraphInternal" }
     get:
       tags: [Graphs]
       operationId: listGraphs
       summary: List graph collections.
       responses:
         "200":
-          description: Graph collection listing.
+          description: Graph collection listing (envelope; data = array).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ListGraphsResponse"
+                $ref: "#/components/schemas/GraphCollectionListResponse"
+        "500": { $ref: "#/components/responses/GraphInternal" }
   /api/v2/graphs/{graph_id}:
     parameters:
       - $ref: "#/components/parameters/GraphId"
@@ -120,26 +132,52 @@ paths:
       summary: Get a graph collection by id.
       responses:
         "200":
-          description: Graph collection metadata.
+          description: Graph collection metadata (envelope; data = serialized collection).
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/GraphCollectionResponse"
-        "404":
-          $ref: "#/components/responses/NotFound"
+        "404": { $ref: "#/components/responses/GraphNotFound" }
+        "500": { $ref: "#/components/responses/GraphInternal" }
     delete:
       tags: [Graphs]
       operationId: deleteGraph
       summary: Delete a graph collection.
+      description: |
+        204 on success (the handler's success body is not transmitted on
+        a 204). Not-found maps to 404 with the envelope error.
+      responses:
+        "204": { description: Graph collection deleted. }
+        "404": { $ref: "#/components/responses/GraphNotFound" }
+        "500": { $ref: "#/components/responses/GraphInternal" }
+  /api/v2/graphs/{graph_id}/schema:
+    parameters:
+      - $ref: "#/components/parameters/GraphId"
+    put:
+      tags: [Graphs]
+      operationId: updateGraphSchema
+      summary: Update a graph collection's schema.
+      description: |
+        The body carries the schema as free-form JSON (the handler
+        deserializes it into the port's GraphSchema). 200 returns the
+        updated collection (envelope; data = serialized collection);
+        invalid schema JSON maps to 400.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateGraphSchemaRequest"
       responses:
         "200":
-          description: Deletion acknowledged.
+          description: Updated collection (envelope).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/DeleteGraphResponse"
-        "404":
-          $ref: "#/components/responses/NotFound"
+                $ref: "#/components/schemas/GraphCollectionResponse"
+        "400": { $ref: "#/components/responses/GraphBadRequest" }
+        "404": { $ref: "#/components/responses/GraphNotFound" }
+        "500": { $ref: "#/components/responses/GraphInternal" }
   /api/v2/graphs/{graph_id}/nodes:
     parameters:
       - $ref: "#/components/parameters/GraphId"
@@ -154,16 +192,15 @@ paths:
             schema:
               $ref: "#/components/schemas/CreateNodeRequest"
       responses:
-        "200":
-          description: Created node.
+        "201":
+          description: Created node (envelope).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/NodeResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "404":
-          $ref: "#/components/responses/NotFound"
+                $ref: "#/components/schemas/GraphNodeResponse"
+        "400": { $ref: "#/components/responses/GraphBadRequest" }
+        "404": { $ref: "#/components/responses/GraphNotFound" }
+        "500": { $ref: "#/components/responses/GraphInternal" }
   /api/v2/graphs/{graph_id}/nodes/{node_id}:
     parameters:
       - $ref: "#/components/parameters/GraphId"
@@ -174,26 +211,66 @@ paths:
       summary: Get a node by id.
       responses:
         "200":
-          description: Node payload.
+          description: Node payload (envelope).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/NodeResponse"
-        "404":
-          $ref: "#/components/responses/NotFound"
+                $ref: "#/components/schemas/GraphNodeResponse"
+        "404": { $ref: "#/components/responses/GraphNotFound" }
+        "500": { $ref: "#/components/responses/GraphInternal" }
+    put:
+      tags: [Graphs]
+      operationId: updateNode
+      summary: Replace a node.
+      description: |
+        Full replacement: the body is the complete node input (its `id`
+        is overwritten by the path's `node_id`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NodeInput"
+      responses:
+        "200":
+          description: Updated node (envelope).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphNodeResponse"
+        "400": { $ref: "#/components/responses/GraphBadRequest" }
+        "404": { $ref: "#/components/responses/GraphNotFound" }
+        "500": { $ref: "#/components/responses/GraphInternal" }
     delete:
       tags: [Graphs]
       operationId: deleteNode
       summary: Delete a node by id.
       responses:
         "200":
-          description: Deletion acknowledged.
+          description: Deleted node (envelope — the deleted node is echoed).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/DeleteNodeResponse"
-        "404":
-          $ref: "#/components/responses/NotFound"
+                $ref: "#/components/schemas/GraphNodeResponse"
+        "404": { $ref: "#/components/responses/GraphNotFound" }
+        "500": { $ref: "#/components/responses/GraphInternal" }
+  /api/v2/graphs/{graph_id}/nodes/{node_id}/neighbors:
+    parameters:
+      - $ref: "#/components/parameters/GraphId"
+      - $ref: "#/components/parameters/NodeId"
+    get:
+      tags: [Graphs]
+      operationId: getNodeNeighbors
+      summary: Get a node's neighbors.
+      responses:
+        "200":
+          description: Neighbor nodes (envelope; data = node array).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphNodeListResponse"
+        "404": { $ref: "#/components/responses/GraphNotFound" }
+        "500": { $ref: "#/components/responses/GraphInternal" }
   /api/v2/graphs/{graph_id}/edges:
     parameters:
       - $ref: "#/components/parameters/GraphId"
@@ -208,16 +285,68 @@ paths:
             schema:
               $ref: "#/components/schemas/CreateEdgeRequest"
       responses:
-        "200":
-          description: Created edge.
+        "201":
+          description: Created edge (envelope).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/EdgeResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "404":
-          $ref: "#/components/responses/NotFound"
+                $ref: "#/components/schemas/GraphEdgeResponse"
+        "400": { $ref: "#/components/responses/GraphBadRequest" }
+        "404": { $ref: "#/components/responses/GraphNotFound" }
+        "500": { $ref: "#/components/responses/GraphInternal" }
+  /api/v2/graphs/{graph_id}/edges/{edge_id}:
+    parameters:
+      - $ref: "#/components/parameters/GraphId"
+      - $ref: "#/components/parameters/EdgeId"
+    get:
+      tags: [Graphs]
+      operationId: getEdge
+      summary: Get an edge by id.
+      responses:
+        "200":
+          description: Edge payload (envelope).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphEdgeResponse"
+        "404": { $ref: "#/components/responses/GraphNotFound" }
+        "500": { $ref: "#/components/responses/GraphInternal" }
+    put:
+      tags: [Graphs]
+      operationId: updateEdge
+      summary: Replace an edge.
+      description: |
+        Full replacement: the body is the complete edge input (its `id`
+        is overwritten by the path's `edge_id`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EdgeInput"
+      responses:
+        "200":
+          description: Updated edge (envelope).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphEdgeResponse"
+        "400": { $ref: "#/components/responses/GraphBadRequest" }
+        "404": { $ref: "#/components/responses/GraphNotFound" }
+        "500": { $ref: "#/components/responses/GraphInternal" }
+    delete:
+      tags: [Graphs]
+      operationId: deleteEdge
+      summary: Delete an edge by id.
+      responses:
+        "200":
+          description: Deleted edge (envelope — the deleted edge is echoed).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphEdgeResponse"
+        "404": { $ref: "#/components/responses/GraphNotFound" }
+        "500": { $ref: "#/components/responses/GraphInternal" }
   /api/v2/graphs/{graph_id}/nodes/batch:
     parameters:
       - $ref: "#/components/parameters/GraphId"
@@ -226,8 +355,8 @@ paths:
       operationId: batchCreateNodes
       summary: Create multiple nodes in a single call.
       description: |
-        Batch counterpart to `createNode`. Use this on bulk-ingest paths
-        where individual round-trips would dominate latency.
+        Per-item rejections ride `failed_count`/`errors[]` while
+        `results[]` carries what landed; the HTTP status stays 200.
       requestBody:
         required: true
         content:
@@ -236,15 +365,13 @@ paths:
               $ref: "#/components/schemas/BatchCreateNodesRequest"
       responses:
         "200":
-          description: Batch result.
+          description: Batch outcome (envelope).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BatchNodesResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "404":
-          $ref: "#/components/responses/NotFound"
+                $ref: "#/components/schemas/GraphBatchNodesResponse"
+        "400": { $ref: "#/components/responses/GraphBadRequest" }
+        "500": { $ref: "#/components/responses/GraphInternal" }
   /api/v2/graphs/{graph_id}/edges/batch:
     parameters:
       - $ref: "#/components/parameters/GraphId"
@@ -253,7 +380,8 @@ paths:
       operationId: batchCreateEdges
       summary: Create multiple edges in a single call.
       description: |
-        Batch counterpart to `createEdge`.
+        Per-item rejections ride `failed_count`/`errors[]` while
+        `results[]` carries what landed; the HTTP status stays 200.
       requestBody:
         required: true
         content:
@@ -262,15 +390,13 @@ paths:
               $ref: "#/components/schemas/BatchCreateEdgesRequest"
       responses:
         "200":
-          description: Batch result.
+          description: Batch outcome (envelope).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BatchEdgesResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "404":
-          $ref: "#/components/responses/NotFound"
+                $ref: "#/components/schemas/GraphBatchEdgesResponse"
+        "400": { $ref: "#/components/responses/GraphBadRequest" }
+        "500": { $ref: "#/components/responses/GraphInternal" }
   /api/v2/graphs/{graph_id}/traverse:
     parameters:
       - $ref: "#/components/parameters/GraphId"
@@ -286,13 +412,237 @@ paths:
               $ref: "#/components/schemas/TraverseRequest"
       responses:
         "200":
-          description: Traversal result.
+          description: Traversal result (envelope).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TraverseResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
+                $ref: "#/components/schemas/GraphTraversalResponse"
+        "400": { $ref: "#/components/responses/GraphBadRequest" }
+        "404": { $ref: "#/components/responses/GraphNotFound" }
+        "500": { $ref: "#/components/responses/GraphInternal" }
+  /api/v2/graphs/{graph_id}/walk:
+    parameters:
+      - $ref: "#/components/parameters/GraphId"
+    post:
+      tags: [Graphs]
+      operationId: walkGraph
+      summary: BFS walk from a start node.
+      description: |
+        A traverse with the algorithm pinned to BFS (defaults:
+        max_depth 2, limit 100).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WalkRequest"
+      responses:
+        "200":
+          description: Walk result (envelope; traversal shape).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphTraversalResponse"
+        "400": { $ref: "#/components/responses/GraphBadRequest" }
+        "404": { $ref: "#/components/responses/GraphNotFound" }
+        "500": { $ref: "#/components/responses/GraphInternal" }
+  /api/v2/graphs/{graph_id}/step:
+    parameters:
+      - $ref: "#/components/parameters/GraphId"
+    post:
+      tags: [Graphs]
+      operationId: stepGraph
+      summary: Single-step navigation (neighbors of one node).
+      description: |
+        Returns the neighbors of `node_id` (optionally restricted to one
+        `edge_type`) in the traversal result shape.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WalkStepRequest"
+      responses:
+        "200":
+          description: Step result (envelope).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphTraversalResponse"
+        "400": { $ref: "#/components/responses/GraphBadRequest" }
+        "404": { $ref: "#/components/responses/GraphNotFound" }
+        "500": { $ref: "#/components/responses/GraphInternal" }
+  /api/v2/graphs/{graph_id}/shortest-path:
+    parameters:
+      - $ref: "#/components/parameters/GraphId"
+    post:
+      tags: [Graphs]
+      operationId: shortestPath
+      summary: Shortest path between two nodes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShortestPathRequest"
+      responses:
+        "200":
+          description: Shortest-path result (envelope; found=false when unreachable).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphShortestPathResponse"
+        "400": { $ref: "#/components/responses/GraphBadRequest" }
+        "404": { $ref: "#/components/responses/GraphNotFound" }
+        "500": { $ref: "#/components/responses/GraphInternal" }
+  /api/v2/graphs/{graph_id}/query:
+    parameters:
+      - $ref: "#/components/parameters/GraphId"
+    post:
+      tags: [Graphs]
+      operationId: executeGraphQuery
+      summary: Execute a graph query.
+      description: |
+        Executes the query text through the port's JSON query path.
+        `language` (default `native`) and `timeout_ms` are accepted but
+        currently unused server-side.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GraphQueryRequest"
+      responses:
+        "200":
+          description: Query result (envelope; data carries rows and row_count).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphQueryResponse"
+        "400": { $ref: "#/components/responses/GraphBadRequest" }
+        "500": { $ref: "#/components/responses/GraphInternal" }
+  /api/v2/graphs/{graph_id}/query/nodes:
+    parameters:
+      - $ref: "#/components/parameters/GraphId"
+    post:
+      tags: [Graphs]
+      operationId: queryNodes
+      summary: Query nodes by labels/properties.
+      description: |
+        Paginated: `limit` (default 100) + `offset`, or a
+        `continuation_token` of the form `offset:<n>`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GraphNodeQuery"
+      responses:
+        "200":
+          description: Matching nodes (envelope; QueryResults shape).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphNodeQueryResponse"
+        "400": { $ref: "#/components/responses/GraphBadRequest" }
+        "500": { $ref: "#/components/responses/GraphInternal" }
+  /api/v2/graphs/{graph_id}/query/edges:
+    parameters:
+      - $ref: "#/components/parameters/GraphId"
+    post:
+      tags: [Graphs]
+      operationId: queryEdges
+      summary: Query edges by type/endpoints/properties.
+      description: |
+        Paginated: `limit` (default 100) + `offset`, or a
+        `continuation_token` of the form `offset:<n>`. `edge_type`
+        defaults to the empty string (matches untyped edges).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GraphEdgeQuery"
+      responses:
+        "200":
+          description: Matching edges (envelope; QueryResults shape).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphEdgeQueryResponse"
+        "400": { $ref: "#/components/responses/GraphBadRequest" }
+        "500": { $ref: "#/components/responses/GraphInternal" }
+  /api/v2/graphs/{graph_id}/components:
+    parameters:
+      - $ref: "#/components/parameters/GraphId"
+    get:
+      tags: [Graphs]
+      operationId: getConnectedComponents
+      summary: Get the graph's connected components.
+      responses:
+        "200":
+          description: Components (envelope; data carries the node-id arrays).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphComponentsResponse"
+        "500": { $ref: "#/components/responses/GraphInternal" }
+  /api/v2/graphs/{graph_id}/cycles:
+    parameters:
+      - $ref: "#/components/parameters/GraphId"
+    get:
+      tags: [Graphs]
+      operationId: checkCycles
+      summary: Check whether the graph contains a cycle.
+      responses:
+        "200":
+          description: Cycle check (envelope; data carries has_cycle).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphCyclesResponse"
+        "500": { $ref: "#/components/responses/GraphInternal" }
+  /api/v2/graphs/{graph_id}/constraints/unique:
+    parameters:
+      - $ref: "#/components/parameters/GraphId"
+    post:
+      tags: [Graphs]
+      operationId: addUniqueConstraint
+      summary: Add a unique constraint on (label, property).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UniqueConstraintRequest"
+      responses:
+        "200":
+          description: DDL outcome (envelope; data carries success).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphDdlResponse"
+        "400": { $ref: "#/components/responses/GraphBadRequest" }
+        "500": { $ref: "#/components/responses/GraphInternal" }
+    delete:
+      tags: [Graphs]
+      operationId: removeUniqueConstraint
+      summary: Remove a unique constraint on (label, property).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UniqueConstraintRequest"
+      responses:
+        "200":
+          description: DDL outcome (envelope; data carries success).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphDdlResponse"
+        "400": { $ref: "#/components/responses/GraphBadRequest" }
+        "500": { $ref: "#/components/responses/GraphInternal" }
   /api/v2/graphs/{graph_id}/stats:
     parameters:
       - $ref: "#/components/parameters/GraphId"
@@ -302,11 +652,13 @@ paths:
       summary: Get graph statistics.
       responses:
         "200":
-          description: Graph statistics.
+          description: Graph statistics (envelope; data = GraphStats).
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/GraphStatsResponse"
+        "500": { $ref: "#/components/responses/GraphInternal" }
+
   # ── Hybrid search (free-form passthrough). ──────────────────────────────
   /api/v2/hybrid/search:
     post:
@@ -1397,6 +1749,13 @@ components:
       schema:
         type: string
         minLength: 1
+    EdgeId:
+      name: edge_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
   responses:
     BadRequest:
       description: Invalid request.
@@ -1477,6 +1836,30 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    GraphBadRequest:
+      description: |
+        Invalid argument (graph envelope error body, success=false,
+        code INVALID_ARGUMENT).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/GraphErrorBody"
+    GraphNotFound:
+      description: |
+        Not found (graph envelope error body, success=false, code
+        NOT_FOUND).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/GraphErrorBody"
+    GraphInternal:
+      description: |
+        Internal error (graph envelope error body, success=false, code
+        INTERNAL_ERROR).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/GraphErrorBody"
   schemas:
     HealthResponse:
       type: object
@@ -1514,302 +1897,567 @@ components:
           additionalProperties: true
     # ── Graph schemas (v2). Reconciled against the proximadb-api graph
     # handler; server is authoritative for the wire contract. ───────────
-    CreateGraphRequest:
+    # ── Graph surface schemas (wave 6: envelope-corrected). ──────────────
+    # The graph handlers all return {success, data?, error?, metadata?};
+    # each Graph*Response below is that envelope around its payload type.
+    GraphErrorBody:
       type: object
-      required: [graph_id]
+      required: [code, message]
       properties:
-        graph_id:
+        code:
           type: string
-          minLength: 1
-          description: Unique identifier for the new graph collection.
-        name:
-          type: string
-          nullable: true
-          description: Optional human-readable name (defaults to graph_id).
-        description:
-          type: string
-          nullable: true
+          enum: [NOT_FOUND, ALREADY_EXISTS, INVALID_ARGUMENT, CONSTRAINT_VIOLATION, INTERNAL_ERROR, TIMEOUT, PERMISSION_DENIED]
+        message: { type: string }
+        details: {}
+    GraphResponseMetadata:
+      type: object
+      properties:
+        request_id: { type: string }
+        execution_time_ms:
+          type: integer
+          format: uint64
+    GraphEmbedding:
+      type: object
+      required: [model_id, model_version, vector, dimension]
+      properties:
+        model_id: { type: string }
+        model_version: { type: string }
+        vector:
+          type: array
+          items: { type: number }
+        dimension:
+          type: integer
+          format: uint32
+    CanonicalNode:
+      type: object
+      required: [id, labels, properties, created_at, updated_at]
+      properties:
+        id: { type: string }
+        labels:
+          type: array
+          items: { type: string }
+        properties:
+          type: object
+          additionalProperties: true
+        embedding: { $ref: "#/components/schemas/GraphEmbedding" }
+        created_at: { type: string }
+        updated_at: { type: string }
+    CanonicalEdge:
+      type: object
+      required: [id, from_node_id, to_node_id, edge_type, properties, created_at, updated_at]
+      properties:
+        id: { type: string }
+        from_node_id: { type: string }
+        to_node_id: { type: string }
+        edge_type: { type: string }
+        properties:
+          type: object
+          additionalProperties: true
+        weight: { type: number }
+        created_at: { type: string }
+        updated_at: { type: string }
+    GraphNodeResponse:
+      type: object
+      required: [success]
+      properties:
+        success: { type: boolean }
+        data: { $ref: "#/components/schemas/CanonicalNode" }
+        error: { $ref: "#/components/schemas/GraphErrorBody" }
+        metadata: { $ref: "#/components/schemas/GraphResponseMetadata" }
+    GraphEdgeResponse:
+      type: object
+      required: [success]
+      properties:
+        success: { type: boolean }
+        data: { $ref: "#/components/schemas/CanonicalEdge" }
+        error: { $ref: "#/components/schemas/GraphErrorBody" }
+        metadata: { $ref: "#/components/schemas/GraphResponseMetadata" }
+    GraphNodeListResponse:
+      type: object
+      required: [success]
+      properties:
+        success: { type: boolean }
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/CanonicalNode" }
+        error: { $ref: "#/components/schemas/GraphErrorBody" }
+        metadata: { $ref: "#/components/schemas/GraphResponseMetadata" }
     GraphCollectionResponse:
       type: object
-      additionalProperties: true
+      required: [success]
       description: |
-        Server returns a `GraphResponse<T>` envelope around graph
-        collection metadata. The fields below are the common subset
-        SDKs rely on; extra server-side fields are passed through.
+        Envelope around the serialized graph-collection object. The
+        payload is the port's collection record rendered as JSON — an
+        open object (the field set is the proto collection's, subject to
+        port evolution).
       properties:
-        graph_id:
-          type: string
-        name:
-          type: string
-          nullable: true
-        description:
-          type: string
-          nullable: true
-        node_count:
-          type: integer
-          nullable: true
-        edge_count:
-          type: integer
-          nullable: true
-    ListGraphsResponse:
+        success: { type: boolean }
+        data:
+          type: object
+          additionalProperties: true
+        error: { $ref: "#/components/schemas/GraphErrorBody" }
+        metadata: { $ref: "#/components/schemas/GraphResponseMetadata" }
+    GraphCollectionListResponse:
       type: object
-      additionalProperties: true
-      description: |
-        Server returns a `GraphResponse<Vec<...>>` envelope with `data`
-        containing the graph collections.
+      required: [success]
       properties:
+        success: { type: boolean }
         data:
           type: array
           items:
-            $ref: "#/components/schemas/GraphCollectionResponse"
-        success:
-          type: boolean
-    DeleteGraphResponse:
+            type: object
+            additionalProperties: true
+        error: { $ref: "#/components/schemas/GraphErrorBody" }
+        metadata: { $ref: "#/components/schemas/GraphResponseMetadata" }
+    GraphTraversalStats:
       type: object
-      additionalProperties: true
-      description: |
-        204 No Content on success with an empty `GraphResponse` envelope;
-        404 Not Found with an error envelope when the graph is missing.
+      required: [nodes_visited, edges_traversed, max_depth_reached]
       properties:
-        success:
-          type: boolean
-    NodeInput:
-      type: object
-      required: [id]
-      description: |
-        Node payload nested inside `CreateNodeRequest.node`. Matches
-        `RestNodeInput` in proximadb-api's graph handler.
-      properties:
-        id:
-          type: string
-          minLength: 1
-        labels:
-          type: array
-          items:
-            type: string
-        properties:
-          type: object
-          additionalProperties: true
-        embedding:
-          $ref: "#/components/schemas/EmbeddingInput"
-          nullable: true
-    EmbeddingInput:
-      type: object
-      required: [vector]
-      properties:
-        vector:
-          type: array
-          items:
-            type: number
-            format: float
-        model_id:
-          type: string
-          nullable: true
-        modality:
-          type: string
-          nullable: true
-    CreateNodeRequest:
-      type: object
-      required: [node]
-      description: |
-        Wrapped envelope: server expects `{"node": NodeInput}`.
-      properties:
-        node:
-          $ref: "#/components/schemas/NodeInput"
-    NodeResponse:
-      type: object
-      additionalProperties: true
-      required: [id]
-      properties:
-        id:
-          type: string
-        labels:
-          type: array
-          nullable: true
-          items:
-            type: string
-        properties:
-          type: object
-          additionalProperties: true
-          nullable: true
-    DeleteNodeResponse:
-      type: object
-      additionalProperties: true
-      properties:
-        success:
-          type: boolean
-        id:
-          type: string
-    EdgeInput:
-      type: object
-      required: [id, from_node_id, to_node_id, edge_type]
-      description: |
-        Edge payload nested inside `CreateEdgeRequest.edge`. Matches
-        `RestEdgeInput` in proximadb-api's graph handler.
-      properties:
-        id:
-          type: string
-          minLength: 1
-        from_node_id:
-          type: string
-        to_node_id:
-          type: string
-        edge_type:
-          type: string
-        properties:
-          type: object
-          additionalProperties: true
-        weight:
-          type: number
-          format: double
-          nullable: true
-    CreateEdgeRequest:
-      type: object
-      required: [edge]
-      description: |
-        Wrapped envelope: server expects `{"edge": EdgeInput}`.
-      properties:
-        edge:
-          $ref: "#/components/schemas/EdgeInput"
-    EdgeResponse:
-      type: object
-      additionalProperties: true
-      required: [id]
-      properties:
-        id:
-          type: string
-        from_node_id:
-          type: string
-        to_node_id:
-          type: string
-        edge_type:
-          type: string
-          nullable: true
-        properties:
-          type: object
-          additionalProperties: true
-          nullable: true
-        weight:
-          type: number
-          format: double
-          nullable: true
-    TraverseRequest:
-      type: object
-      required: [start_node_id]
-      description: |
-        Flat shape (no wrapper). Matches `RestTraversalRequest` in
-        proximadb-api.
-      properties:
-        start_node_id:
-          type: string
-        max_depth:
+        nodes_visited:
           type: integer
-          minimum: 1
-          default: 3
-        edge_types:
-          type: array
-          items:
-            type: string
-        node_labels:
-          type: array
-          items:
-            type: string
-        algorithm:
-          type: string
-          nullable: true
-          description: bfs | dfs | shortest_path
-        limit:
+          format: uint64
+        edges_traversed:
           type: integer
-          minimum: 1
-          nullable: true
-    TraverseResponse:
+          format: uint64
+        max_depth_reached:
+          type: integer
+          format: uint32
+        execution_time_ms:
+          type: integer
+          format: uint64
+    GraphTraversalData:
       type: object
-      additionalProperties: true
+      required: [nodes, edges]
       properties:
         nodes:
           type: array
-          items:
-            $ref: "#/components/schemas/NodeResponse"
+          items: { $ref: "#/components/schemas/CanonicalNode" }
         edges:
           type: array
-          items:
-            $ref: "#/components/schemas/EdgeResponse"
+          items: { $ref: "#/components/schemas/CanonicalEdge" }
         paths:
           type: array
           items:
             type: array
-            items:
-              type: string
+            items: { type: string }
+        stats: { $ref: "#/components/schemas/GraphTraversalStats" }
+    GraphTraversalResponse:
+      type: object
+      required: [success]
+      properties:
+        success: { type: boolean }
+        data: { $ref: "#/components/schemas/GraphTraversalData" }
+        error: { $ref: "#/components/schemas/GraphErrorBody" }
+        metadata: { $ref: "#/components/schemas/GraphResponseMetadata" }
+    GraphStats:
+      type: object
+      required:
+        - total_nodes
+        - total_edges
+        - label_stats
+        - edge_type_stats
+        - total_properties
+        - memory_usage_bytes
+        - average_degree
+        - max_degree
+        - connected_components
+      properties:
+        total_nodes:
+          type: integer
+          format: uint64
+        total_edges:
+          type: integer
+          format: uint64
+        label_stats:
+          type: array
+          items: {}
+        edge_type_stats:
+          type: array
+          items: {}
+        total_properties:
+          type: integer
+          format: uint64
+        memory_usage_bytes:
+          type: integer
+          format: uint64
+        average_degree: { type: number }
+        max_degree:
+          type: integer
+          format: uint32
+        connected_components:
+          type: integer
+          format: uint32
     GraphStatsResponse:
       type: object
-      additionalProperties: true
+      required: [success]
       properties:
-        node_count:
+        success: { type: boolean }
+        data: { $ref: "#/components/schemas/GraphStats" }
+        error: { $ref: "#/components/schemas/GraphErrorBody" }
+        metadata: { $ref: "#/components/schemas/GraphResponseMetadata" }
+    GraphNodeBatchResults:
+      type: object
+      required: [created_count, updated_count, failed_count, results, errors]
+      properties:
+        created_count:
           type: integer
-        edge_count:
+          format: uint64
+        updated_count:
           type: integer
-        density:
-          type: number
-          format: double
-          nullable: true
+          format: uint64
+        failed_count:
+          type: integer
+          format: uint64
+        results:
+          type: array
+          items: { $ref: "#/components/schemas/CanonicalNode" }
+        errors:
+          type: array
+          items: {}
+    GraphEdgeBatchResults:
+      type: object
+      required: [created_count, updated_count, failed_count, results, errors]
+      properties:
+        created_count:
+          type: integer
+          format: uint64
+        updated_count:
+          type: integer
+          format: uint64
+        failed_count:
+          type: integer
+          format: uint64
+        results:
+          type: array
+          items: { $ref: "#/components/schemas/CanonicalEdge" }
+        errors:
+          type: array
+          items: {}
+    GraphBatchNodesResponse:
+      type: object
+      required: [success]
+      properties:
+        success: { type: boolean }
+        data: { $ref: "#/components/schemas/GraphNodeBatchResults" }
+        error: { $ref: "#/components/schemas/GraphErrorBody" }
+        metadata: { $ref: "#/components/schemas/GraphResponseMetadata" }
+    GraphBatchEdgesResponse:
+      type: object
+      required: [success]
+      properties:
+        success: { type: boolean }
+        data: { $ref: "#/components/schemas/GraphEdgeBatchResults" }
+        error: { $ref: "#/components/schemas/GraphErrorBody" }
+        metadata: { $ref: "#/components/schemas/GraphResponseMetadata" }
+    GraphNodeQueryResults:
+      type: object
+      required: [items, has_more]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/CanonicalNode" }
+        total_count:
+          type: integer
+          format: uint64
+        has_more: { type: boolean }
+        next_token: { type: string }
+    GraphEdgeQueryResults:
+      type: object
+      required: [items, has_more]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/CanonicalEdge" }
+        total_count:
+          type: integer
+          format: uint64
+        has_more: { type: boolean }
+        next_token: { type: string }
+    GraphNodeQueryResponse:
+      type: object
+      required: [success]
+      properties:
+        success: { type: boolean }
+        data: { $ref: "#/components/schemas/GraphNodeQueryResults" }
+        error: { $ref: "#/components/schemas/GraphErrorBody" }
+        metadata: { $ref: "#/components/schemas/GraphResponseMetadata" }
+    GraphEdgeQueryResponse:
+      type: object
+      required: [success]
+      properties:
+        success: { type: boolean }
+        data: { $ref: "#/components/schemas/GraphEdgeQueryResults" }
+        error: { $ref: "#/components/schemas/GraphErrorBody" }
+        metadata: { $ref: "#/components/schemas/GraphResponseMetadata" }
+    GraphShortestPathData:
+      type: object
+      required: [path, found]
+      properties:
+        path:
+          type: array
+          items: { type: string }
+        total_weight: { type: number }
+        found: { type: boolean }
+    GraphShortestPathResponse:
+      type: object
+      required: [success]
+      properties:
+        success: { type: boolean }
+        data: { $ref: "#/components/schemas/GraphShortestPathData" }
+        error: { $ref: "#/components/schemas/GraphErrorBody" }
+        metadata: { $ref: "#/components/schemas/GraphResponseMetadata" }
+    GraphQueryData:
+      type: object
+      required: [rows, row_count]
+      properties:
+        rows:
+          type: array
+          items: {}
+        row_count:
+          type: integer
+          format: uint64
+    GraphQueryResponse:
+      type: object
+      required: [success]
+      properties:
+        success: { type: boolean }
+        data: { $ref: "#/components/schemas/GraphQueryData" }
+        error: { $ref: "#/components/schemas/GraphErrorBody" }
+        metadata: { $ref: "#/components/schemas/GraphResponseMetadata" }
+    GraphComponentsData:
+      type: object
+      required: [components]
+      properties:
+        components:
+          type: array
+          items:
+            type: array
+            items: { type: string }
+    GraphComponentsResponse:
+      type: object
+      required: [success]
+      properties:
+        success: { type: boolean }
+        data: { $ref: "#/components/schemas/GraphComponentsData" }
+        error: { $ref: "#/components/schemas/GraphErrorBody" }
+        metadata: { $ref: "#/components/schemas/GraphResponseMetadata" }
+    GraphCyclesData:
+      type: object
+      required: [has_cycle]
+      properties:
+        has_cycle: { type: boolean }
+    GraphCyclesResponse:
+      type: object
+      required: [success]
+      properties:
+        success: { type: boolean }
+        data: { $ref: "#/components/schemas/GraphCyclesData" }
+        error: { $ref: "#/components/schemas/GraphErrorBody" }
+        metadata: { $ref: "#/components/schemas/GraphResponseMetadata" }
+    GraphDdlData:
+      type: object
+      required: [success]
+      properties:
+        success: { type: boolean }
+    GraphDdlResponse:
+      type: object
+      required: [success]
+      properties:
+        success: { type: boolean }
+        data: { $ref: "#/components/schemas/GraphDdlData" }
+        error: { $ref: "#/components/schemas/GraphErrorBody" }
+        metadata: { $ref: "#/components/schemas/GraphResponseMetadata" }
+    CreateGraphRequest:
+      type: object
+      required: [graph_id]
+      properties:
+        graph_id: { type: string }
+        name: { type: string }
+        description: { type: string }
+    UpdateGraphSchemaRequest:
+      type: object
+      required: [schema]
+      properties:
+        schema:
+          type: object
+          additionalProperties: true
+    NodeInput:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string }
+        labels:
+          type: array
+          items: { type: string }
+        properties:
+          type: object
+          additionalProperties: true
+        embedding:
+          type: object
+          required: [vector]
+          properties:
+            vector:
+              type: array
+              items: { type: number }
+            version: { type: string }
+            model_id: { type: string }
+    CreateNodeRequest:
+      type: object
+      required: [node]
+      properties:
+        node: { $ref: "#/components/schemas/NodeInput" }
+    EdgeInput:
+      type: object
+      required: [id, from_node_id, to_node_id, edge_type]
+      properties:
+        id: { type: string }
+        from_node_id: { type: string }
+        to_node_id: { type: string }
+        edge_type: { type: string }
+        properties:
+          type: object
+          additionalProperties: true
+        weight: { type: number }
+    CreateEdgeRequest:
+      type: object
+      required: [edge]
+      properties:
+        edge: { $ref: "#/components/schemas/EdgeInput" }
     BatchCreateNodesRequest:
       type: object
       required: [nodes]
-      description: |
-        Body for `POST /api/v2/graphs/{id}/nodes/batch`.
       properties:
         nodes:
           type: array
-          minItems: 1
-          items:
-            $ref: "#/components/schemas/NodeInput"
-    BatchNodesResponse:
-      type: object
-      additionalProperties: true
-      description: |
-        Server returns a `GraphResponse<BatchResults<Node>>` envelope.
-      properties:
-        success:
-          type: boolean
-        data:
-          type: object
-          additionalProperties: true
-          properties:
-            results:
-              type: array
-              items:
-                $ref: "#/components/schemas/NodeResponse"
-            count:
-              type: integer
+          items: { $ref: "#/components/schemas/NodeInput" }
     BatchCreateEdgesRequest:
       type: object
       required: [edges]
-      description: |
-        Body for `POST /api/v2/graphs/{id}/edges/batch`.
       properties:
         edges:
           type: array
-          minItems: 1
-          items:
-            $ref: "#/components/schemas/EdgeInput"
-    BatchEdgesResponse:
+          items: { $ref: "#/components/schemas/EdgeInput" }
+    TraverseRequest:
       type: object
-      additionalProperties: true
-      description: |
-        Server returns a `GraphResponse<BatchResults<Edge>>` envelope.
+      required: [start_node_id]
       properties:
-        success:
-          type: boolean
-        data:
+        start_node_id: { type: string }
+        max_depth:
+          type: integer
+          format: uint32
+          default: 5
+        edge_types:
+          type: array
+          items: { type: string }
+        node_labels:
+          type: array
+          items: { type: string }
+        algorithm:
+          type: string
+          default: bfs
+        limit:
+          type: [integer, "null"]
+          format: uint32
+    WalkRequest:
+      type: object
+      required: [start_node_id]
+      properties:
+        start_node_id: { type: string }
+        max_depth:
+          type: integer
+          format: uint32
+          default: 2
+        limit:
+          type: integer
+          format: uint32
+          default: 100
+    WalkStepRequest:
+      type: object
+      required: [node_id]
+      properties:
+        node_id: { type: string }
+        edge_type: { type: string }
+        limit:
+          type: integer
+          format: uint32
+          default: 50
+          description: Accepted but currently unused server-side.
+    ShortestPathRequest:
+      type: object
+      required: [start_node_id, target_node_id]
+      properties:
+        start_node_id: { type: string }
+        target_node_id: { type: string }
+        max_depth:
+          type: [integer, "null"]
+          format: uint32
+        edge_types:
+          type: array
+          items: { type: string }
+        algorithm: { type: string }
+        k:
+          type: [integer, "null"]
+          format: uint32
+    GraphNodeQuery:
+      type: object
+      properties:
+        labels:
+          type: array
+          items: { type: string }
+        properties:
           type: object
           additionalProperties: true
-          properties:
-            results:
-              type: array
-              items:
-                $ref: "#/components/schemas/EdgeResponse"
-            count:
-              type: integer
+        limit:
+          type: integer
+          format: uint32
+          default: 100
+        offset:
+          type: [integer, "null"]
+          format: uint32
+        continuation_token:
+          type: [string, "null"]
+          description: '"offset:<n>" form; decodes to the offset.'
+    GraphEdgeQuery:
+      type: object
+      properties:
+        edge_type:
+          type: string
+          default: ""
+        from_node_id: { type: string }
+        to_node_id: { type: string }
+        properties:
+          type: object
+          additionalProperties: true
+        limit:
+          type: integer
+          format: uint32
+          default: 100
+        offset:
+          type: [integer, "null"]
+          format: uint32
+        continuation_token:
+          type: [string, "null"]
+          description: '"offset:<n>" form; decodes to the offset.'
+    UniqueConstraintRequest:
+      type: object
+      required: [label, property]
+      properties:
+        label: { type: string }
+        property: { type: string }
+    GraphQueryRequest:
+      type: object
+      required: [query]
+      properties:
+        query: { type: string }
+        language:
+          type: string
+          default: native
+          description: Accepted but currently unused server-side.
+        timeout_ms:
+          type: [integer, "null"]
+          format: uint32
+          description: Accepted but currently unused server-side.
+
     # ── Observability (wave-1 spec rationalization: TD-SPECRAT-1) ──────────────
     CreateObservabilityNamespaceRequest:
       type: object

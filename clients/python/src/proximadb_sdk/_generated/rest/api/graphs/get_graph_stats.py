@@ -11,6 +11,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.graph_error_body import GraphErrorBody
 from ...models.graph_stats_response import GraphStatsResponse
 from ...types import UNSET, Response, Unset
 
@@ -37,11 +38,16 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> GraphStatsResponse | None:
+) -> GraphErrorBody | GraphStatsResponse | None:
     if response.status_code == 200:
         response_200 = GraphStatsResponse.from_dict(response.json())
 
         return response_200
+
+    if response.status_code == 500:
+        response_500 = GraphErrorBody.from_dict(response.json())
+
+        return response_500
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -51,7 +57,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[GraphStatsResponse]:
+) -> Response[GraphErrorBody | GraphStatsResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -65,7 +71,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     x_tenant_id: str | Unset = UNSET,
-) -> Response[GraphStatsResponse]:
+) -> Response[GraphErrorBody | GraphStatsResponse]:
     """Get graph statistics.
 
     Args:
@@ -77,7 +83,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[GraphStatsResponse]
+        Response[GraphErrorBody | GraphStatsResponse]
     """
 
     kwargs = _get_kwargs(
@@ -97,7 +103,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     x_tenant_id: str | Unset = UNSET,
-) -> GraphStatsResponse | None:
+) -> GraphErrorBody | GraphStatsResponse | None:
     """Get graph statistics.
 
     Args:
@@ -109,7 +115,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        GraphStatsResponse
+        GraphErrorBody | GraphStatsResponse
     """
 
     return sync_detailed(
@@ -124,7 +130,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     x_tenant_id: str | Unset = UNSET,
-) -> Response[GraphStatsResponse]:
+) -> Response[GraphErrorBody | GraphStatsResponse]:
     """Get graph statistics.
 
     Args:
@@ -136,7 +142,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[GraphStatsResponse]
+        Response[GraphErrorBody | GraphStatsResponse]
     """
 
     kwargs = _get_kwargs(
@@ -154,7 +160,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     x_tenant_id: str | Unset = UNSET,
-) -> GraphStatsResponse | None:
+) -> GraphErrorBody | GraphStatsResponse | None:
     """Get graph statistics.
 
     Args:
@@ -166,7 +172,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        GraphStatsResponse
+        GraphErrorBody | GraphStatsResponse
     """
 
     return (

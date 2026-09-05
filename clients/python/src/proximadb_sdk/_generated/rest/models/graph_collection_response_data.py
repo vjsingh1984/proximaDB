@@ -13,11 +13,11 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="EdgeResponsePropertiesType0")
+T = TypeVar("T", bound="GraphCollectionResponseData")
 
 
 @_attrs_define
-class EdgeResponsePropertiesType0:
+class GraphCollectionResponseData:
     """ """
 
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -32,10 +32,10 @@ class EdgeResponsePropertiesType0:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        edge_response_properties_type_0 = cls()
+        graph_collection_response_data = cls()
 
-        edge_response_properties_type_0.additional_properties = d
-        return edge_response_properties_type_0
+        graph_collection_response_data.additional_properties = d
+        return graph_collection_response_data
 
     @property
     def additional_keys(self) -> list[str]:

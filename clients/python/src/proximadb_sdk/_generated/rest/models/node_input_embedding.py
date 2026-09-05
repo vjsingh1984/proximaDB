@@ -13,70 +13,61 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-if TYPE_CHECKING:
-    from ..models.edge_response import EdgeResponse
-
-
-T = TypeVar("T", bound="BatchEdgesResponseData")
+T = TypeVar("T", bound="NodeInputEmbedding")
 
 
 @_attrs_define
-class BatchEdgesResponseData:
+class NodeInputEmbedding:
     """
     Attributes:
-        results (list[EdgeResponse] | Unset):
-        count (int | Unset):
+        vector (list[float]):
+        version (str | Unset):
+        model_id (str | Unset):
     """
 
-    results: list[EdgeResponse] | Unset = UNSET
-    count: int | Unset = UNSET
+    vector: list[float]
+    version: str | Unset = UNSET
+    model_id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.edge_response import EdgeResponse
+        vector = self.vector
 
-        results: list[dict[str, Any]] | Unset = UNSET
-        if not isinstance(self.results, Unset):
-            results = []
-            for results_item_data in self.results:
-                results_item = results_item_data.to_dict()
-                results.append(results_item)
+        version = self.version
 
-        count = self.count
+        model_id = self.model_id
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({})
-        if results is not UNSET:
-            field_dict["results"] = results
-        if count is not UNSET:
-            field_dict["count"] = count
+        field_dict.update(
+            {
+                "vector": vector,
+            }
+        )
+        if version is not UNSET:
+            field_dict["version"] = version
+        if model_id is not UNSET:
+            field_dict["model_id"] = model_id
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.edge_response import EdgeResponse
-
         d = dict(src_dict)
-        _results = d.pop("results", UNSET)
-        results: list[EdgeResponse] | Unset = UNSET
-        if _results is not UNSET:
-            results = []
-            for results_item_data in _results:
-                results_item = EdgeResponse.from_dict(results_item_data)
+        vector = cast(list[float], d.pop("vector"))
 
-                results.append(results_item)
+        version = d.pop("version", UNSET)
 
-        count = d.pop("count", UNSET)
+        model_id = d.pop("model_id", UNSET)
 
-        batch_edges_response_data = cls(
-            results=results,
-            count=count,
+        node_input_embedding = cls(
+            vector=vector,
+            version=version,
+            model_id=model_id,
         )
 
-        batch_edges_response_data.additional_properties = d
-        return batch_edges_response_data
+        node_input_embedding.additional_properties = d
+        return node_input_embedding
 
     @property
     def additional_keys(self) -> list[str]:

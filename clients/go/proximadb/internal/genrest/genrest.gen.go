@@ -388,6 +388,39 @@ func (e CatalogModelRegistryMutation4Operation) Valid() bool {
 	}
 }
 
+// Defines values for GraphErrorBodyCode.
+const (
+	ALREADYEXISTS       GraphErrorBodyCode = "ALREADY_EXISTS"
+	CONSTRAINTVIOLATION GraphErrorBodyCode = "CONSTRAINT_VIOLATION"
+	INTERNALERROR       GraphErrorBodyCode = "INTERNAL_ERROR"
+	INVALIDARGUMENT     GraphErrorBodyCode = "INVALID_ARGUMENT"
+	NOTFOUND            GraphErrorBodyCode = "NOT_FOUND"
+	PERMISSIONDENIED    GraphErrorBodyCode = "PERMISSION_DENIED"
+	TIMEOUT             GraphErrorBodyCode = "TIMEOUT"
+)
+
+// Valid indicates whether the value is a known member of the GraphErrorBodyCode enum.
+func (e GraphErrorBodyCode) Valid() bool {
+	switch e {
+	case ALREADYEXISTS:
+		return true
+	case CONSTRAINTVIOLATION:
+		return true
+	case INTERNALERROR:
+		return true
+	case INVALIDARGUMENT:
+		return true
+	case NOTFOUND:
+		return true
+	case PERMISSIONDENIED:
+		return true
+	case TIMEOUT:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PinResponseStatus.
 const (
 	Pinned   PinResponseStatus = "pinned"
@@ -835,42 +868,14 @@ type ApplyModelRegistryMutationRequest struct {
 // restart, not freshly assigned.
 type AssignmentReason string
 
-// BatchCreateEdgesRequest Body for `POST /api/v2/graphs/{id}/edges/batch`.
+// BatchCreateEdgesRequest defines model for BatchCreateEdgesRequest.
 type BatchCreateEdgesRequest struct {
 	Edges []EdgeInput `json:"edges"`
 }
 
-// BatchCreateNodesRequest Body for `POST /api/v2/graphs/{id}/nodes/batch`.
+// BatchCreateNodesRequest defines model for BatchCreateNodesRequest.
 type BatchCreateNodesRequest struct {
 	Nodes []NodeInput `json:"nodes"`
-}
-
-// BatchEdgesResponse Server returns a `GraphResponse<BatchResults<Edge>>` envelope.
-type BatchEdgesResponse struct {
-	Data                 *BatchEdgesResponse_Data `json:"data,omitempty"`
-	Success              *bool                    `json:"success,omitempty"`
-	AdditionalProperties map[string]interface{}   `json:"-"`
-}
-
-// BatchEdgesResponse_Data defines model for BatchEdgesResponse.Data.
-type BatchEdgesResponse_Data struct {
-	Count                *int                   `json:"count,omitempty"`
-	Results              *[]EdgeResponse        `json:"results,omitempty"`
-	AdditionalProperties map[string]interface{} `json:"-"`
-}
-
-// BatchNodesResponse Server returns a `GraphResponse<BatchResults<Node>>` envelope.
-type BatchNodesResponse struct {
-	Data                 *BatchNodesResponse_Data `json:"data,omitempty"`
-	Success              *bool                    `json:"success,omitempty"`
-	AdditionalProperties map[string]interface{}   `json:"-"`
-}
-
-// BatchNodesResponse_Data defines model for BatchNodesResponse.Data.
-type BatchNodesResponse_Data struct {
-	Count                *int                   `json:"count,omitempty"`
-	Results              *[]NodeResponse        `json:"results,omitempty"`
-	AdditionalProperties map[string]interface{} `json:"-"`
 }
 
 // BulkLogIngestRequest defines model for BulkLogIngestRequest.
@@ -881,6 +886,28 @@ type BulkLogIngestRequest struct {
 // BulkMetricIngestRequest defines model for BulkMetricIngestRequest.
 type BulkMetricIngestRequest struct {
 	Metrics []MetricSampleInput `json:"metrics"`
+}
+
+// CanonicalEdge defines model for CanonicalEdge.
+type CanonicalEdge struct {
+	CreatedAt  string                 `json:"created_at"`
+	EdgeType   string                 `json:"edge_type"`
+	FromNodeId string                 `json:"from_node_id"`
+	Id         string                 `json:"id"`
+	Properties map[string]interface{} `json:"properties"`
+	ToNodeId   string                 `json:"to_node_id"`
+	UpdatedAt  string                 `json:"updated_at"`
+	Weight     *float32               `json:"weight,omitempty"`
+}
+
+// CanonicalNode defines model for CanonicalNode.
+type CanonicalNode struct {
+	CreatedAt  string                 `json:"created_at"`
+	Embedding  *GraphEmbedding        `json:"embedding,omitempty"`
+	Id         string                 `json:"id"`
+	Labels     []string               `json:"labels"`
+	Properties map[string]interface{} `json:"properties"`
+	UpdatedAt  string                 `json:"updated_at"`
 }
 
 // CapabilitiesResponse defines model for CapabilitiesResponse.
@@ -1333,22 +1360,16 @@ type CreateCollectionV2Response struct {
 	SchemaId *string `json:"schema_id,omitempty"`
 }
 
-// CreateEdgeRequest Wrapped envelope: server expects `{"edge": EdgeInput}`.
+// CreateEdgeRequest defines model for CreateEdgeRequest.
 type CreateEdgeRequest struct {
-	// Edge Edge payload nested inside `CreateEdgeRequest.edge`. Matches
-	// `RestEdgeInput` in proximadb-api's graph handler.
 	Edge EdgeInput `json:"edge"`
 }
 
 // CreateGraphRequest defines model for CreateGraphRequest.
 type CreateGraphRequest struct {
 	Description *string `json:"description,omitempty"`
-
-	// GraphId Unique identifier for the new graph collection.
-	GraphId string `json:"graph_id"`
-
-	// Name Optional human-readable name (defaults to graph_id).
-	Name *string `json:"name,omitempty"`
+	GraphId     string  `json:"graph_id"`
+	Name        *string `json:"name,omitempty"`
 }
 
 // CreateModelRegistryRequest defines model for CreateModelRegistryRequest.
@@ -1357,10 +1378,8 @@ type CreateModelRegistryRequest struct {
 	Name string `json:"name"`
 }
 
-// CreateNodeRequest Wrapped envelope: server expects `{"node": NodeInput}`.
+// CreateNodeRequest defines model for CreateNodeRequest.
 type CreateNodeRequest struct {
-	// Node Node payload nested inside `CreateNodeRequest.node`. Matches
-	// `RestNodeInput` in proximadb-api's graph handler.
 	Node NodeInput `json:"node"`
 }
 
@@ -1388,20 +1407,6 @@ type DeleteCollectionV2Response struct {
 	Success bool `json:"success"`
 }
 
-// DeleteGraphResponse 204 No Content on success with an empty `GraphResponse` envelope;
-// 404 Not Found with an error envelope when the graph is missing.
-type DeleteGraphResponse struct {
-	Success              *bool                  `json:"success,omitempty"`
-	AdditionalProperties map[string]interface{} `json:"-"`
-}
-
-// DeleteNodeResponse defines model for DeleteNodeResponse.
-type DeleteNodeResponse struct {
-	Id                   *string                `json:"id,omitempty"`
-	Success              *bool                  `json:"success,omitempty"`
-	AdditionalProperties map[string]interface{} `json:"-"`
-}
-
 // DeleteRecordV2Response Response for deleting a single record.
 type DeleteRecordV2Response struct {
 	// Id Deleted record ID.
@@ -1414,33 +1419,14 @@ type DeleteRecordV2Response struct {
 	Success bool `json:"success"`
 }
 
-// EdgeInput Edge payload nested inside `CreateEdgeRequest.edge`. Matches
-// `RestEdgeInput` in proximadb-api's graph handler.
+// EdgeInput defines model for EdgeInput.
 type EdgeInput struct {
 	EdgeType   string                  `json:"edge_type"`
 	FromNodeId string                  `json:"from_node_id"`
 	Id         string                  `json:"id"`
 	Properties *map[string]interface{} `json:"properties,omitempty"`
 	ToNodeId   string                  `json:"to_node_id"`
-	Weight     *float64                `json:"weight,omitempty"`
-}
-
-// EdgeResponse defines model for EdgeResponse.
-type EdgeResponse struct {
-	EdgeType             *string                 `json:"edge_type,omitempty"`
-	FromNodeId           *string                 `json:"from_node_id,omitempty"`
-	Id                   string                  `json:"id"`
-	Properties           *map[string]interface{} `json:"properties,omitempty"`
-	ToNodeId             *string                 `json:"to_node_id,omitempty"`
-	Weight               *float64                `json:"weight,omitempty"`
-	AdditionalProperties map[string]interface{}  `json:"-"`
-}
-
-// EmbeddingInput defines model for EmbeddingInput.
-type EmbeddingInput struct {
-	Modality *string   `json:"modality,omitempty"`
-	ModelId  *string   `json:"model_id,omitempty"`
-	Vector   []float32 `json:"vector"`
+	Weight     *float32                `json:"weight,omitempty"`
 }
 
 // EntityDto defines model for EntityDto.
@@ -1588,24 +1574,282 @@ type FusionStatsDto struct {
 	SourcesSkipped int `json:"sources_skipped"`
 }
 
-// GraphCollectionResponse Server returns a `GraphResponse<T>` envelope around graph
-// collection metadata. The fields below are the common subset
-// SDKs rely on; extra server-side fields are passed through.
+// GraphBatchEdgesResponse defines model for GraphBatchEdgesResponse.
+type GraphBatchEdgesResponse struct {
+	Data     *GraphEdgeBatchResults `json:"data,omitempty"`
+	Error    *GraphErrorBody        `json:"error,omitempty"`
+	Metadata *GraphResponseMetadata `json:"metadata,omitempty"`
+	Success  bool                   `json:"success"`
+}
+
+// GraphBatchNodesResponse defines model for GraphBatchNodesResponse.
+type GraphBatchNodesResponse struct {
+	Data     *GraphNodeBatchResults `json:"data,omitempty"`
+	Error    *GraphErrorBody        `json:"error,omitempty"`
+	Metadata *GraphResponseMetadata `json:"metadata,omitempty"`
+	Success  bool                   `json:"success"`
+}
+
+// GraphCollectionListResponse defines model for GraphCollectionListResponse.
+type GraphCollectionListResponse struct {
+	Data     *[]map[string]interface{} `json:"data,omitempty"`
+	Error    *GraphErrorBody           `json:"error,omitempty"`
+	Metadata *GraphResponseMetadata    `json:"metadata,omitempty"`
+	Success  bool                      `json:"success"`
+}
+
+// GraphCollectionResponse Envelope around the serialized graph-collection object. The
+// payload is the port's collection record rendered as JSON — an
+// open object (the field set is the proto collection's, subject to
+// port evolution).
 type GraphCollectionResponse struct {
-	Description          *string                `json:"description,omitempty"`
-	EdgeCount            *int                   `json:"edge_count,omitempty"`
-	GraphId              *string                `json:"graph_id,omitempty"`
-	Name                 *string                `json:"name,omitempty"`
-	NodeCount            *int                   `json:"node_count,omitempty"`
-	AdditionalProperties map[string]interface{} `json:"-"`
+	Data     *map[string]interface{} `json:"data,omitempty"`
+	Error    *GraphErrorBody         `json:"error,omitempty"`
+	Metadata *GraphResponseMetadata  `json:"metadata,omitempty"`
+	Success  bool                    `json:"success"`
+}
+
+// GraphComponentsData defines model for GraphComponentsData.
+type GraphComponentsData struct {
+	Components [][]string `json:"components"`
+}
+
+// GraphComponentsResponse defines model for GraphComponentsResponse.
+type GraphComponentsResponse struct {
+	Data     *GraphComponentsData   `json:"data,omitempty"`
+	Error    *GraphErrorBody        `json:"error,omitempty"`
+	Metadata *GraphResponseMetadata `json:"metadata,omitempty"`
+	Success  bool                   `json:"success"`
+}
+
+// GraphCyclesData defines model for GraphCyclesData.
+type GraphCyclesData struct {
+	HasCycle bool `json:"has_cycle"`
+}
+
+// GraphCyclesResponse defines model for GraphCyclesResponse.
+type GraphCyclesResponse struct {
+	Data     *GraphCyclesData       `json:"data,omitempty"`
+	Error    *GraphErrorBody        `json:"error,omitempty"`
+	Metadata *GraphResponseMetadata `json:"metadata,omitempty"`
+	Success  bool                   `json:"success"`
+}
+
+// GraphDdlData defines model for GraphDdlData.
+type GraphDdlData struct {
+	Success bool `json:"success"`
+}
+
+// GraphDdlResponse defines model for GraphDdlResponse.
+type GraphDdlResponse struct {
+	Data     *GraphDdlData          `json:"data,omitempty"`
+	Error    *GraphErrorBody        `json:"error,omitempty"`
+	Metadata *GraphResponseMetadata `json:"metadata,omitempty"`
+	Success  bool                   `json:"success"`
+}
+
+// GraphEdgeBatchResults defines model for GraphEdgeBatchResults.
+type GraphEdgeBatchResults struct {
+	CreatedCount uint64          `json:"created_count"`
+	Errors       []interface{}   `json:"errors"`
+	FailedCount  uint64          `json:"failed_count"`
+	Results      []CanonicalEdge `json:"results"`
+	UpdatedCount uint64          `json:"updated_count"`
+}
+
+// GraphEdgeQuery defines model for GraphEdgeQuery.
+type GraphEdgeQuery struct {
+	// ContinuationToken "offset:<n>" form; decodes to the offset.
+	ContinuationToken *string                 `json:"continuation_token,omitempty"`
+	EdgeType          *string                 `json:"edge_type,omitempty"`
+	FromNodeId        *string                 `json:"from_node_id,omitempty"`
+	Limit             *uint32                 `json:"limit,omitempty"`
+	Offset            *uint32                 `json:"offset,omitempty"`
+	Properties        *map[string]interface{} `json:"properties,omitempty"`
+	ToNodeId          *string                 `json:"to_node_id,omitempty"`
+}
+
+// GraphEdgeQueryResponse defines model for GraphEdgeQueryResponse.
+type GraphEdgeQueryResponse struct {
+	Data     *GraphEdgeQueryResults `json:"data,omitempty"`
+	Error    *GraphErrorBody        `json:"error,omitempty"`
+	Metadata *GraphResponseMetadata `json:"metadata,omitempty"`
+	Success  bool                   `json:"success"`
+}
+
+// GraphEdgeQueryResults defines model for GraphEdgeQueryResults.
+type GraphEdgeQueryResults struct {
+	HasMore    bool            `json:"has_more"`
+	Items      []CanonicalEdge `json:"items"`
+	NextToken  *string         `json:"next_token,omitempty"`
+	TotalCount *uint64         `json:"total_count,omitempty"`
+}
+
+// GraphEdgeResponse defines model for GraphEdgeResponse.
+type GraphEdgeResponse struct {
+	Data     *CanonicalEdge         `json:"data,omitempty"`
+	Error    *GraphErrorBody        `json:"error,omitempty"`
+	Metadata *GraphResponseMetadata `json:"metadata,omitempty"`
+	Success  bool                   `json:"success"`
+}
+
+// GraphEmbedding defines model for GraphEmbedding.
+type GraphEmbedding struct {
+	Dimension    uint32    `json:"dimension"`
+	ModelId      string    `json:"model_id"`
+	ModelVersion string    `json:"model_version"`
+	Vector       []float32 `json:"vector"`
+}
+
+// GraphErrorBody defines model for GraphErrorBody.
+type GraphErrorBody struct {
+	Code    GraphErrorBodyCode `json:"code"`
+	Details interface{}        `json:"details,omitempty"`
+	Message string             `json:"message"`
+}
+
+// GraphErrorBodyCode defines model for GraphErrorBody.Code.
+type GraphErrorBodyCode string
+
+// GraphNodeBatchResults defines model for GraphNodeBatchResults.
+type GraphNodeBatchResults struct {
+	CreatedCount uint64          `json:"created_count"`
+	Errors       []interface{}   `json:"errors"`
+	FailedCount  uint64          `json:"failed_count"`
+	Results      []CanonicalNode `json:"results"`
+	UpdatedCount uint64          `json:"updated_count"`
+}
+
+// GraphNodeListResponse defines model for GraphNodeListResponse.
+type GraphNodeListResponse struct {
+	Data     *[]CanonicalNode       `json:"data,omitempty"`
+	Error    *GraphErrorBody        `json:"error,omitempty"`
+	Metadata *GraphResponseMetadata `json:"metadata,omitempty"`
+	Success  bool                   `json:"success"`
+}
+
+// GraphNodeQuery defines model for GraphNodeQuery.
+type GraphNodeQuery struct {
+	// ContinuationToken "offset:<n>" form; decodes to the offset.
+	ContinuationToken *string                 `json:"continuation_token,omitempty"`
+	Labels            *[]string               `json:"labels,omitempty"`
+	Limit             *uint32                 `json:"limit,omitempty"`
+	Offset            *uint32                 `json:"offset,omitempty"`
+	Properties        *map[string]interface{} `json:"properties,omitempty"`
+}
+
+// GraphNodeQueryResponse defines model for GraphNodeQueryResponse.
+type GraphNodeQueryResponse struct {
+	Data     *GraphNodeQueryResults `json:"data,omitempty"`
+	Error    *GraphErrorBody        `json:"error,omitempty"`
+	Metadata *GraphResponseMetadata `json:"metadata,omitempty"`
+	Success  bool                   `json:"success"`
+}
+
+// GraphNodeQueryResults defines model for GraphNodeQueryResults.
+type GraphNodeQueryResults struct {
+	HasMore    bool            `json:"has_more"`
+	Items      []CanonicalNode `json:"items"`
+	NextToken  *string         `json:"next_token,omitempty"`
+	TotalCount *uint64         `json:"total_count,omitempty"`
+}
+
+// GraphNodeResponse defines model for GraphNodeResponse.
+type GraphNodeResponse struct {
+	Data     *CanonicalNode         `json:"data,omitempty"`
+	Error    *GraphErrorBody        `json:"error,omitempty"`
+	Metadata *GraphResponseMetadata `json:"metadata,omitempty"`
+	Success  bool                   `json:"success"`
+}
+
+// GraphQueryData defines model for GraphQueryData.
+type GraphQueryData struct {
+	RowCount uint64        `json:"row_count"`
+	Rows     []interface{} `json:"rows"`
+}
+
+// GraphQueryRequest defines model for GraphQueryRequest.
+type GraphQueryRequest struct {
+	// Language Accepted but currently unused server-side.
+	Language *string `json:"language,omitempty"`
+	Query    string  `json:"query"`
+
+	// TimeoutMs Accepted but currently unused server-side.
+	TimeoutMs *uint32 `json:"timeout_ms,omitempty"`
+}
+
+// GraphQueryResponse defines model for GraphQueryResponse.
+type GraphQueryResponse struct {
+	Data     *GraphQueryData        `json:"data,omitempty"`
+	Error    *GraphErrorBody        `json:"error,omitempty"`
+	Metadata *GraphResponseMetadata `json:"metadata,omitempty"`
+	Success  bool                   `json:"success"`
+}
+
+// GraphResponseMetadata defines model for GraphResponseMetadata.
+type GraphResponseMetadata struct {
+	ExecutionTimeMs *uint64 `json:"execution_time_ms,omitempty"`
+	RequestId       *string `json:"request_id,omitempty"`
+}
+
+// GraphShortestPathData defines model for GraphShortestPathData.
+type GraphShortestPathData struct {
+	Found       bool     `json:"found"`
+	Path        []string `json:"path"`
+	TotalWeight *float32 `json:"total_weight,omitempty"`
+}
+
+// GraphShortestPathResponse defines model for GraphShortestPathResponse.
+type GraphShortestPathResponse struct {
+	Data     *GraphShortestPathData `json:"data,omitempty"`
+	Error    *GraphErrorBody        `json:"error,omitempty"`
+	Metadata *GraphResponseMetadata `json:"metadata,omitempty"`
+	Success  bool                   `json:"success"`
+}
+
+// GraphStats defines model for GraphStats.
+type GraphStats struct {
+	AverageDegree       float32       `json:"average_degree"`
+	ConnectedComponents uint32        `json:"connected_components"`
+	EdgeTypeStats       []interface{} `json:"edge_type_stats"`
+	LabelStats          []interface{} `json:"label_stats"`
+	MaxDegree           uint32        `json:"max_degree"`
+	MemoryUsageBytes    uint64        `json:"memory_usage_bytes"`
+	TotalEdges          uint64        `json:"total_edges"`
+	TotalNodes          uint64        `json:"total_nodes"`
+	TotalProperties     uint64        `json:"total_properties"`
 }
 
 // GraphStatsResponse defines model for GraphStatsResponse.
 type GraphStatsResponse struct {
-	Density              *float64               `json:"density,omitempty"`
-	EdgeCount            *int                   `json:"edge_count,omitempty"`
-	NodeCount            *int                   `json:"node_count,omitempty"`
-	AdditionalProperties map[string]interface{} `json:"-"`
+	Data     *GraphStats            `json:"data,omitempty"`
+	Error    *GraphErrorBody        `json:"error,omitempty"`
+	Metadata *GraphResponseMetadata `json:"metadata,omitempty"`
+	Success  bool                   `json:"success"`
+}
+
+// GraphTraversalData defines model for GraphTraversalData.
+type GraphTraversalData struct {
+	Edges []CanonicalEdge      `json:"edges"`
+	Nodes []CanonicalNode      `json:"nodes"`
+	Paths *[][]string          `json:"paths,omitempty"`
+	Stats *GraphTraversalStats `json:"stats,omitempty"`
+}
+
+// GraphTraversalResponse defines model for GraphTraversalResponse.
+type GraphTraversalResponse struct {
+	Data     *GraphTraversalData    `json:"data,omitempty"`
+	Error    *GraphErrorBody        `json:"error,omitempty"`
+	Metadata *GraphResponseMetadata `json:"metadata,omitempty"`
+	Success  bool                   `json:"success"`
+}
+
+// GraphTraversalStats defines model for GraphTraversalStats.
+type GraphTraversalStats struct {
+	EdgesTraversed  uint64  `json:"edges_traversed"`
+	ExecutionTimeMs *uint64 `json:"execution_time_ms,omitempty"`
+	MaxDepthReached uint32  `json:"max_depth_reached"`
+	NodesVisited    uint64  `json:"nodes_visited"`
 }
 
 // HealthResponse defines model for HealthResponse.
@@ -1850,14 +2094,6 @@ type ListCollectionsV2Response struct {
 	Total int64 `json:"total"`
 }
 
-// ListGraphsResponse Server returns a `GraphResponse<Vec<...>>` envelope with `data`
-// containing the graph collections.
-type ListGraphsResponse struct {
-	Data                 *[]GraphCollectionResponse `json:"data,omitempty"`
-	Success              *bool                      `json:"success,omitempty"`
-	AdditionalProperties map[string]interface{}     `json:"-"`
-}
-
 // ListModelRegistriesResponse defines model for ListModelRegistriesResponse.
 type ListModelRegistriesResponse struct {
 	Registries []ModelRegistryRecordResponse `json:"registries"`
@@ -1940,21 +2176,16 @@ type NlTranslateResult struct {
 	Views           []string `json:"views"`
 }
 
-// NodeInput Node payload nested inside `CreateNodeRequest.node`. Matches
-// `RestNodeInput` in proximadb-api's graph handler.
+// NodeInput defines model for NodeInput.
 type NodeInput struct {
-	Embedding  *EmbeddingInput         `json:"embedding,omitempty"`
+	Embedding *struct {
+		ModelId *string   `json:"model_id,omitempty"`
+		Vector  []float32 `json:"vector"`
+		Version *string   `json:"version,omitempty"`
+	} `json:"embedding,omitempty"`
 	Id         string                  `json:"id"`
 	Labels     *[]string               `json:"labels,omitempty"`
 	Properties *map[string]interface{} `json:"properties,omitempty"`
-}
-
-// NodeResponse defines model for NodeResponse.
-type NodeResponse struct {
-	Id                   string                  `json:"id"`
-	Labels               *[]string               `json:"labels,omitempty"`
-	Properties           *map[string]interface{} `json:"properties,omitempty"`
-	AdditionalProperties map[string]interface{}  `json:"-"`
 }
 
 // ObservabilityIngestResponse defines model for ObservabilityIngestResponse.
@@ -2413,6 +2644,16 @@ type SearchEntitiesResponse struct {
 	Total   int32                `json:"total"`
 }
 
+// ShortestPathRequest defines model for ShortestPathRequest.
+type ShortestPathRequest struct {
+	Algorithm    *string   `json:"algorithm,omitempty"`
+	EdgeTypes    *[]string `json:"edge_types,omitempty"`
+	K            *uint32   `json:"k,omitempty"`
+	MaxDepth     *uint32   `json:"max_depth,omitempty"`
+	StartNodeId  string    `json:"start_node_id"`
+	TargetNodeId string    `json:"target_node_id"`
+}
+
 // SqlRequest One SQL statement executed through the shared SQL authority.
 //
 // Parameter binding is intentionally not advertised yet: the relational
@@ -2616,24 +2857,14 @@ type TextFieldOutput struct {
 	Truncated bool `json:"truncated"`
 }
 
-// TraverseRequest Flat shape (no wrapper). Matches `RestTraversalRequest` in
-// proximadb-api.
+// TraverseRequest defines model for TraverseRequest.
 type TraverseRequest struct {
-	// Algorithm bfs | dfs | shortest_path
 	Algorithm   *string   `json:"algorithm,omitempty"`
 	EdgeTypes   *[]string `json:"edge_types,omitempty"`
-	Limit       *int      `json:"limit,omitempty"`
-	MaxDepth    *int      `json:"max_depth,omitempty"`
+	Limit       *uint32   `json:"limit,omitempty"`
+	MaxDepth    *uint32   `json:"max_depth,omitempty"`
 	NodeLabels  *[]string `json:"node_labels,omitempty"`
 	StartNodeId string    `json:"start_node_id"`
-}
-
-// TraverseResponse defines model for TraverseResponse.
-type TraverseResponse struct {
-	Edges                *[]EdgeResponse        `json:"edges,omitempty"`
-	Nodes                *[]NodeResponse        `json:"nodes,omitempty"`
-	Paths                *[][]string            `json:"paths,omitempty"`
-	AdditionalProperties map[string]interface{} `json:"-"`
 }
 
 // TypedFilter A typed filter for search operations
@@ -2766,6 +2997,17 @@ type TypedSearchResult struct {
 	Vector *[]float32 `json:"vector,omitempty"`
 }
 
+// UniqueConstraintRequest defines model for UniqueConstraintRequest.
+type UniqueConstraintRequest struct {
+	Label    string `json:"label"`
+	Property string `json:"property"`
+}
+
+// UpdateGraphSchemaRequest defines model for UpdateGraphSchemaRequest.
+type UpdateGraphSchemaRequest struct {
+	Schema map[string]interface{} `json:"schema"`
+}
+
 // UpdateSchemaRequest Request to update schema
 //
 // ## Schema Evolution Rules
@@ -2852,6 +3094,25 @@ type UpsertEntityResponse struct {
 	Success  bool   `json:"success"`
 }
 
+// WalkRequest defines model for WalkRequest.
+type WalkRequest struct {
+	Limit       *uint32 `json:"limit,omitempty"`
+	MaxDepth    *uint32 `json:"max_depth,omitempty"`
+	StartNodeId string  `json:"start_node_id"`
+}
+
+// WalkStepRequest defines model for WalkStepRequest.
+type WalkStepRequest struct {
+	EdgeType *string `json:"edge_type,omitempty"`
+
+	// Limit Accepted but currently unused server-side.
+	Limit  *uint32 `json:"limit,omitempty"`
+	NodeId string  `json:"node_id"`
+}
+
+// EdgeId defines model for EdgeId.
+type EdgeId = string
+
 // GraphId defines model for GraphId.
 type GraphId = string
 
@@ -2900,6 +3161,15 @@ type AbacUnavailable = AbacOperatorErrorResponse
 // whenever the request passed through the request-id middleware; quote it in
 // bug reports.
 type BadRequest = ErrorResponse
+
+// GraphBadRequest defines model for GraphBadRequest.
+type GraphBadRequest = GraphErrorBody
+
+// GraphInternal defines model for GraphInternal.
+type GraphInternal = GraphErrorBody
+
+// GraphNotFound defines model for GraphNotFound.
+type GraphNotFound = GraphErrorBody
 
 // InternalError Canonical ProximaDB error envelope (`{ error: { type, message, code } }`).
 //
@@ -3242,6 +3512,30 @@ type GetGraphParams struct {
 	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
 
+// GetConnectedComponentsParams defines parameters for GetConnectedComponents.
+type GetConnectedComponentsParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// RemoveUniqueConstraintParams defines parameters for RemoveUniqueConstraint.
+type RemoveUniqueConstraintParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// AddUniqueConstraintParams defines parameters for AddUniqueConstraint.
+type AddUniqueConstraintParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// CheckCyclesParams defines parameters for CheckCycles.
+type CheckCyclesParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
 // CreateEdgeParams defines parameters for CreateEdge.
 type CreateEdgeParams struct {
 	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
@@ -3250,6 +3544,24 @@ type CreateEdgeParams struct {
 
 // BatchCreateEdgesParams defines parameters for BatchCreateEdges.
 type BatchCreateEdgesParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// DeleteEdgeParams defines parameters for DeleteEdge.
+type DeleteEdgeParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// GetEdgeParams defines parameters for GetEdge.
+type GetEdgeParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// UpdateEdgeParams defines parameters for UpdateEdge.
+type UpdateEdgeParams struct {
 	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
 	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
@@ -3290,14 +3602,68 @@ type GetNodeParams struct {
 	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
 
+// UpdateNodeParams defines parameters for UpdateNode.
+type UpdateNodeParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// GetNodeNeighborsParams defines parameters for GetNodeNeighbors.
+type GetNodeNeighborsParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// ExecuteGraphQueryParams defines parameters for ExecuteGraphQuery.
+type ExecuteGraphQueryParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// QueryEdgesParams defines parameters for QueryEdges.
+type QueryEdgesParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// QueryNodesParams defines parameters for QueryNodes.
+type QueryNodesParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// UpdateGraphSchemaParams defines parameters for UpdateGraphSchema.
+type UpdateGraphSchemaParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// ShortestPathParams defines parameters for ShortestPath.
+type ShortestPathParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
 // GetGraphStatsParams defines parameters for GetGraphStats.
 type GetGraphStatsParams struct {
 	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
 	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
 
+// StepGraphParams defines parameters for StepGraph.
+type StepGraphParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
 // TraverseGraphParams defines parameters for TraverseGraph.
 type TraverseGraphParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// WalkGraphParams defines parameters for WalkGraph.
+type WalkGraphParams struct {
 	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
 	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
@@ -3525,11 +3891,20 @@ type InsertDocumentJSONRequestBody InsertDocumentJSONBody
 // CreateGraphJSONRequestBody defines body for CreateGraph for application/json ContentType.
 type CreateGraphJSONRequestBody = CreateGraphRequest
 
+// RemoveUniqueConstraintJSONRequestBody defines body for RemoveUniqueConstraint for application/json ContentType.
+type RemoveUniqueConstraintJSONRequestBody = UniqueConstraintRequest
+
+// AddUniqueConstraintJSONRequestBody defines body for AddUniqueConstraint for application/json ContentType.
+type AddUniqueConstraintJSONRequestBody = UniqueConstraintRequest
+
 // CreateEdgeJSONRequestBody defines body for CreateEdge for application/json ContentType.
 type CreateEdgeJSONRequestBody = CreateEdgeRequest
 
 // BatchCreateEdgesJSONRequestBody defines body for BatchCreateEdges for application/json ContentType.
 type BatchCreateEdgesJSONRequestBody = BatchCreateEdgesRequest
+
+// UpdateEdgeJSONRequestBody defines body for UpdateEdge for application/json ContentType.
+type UpdateEdgeJSONRequestBody = EdgeInput
 
 // FusionSearchV2JSONRequestBody defines body for FusionSearchV2 for application/json ContentType.
 type FusionSearchV2JSONRequestBody = FusionSearchRequest
@@ -3543,8 +3918,32 @@ type CreateNodeJSONRequestBody = CreateNodeRequest
 // BatchCreateNodesJSONRequestBody defines body for BatchCreateNodes for application/json ContentType.
 type BatchCreateNodesJSONRequestBody = BatchCreateNodesRequest
 
+// UpdateNodeJSONRequestBody defines body for UpdateNode for application/json ContentType.
+type UpdateNodeJSONRequestBody = NodeInput
+
+// ExecuteGraphQueryJSONRequestBody defines body for ExecuteGraphQuery for application/json ContentType.
+type ExecuteGraphQueryJSONRequestBody = GraphQueryRequest
+
+// QueryEdgesJSONRequestBody defines body for QueryEdges for application/json ContentType.
+type QueryEdgesJSONRequestBody = GraphEdgeQuery
+
+// QueryNodesJSONRequestBody defines body for QueryNodes for application/json ContentType.
+type QueryNodesJSONRequestBody = GraphNodeQuery
+
+// UpdateGraphSchemaJSONRequestBody defines body for UpdateGraphSchema for application/json ContentType.
+type UpdateGraphSchemaJSONRequestBody = UpdateGraphSchemaRequest
+
+// ShortestPathJSONRequestBody defines body for ShortestPath for application/json ContentType.
+type ShortestPathJSONRequestBody = ShortestPathRequest
+
+// StepGraphJSONRequestBody defines body for StepGraph for application/json ContentType.
+type StepGraphJSONRequestBody = WalkStepRequest
+
 // TraverseGraphJSONRequestBody defines body for TraverseGraph for application/json ContentType.
 type TraverseGraphJSONRequestBody = TraverseRequest
+
+// WalkGraphJSONRequestBody defines body for WalkGraph for application/json ContentType.
+type WalkGraphJSONRequestBody = WalkRequest
 
 // HybridIndexJSONRequestBody defines body for HybridIndex for application/json ContentType.
 type HybridIndexJSONRequestBody HybridIndexJSONBody
@@ -3596,338 +3995,6 @@ type ExplainQueryJSONRequestBody = ExplainQueryRequest
 
 // ExecuteSqlJSONRequestBody defines body for ExecuteSql for application/json ContentType.
 type ExecuteSqlJSONRequestBody = SqlRequest
-
-// Getter for additional properties for BatchEdgesResponse. Returns the specified
-// element and whether it was found
-func (a BatchEdgesResponse) Get(fieldName string) (value interface{}, found bool) {
-	if a.AdditionalProperties != nil {
-		value, found = a.AdditionalProperties[fieldName]
-	}
-	return
-}
-
-// Setter for additional properties for BatchEdgesResponse
-func (a *BatchEdgesResponse) Set(fieldName string, value interface{}) {
-	if a.AdditionalProperties == nil {
-		a.AdditionalProperties = make(map[string]interface{})
-	}
-	a.AdditionalProperties[fieldName] = value
-}
-
-// Override default JSON handling for BatchEdgesResponse to handle AdditionalProperties
-func (a *BatchEdgesResponse) UnmarshalJSON(b []byte) error {
-	object := make(map[string]json.RawMessage)
-	err := json.Unmarshal(b, &object)
-	if err != nil {
-		return err
-	}
-
-	if raw, found := object["data"]; found {
-		err = json.Unmarshal(raw, &a.Data)
-		if err != nil {
-			return fmt.Errorf("error reading 'data': %w", err)
-		}
-		delete(object, "data")
-	}
-
-	if raw, found := object["success"]; found {
-		err = json.Unmarshal(raw, &a.Success)
-		if err != nil {
-			return fmt.Errorf("error reading 'success': %w", err)
-		}
-		delete(object, "success")
-	}
-
-	if len(object) != 0 {
-		a.AdditionalProperties = make(map[string]interface{})
-		for fieldName, fieldBuf := range object {
-			var fieldVal interface{}
-			err := json.Unmarshal(fieldBuf, &fieldVal)
-			if err != nil {
-				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
-			}
-			a.AdditionalProperties[fieldName] = fieldVal
-		}
-	}
-	return nil
-}
-
-// Override default JSON handling for BatchEdgesResponse to handle AdditionalProperties
-func (a BatchEdgesResponse) MarshalJSON() ([]byte, error) {
-	var err error
-	object := make(map[string]json.RawMessage)
-
-	if a.Data != nil {
-		object["data"], err = json.Marshal(a.Data)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'data': %w", err)
-		}
-	}
-
-	if a.Success != nil {
-		object["success"], err = json.Marshal(a.Success)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'success': %w", err)
-		}
-	}
-
-	for fieldName, field := range a.AdditionalProperties {
-		object[fieldName], err = json.Marshal(field)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
-		}
-	}
-	return json.Marshal(object)
-}
-
-// Getter for additional properties for BatchEdgesResponse_Data. Returns the specified
-// element and whether it was found
-func (a BatchEdgesResponse_Data) Get(fieldName string) (value interface{}, found bool) {
-	if a.AdditionalProperties != nil {
-		value, found = a.AdditionalProperties[fieldName]
-	}
-	return
-}
-
-// Setter for additional properties for BatchEdgesResponse_Data
-func (a *BatchEdgesResponse_Data) Set(fieldName string, value interface{}) {
-	if a.AdditionalProperties == nil {
-		a.AdditionalProperties = make(map[string]interface{})
-	}
-	a.AdditionalProperties[fieldName] = value
-}
-
-// Override default JSON handling for BatchEdgesResponse_Data to handle AdditionalProperties
-func (a *BatchEdgesResponse_Data) UnmarshalJSON(b []byte) error {
-	object := make(map[string]json.RawMessage)
-	err := json.Unmarshal(b, &object)
-	if err != nil {
-		return err
-	}
-
-	if raw, found := object["count"]; found {
-		err = json.Unmarshal(raw, &a.Count)
-		if err != nil {
-			return fmt.Errorf("error reading 'count': %w", err)
-		}
-		delete(object, "count")
-	}
-
-	if raw, found := object["results"]; found {
-		err = json.Unmarshal(raw, &a.Results)
-		if err != nil {
-			return fmt.Errorf("error reading 'results': %w", err)
-		}
-		delete(object, "results")
-	}
-
-	if len(object) != 0 {
-		a.AdditionalProperties = make(map[string]interface{})
-		for fieldName, fieldBuf := range object {
-			var fieldVal interface{}
-			err := json.Unmarshal(fieldBuf, &fieldVal)
-			if err != nil {
-				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
-			}
-			a.AdditionalProperties[fieldName] = fieldVal
-		}
-	}
-	return nil
-}
-
-// Override default JSON handling for BatchEdgesResponse_Data to handle AdditionalProperties
-func (a BatchEdgesResponse_Data) MarshalJSON() ([]byte, error) {
-	var err error
-	object := make(map[string]json.RawMessage)
-
-	if a.Count != nil {
-		object["count"], err = json.Marshal(a.Count)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'count': %w", err)
-		}
-	}
-
-	if a.Results != nil {
-		object["results"], err = json.Marshal(a.Results)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'results': %w", err)
-		}
-	}
-
-	for fieldName, field := range a.AdditionalProperties {
-		object[fieldName], err = json.Marshal(field)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
-		}
-	}
-	return json.Marshal(object)
-}
-
-// Getter for additional properties for BatchNodesResponse. Returns the specified
-// element and whether it was found
-func (a BatchNodesResponse) Get(fieldName string) (value interface{}, found bool) {
-	if a.AdditionalProperties != nil {
-		value, found = a.AdditionalProperties[fieldName]
-	}
-	return
-}
-
-// Setter for additional properties for BatchNodesResponse
-func (a *BatchNodesResponse) Set(fieldName string, value interface{}) {
-	if a.AdditionalProperties == nil {
-		a.AdditionalProperties = make(map[string]interface{})
-	}
-	a.AdditionalProperties[fieldName] = value
-}
-
-// Override default JSON handling for BatchNodesResponse to handle AdditionalProperties
-func (a *BatchNodesResponse) UnmarshalJSON(b []byte) error {
-	object := make(map[string]json.RawMessage)
-	err := json.Unmarshal(b, &object)
-	if err != nil {
-		return err
-	}
-
-	if raw, found := object["data"]; found {
-		err = json.Unmarshal(raw, &a.Data)
-		if err != nil {
-			return fmt.Errorf("error reading 'data': %w", err)
-		}
-		delete(object, "data")
-	}
-
-	if raw, found := object["success"]; found {
-		err = json.Unmarshal(raw, &a.Success)
-		if err != nil {
-			return fmt.Errorf("error reading 'success': %w", err)
-		}
-		delete(object, "success")
-	}
-
-	if len(object) != 0 {
-		a.AdditionalProperties = make(map[string]interface{})
-		for fieldName, fieldBuf := range object {
-			var fieldVal interface{}
-			err := json.Unmarshal(fieldBuf, &fieldVal)
-			if err != nil {
-				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
-			}
-			a.AdditionalProperties[fieldName] = fieldVal
-		}
-	}
-	return nil
-}
-
-// Override default JSON handling for BatchNodesResponse to handle AdditionalProperties
-func (a BatchNodesResponse) MarshalJSON() ([]byte, error) {
-	var err error
-	object := make(map[string]json.RawMessage)
-
-	if a.Data != nil {
-		object["data"], err = json.Marshal(a.Data)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'data': %w", err)
-		}
-	}
-
-	if a.Success != nil {
-		object["success"], err = json.Marshal(a.Success)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'success': %w", err)
-		}
-	}
-
-	for fieldName, field := range a.AdditionalProperties {
-		object[fieldName], err = json.Marshal(field)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
-		}
-	}
-	return json.Marshal(object)
-}
-
-// Getter for additional properties for BatchNodesResponse_Data. Returns the specified
-// element and whether it was found
-func (a BatchNodesResponse_Data) Get(fieldName string) (value interface{}, found bool) {
-	if a.AdditionalProperties != nil {
-		value, found = a.AdditionalProperties[fieldName]
-	}
-	return
-}
-
-// Setter for additional properties for BatchNodesResponse_Data
-func (a *BatchNodesResponse_Data) Set(fieldName string, value interface{}) {
-	if a.AdditionalProperties == nil {
-		a.AdditionalProperties = make(map[string]interface{})
-	}
-	a.AdditionalProperties[fieldName] = value
-}
-
-// Override default JSON handling for BatchNodesResponse_Data to handle AdditionalProperties
-func (a *BatchNodesResponse_Data) UnmarshalJSON(b []byte) error {
-	object := make(map[string]json.RawMessage)
-	err := json.Unmarshal(b, &object)
-	if err != nil {
-		return err
-	}
-
-	if raw, found := object["count"]; found {
-		err = json.Unmarshal(raw, &a.Count)
-		if err != nil {
-			return fmt.Errorf("error reading 'count': %w", err)
-		}
-		delete(object, "count")
-	}
-
-	if raw, found := object["results"]; found {
-		err = json.Unmarshal(raw, &a.Results)
-		if err != nil {
-			return fmt.Errorf("error reading 'results': %w", err)
-		}
-		delete(object, "results")
-	}
-
-	if len(object) != 0 {
-		a.AdditionalProperties = make(map[string]interface{})
-		for fieldName, fieldBuf := range object {
-			var fieldVal interface{}
-			err := json.Unmarshal(fieldBuf, &fieldVal)
-			if err != nil {
-				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
-			}
-			a.AdditionalProperties[fieldName] = fieldVal
-		}
-	}
-	return nil
-}
-
-// Override default JSON handling for BatchNodesResponse_Data to handle AdditionalProperties
-func (a BatchNodesResponse_Data) MarshalJSON() ([]byte, error) {
-	var err error
-	object := make(map[string]json.RawMessage)
-
-	if a.Count != nil {
-		object["count"], err = json.Marshal(a.Count)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'count': %w", err)
-		}
-	}
-
-	if a.Results != nil {
-		object["results"], err = json.Marshal(a.Results)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'results': %w", err)
-		}
-	}
-
-	for fieldName, field := range a.AdditionalProperties {
-		object[fieldName], err = json.Marshal(field)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
-		}
-	}
-	return json.Marshal(object)
-}
 
 // Getter for additional properties for CapabilitiesResponse. Returns the specified
 // element and whether it was found
@@ -4057,524 +4124,6 @@ func (a CapabilitiesResponse) MarshalJSON() ([]byte, error) {
 	return json.Marshal(object)
 }
 
-// Getter for additional properties for DeleteGraphResponse. Returns the specified
-// element and whether it was found
-func (a DeleteGraphResponse) Get(fieldName string) (value interface{}, found bool) {
-	if a.AdditionalProperties != nil {
-		value, found = a.AdditionalProperties[fieldName]
-	}
-	return
-}
-
-// Setter for additional properties for DeleteGraphResponse
-func (a *DeleteGraphResponse) Set(fieldName string, value interface{}) {
-	if a.AdditionalProperties == nil {
-		a.AdditionalProperties = make(map[string]interface{})
-	}
-	a.AdditionalProperties[fieldName] = value
-}
-
-// Override default JSON handling for DeleteGraphResponse to handle AdditionalProperties
-func (a *DeleteGraphResponse) UnmarshalJSON(b []byte) error {
-	object := make(map[string]json.RawMessage)
-	err := json.Unmarshal(b, &object)
-	if err != nil {
-		return err
-	}
-
-	if raw, found := object["success"]; found {
-		err = json.Unmarshal(raw, &a.Success)
-		if err != nil {
-			return fmt.Errorf("error reading 'success': %w", err)
-		}
-		delete(object, "success")
-	}
-
-	if len(object) != 0 {
-		a.AdditionalProperties = make(map[string]interface{})
-		for fieldName, fieldBuf := range object {
-			var fieldVal interface{}
-			err := json.Unmarshal(fieldBuf, &fieldVal)
-			if err != nil {
-				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
-			}
-			a.AdditionalProperties[fieldName] = fieldVal
-		}
-	}
-	return nil
-}
-
-// Override default JSON handling for DeleteGraphResponse to handle AdditionalProperties
-func (a DeleteGraphResponse) MarshalJSON() ([]byte, error) {
-	var err error
-	object := make(map[string]json.RawMessage)
-
-	if a.Success != nil {
-		object["success"], err = json.Marshal(a.Success)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'success': %w", err)
-		}
-	}
-
-	for fieldName, field := range a.AdditionalProperties {
-		object[fieldName], err = json.Marshal(field)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
-		}
-	}
-	return json.Marshal(object)
-}
-
-// Getter for additional properties for DeleteNodeResponse. Returns the specified
-// element and whether it was found
-func (a DeleteNodeResponse) Get(fieldName string) (value interface{}, found bool) {
-	if a.AdditionalProperties != nil {
-		value, found = a.AdditionalProperties[fieldName]
-	}
-	return
-}
-
-// Setter for additional properties for DeleteNodeResponse
-func (a *DeleteNodeResponse) Set(fieldName string, value interface{}) {
-	if a.AdditionalProperties == nil {
-		a.AdditionalProperties = make(map[string]interface{})
-	}
-	a.AdditionalProperties[fieldName] = value
-}
-
-// Override default JSON handling for DeleteNodeResponse to handle AdditionalProperties
-func (a *DeleteNodeResponse) UnmarshalJSON(b []byte) error {
-	object := make(map[string]json.RawMessage)
-	err := json.Unmarshal(b, &object)
-	if err != nil {
-		return err
-	}
-
-	if raw, found := object["id"]; found {
-		err = json.Unmarshal(raw, &a.Id)
-		if err != nil {
-			return fmt.Errorf("error reading 'id': %w", err)
-		}
-		delete(object, "id")
-	}
-
-	if raw, found := object["success"]; found {
-		err = json.Unmarshal(raw, &a.Success)
-		if err != nil {
-			return fmt.Errorf("error reading 'success': %w", err)
-		}
-		delete(object, "success")
-	}
-
-	if len(object) != 0 {
-		a.AdditionalProperties = make(map[string]interface{})
-		for fieldName, fieldBuf := range object {
-			var fieldVal interface{}
-			err := json.Unmarshal(fieldBuf, &fieldVal)
-			if err != nil {
-				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
-			}
-			a.AdditionalProperties[fieldName] = fieldVal
-		}
-	}
-	return nil
-}
-
-// Override default JSON handling for DeleteNodeResponse to handle AdditionalProperties
-func (a DeleteNodeResponse) MarshalJSON() ([]byte, error) {
-	var err error
-	object := make(map[string]json.RawMessage)
-
-	if a.Id != nil {
-		object["id"], err = json.Marshal(a.Id)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'id': %w", err)
-		}
-	}
-
-	if a.Success != nil {
-		object["success"], err = json.Marshal(a.Success)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'success': %w", err)
-		}
-	}
-
-	for fieldName, field := range a.AdditionalProperties {
-		object[fieldName], err = json.Marshal(field)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
-		}
-	}
-	return json.Marshal(object)
-}
-
-// Getter for additional properties for EdgeResponse. Returns the specified
-// element and whether it was found
-func (a EdgeResponse) Get(fieldName string) (value interface{}, found bool) {
-	if a.AdditionalProperties != nil {
-		value, found = a.AdditionalProperties[fieldName]
-	}
-	return
-}
-
-// Setter for additional properties for EdgeResponse
-func (a *EdgeResponse) Set(fieldName string, value interface{}) {
-	if a.AdditionalProperties == nil {
-		a.AdditionalProperties = make(map[string]interface{})
-	}
-	a.AdditionalProperties[fieldName] = value
-}
-
-// Override default JSON handling for EdgeResponse to handle AdditionalProperties
-func (a *EdgeResponse) UnmarshalJSON(b []byte) error {
-	object := make(map[string]json.RawMessage)
-	err := json.Unmarshal(b, &object)
-	if err != nil {
-		return err
-	}
-
-	if raw, found := object["edge_type"]; found {
-		err = json.Unmarshal(raw, &a.EdgeType)
-		if err != nil {
-			return fmt.Errorf("error reading 'edge_type': %w", err)
-		}
-		delete(object, "edge_type")
-	}
-
-	if raw, found := object["from_node_id"]; found {
-		err = json.Unmarshal(raw, &a.FromNodeId)
-		if err != nil {
-			return fmt.Errorf("error reading 'from_node_id': %w", err)
-		}
-		delete(object, "from_node_id")
-	}
-
-	if raw, found := object["id"]; found {
-		err = json.Unmarshal(raw, &a.Id)
-		if err != nil {
-			return fmt.Errorf("error reading 'id': %w", err)
-		}
-		delete(object, "id")
-	}
-
-	if raw, found := object["properties"]; found {
-		err = json.Unmarshal(raw, &a.Properties)
-		if err != nil {
-			return fmt.Errorf("error reading 'properties': %w", err)
-		}
-		delete(object, "properties")
-	}
-
-	if raw, found := object["to_node_id"]; found {
-		err = json.Unmarshal(raw, &a.ToNodeId)
-		if err != nil {
-			return fmt.Errorf("error reading 'to_node_id': %w", err)
-		}
-		delete(object, "to_node_id")
-	}
-
-	if raw, found := object["weight"]; found {
-		err = json.Unmarshal(raw, &a.Weight)
-		if err != nil {
-			return fmt.Errorf("error reading 'weight': %w", err)
-		}
-		delete(object, "weight")
-	}
-
-	if len(object) != 0 {
-		a.AdditionalProperties = make(map[string]interface{})
-		for fieldName, fieldBuf := range object {
-			var fieldVal interface{}
-			err := json.Unmarshal(fieldBuf, &fieldVal)
-			if err != nil {
-				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
-			}
-			a.AdditionalProperties[fieldName] = fieldVal
-		}
-	}
-	return nil
-}
-
-// Override default JSON handling for EdgeResponse to handle AdditionalProperties
-func (a EdgeResponse) MarshalJSON() ([]byte, error) {
-	var err error
-	object := make(map[string]json.RawMessage)
-
-	if a.EdgeType != nil {
-		object["edge_type"], err = json.Marshal(a.EdgeType)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'edge_type': %w", err)
-		}
-	}
-
-	if a.FromNodeId != nil {
-		object["from_node_id"], err = json.Marshal(a.FromNodeId)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'from_node_id': %w", err)
-		}
-	}
-
-	object["id"], err = json.Marshal(a.Id)
-	if err != nil {
-		return nil, fmt.Errorf("error marshaling 'id': %w", err)
-	}
-
-	if a.Properties != nil {
-		object["properties"], err = json.Marshal(a.Properties)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'properties': %w", err)
-		}
-	}
-
-	if a.ToNodeId != nil {
-		object["to_node_id"], err = json.Marshal(a.ToNodeId)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'to_node_id': %w", err)
-		}
-	}
-
-	if a.Weight != nil {
-		object["weight"], err = json.Marshal(a.Weight)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'weight': %w", err)
-		}
-	}
-
-	for fieldName, field := range a.AdditionalProperties {
-		object[fieldName], err = json.Marshal(field)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
-		}
-	}
-	return json.Marshal(object)
-}
-
-// Getter for additional properties for GraphCollectionResponse. Returns the specified
-// element and whether it was found
-func (a GraphCollectionResponse) Get(fieldName string) (value interface{}, found bool) {
-	if a.AdditionalProperties != nil {
-		value, found = a.AdditionalProperties[fieldName]
-	}
-	return
-}
-
-// Setter for additional properties for GraphCollectionResponse
-func (a *GraphCollectionResponse) Set(fieldName string, value interface{}) {
-	if a.AdditionalProperties == nil {
-		a.AdditionalProperties = make(map[string]interface{})
-	}
-	a.AdditionalProperties[fieldName] = value
-}
-
-// Override default JSON handling for GraphCollectionResponse to handle AdditionalProperties
-func (a *GraphCollectionResponse) UnmarshalJSON(b []byte) error {
-	object := make(map[string]json.RawMessage)
-	err := json.Unmarshal(b, &object)
-	if err != nil {
-		return err
-	}
-
-	if raw, found := object["description"]; found {
-		err = json.Unmarshal(raw, &a.Description)
-		if err != nil {
-			return fmt.Errorf("error reading 'description': %w", err)
-		}
-		delete(object, "description")
-	}
-
-	if raw, found := object["edge_count"]; found {
-		err = json.Unmarshal(raw, &a.EdgeCount)
-		if err != nil {
-			return fmt.Errorf("error reading 'edge_count': %w", err)
-		}
-		delete(object, "edge_count")
-	}
-
-	if raw, found := object["graph_id"]; found {
-		err = json.Unmarshal(raw, &a.GraphId)
-		if err != nil {
-			return fmt.Errorf("error reading 'graph_id': %w", err)
-		}
-		delete(object, "graph_id")
-	}
-
-	if raw, found := object["name"]; found {
-		err = json.Unmarshal(raw, &a.Name)
-		if err != nil {
-			return fmt.Errorf("error reading 'name': %w", err)
-		}
-		delete(object, "name")
-	}
-
-	if raw, found := object["node_count"]; found {
-		err = json.Unmarshal(raw, &a.NodeCount)
-		if err != nil {
-			return fmt.Errorf("error reading 'node_count': %w", err)
-		}
-		delete(object, "node_count")
-	}
-
-	if len(object) != 0 {
-		a.AdditionalProperties = make(map[string]interface{})
-		for fieldName, fieldBuf := range object {
-			var fieldVal interface{}
-			err := json.Unmarshal(fieldBuf, &fieldVal)
-			if err != nil {
-				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
-			}
-			a.AdditionalProperties[fieldName] = fieldVal
-		}
-	}
-	return nil
-}
-
-// Override default JSON handling for GraphCollectionResponse to handle AdditionalProperties
-func (a GraphCollectionResponse) MarshalJSON() ([]byte, error) {
-	var err error
-	object := make(map[string]json.RawMessage)
-
-	if a.Description != nil {
-		object["description"], err = json.Marshal(a.Description)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'description': %w", err)
-		}
-	}
-
-	if a.EdgeCount != nil {
-		object["edge_count"], err = json.Marshal(a.EdgeCount)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'edge_count': %w", err)
-		}
-	}
-
-	if a.GraphId != nil {
-		object["graph_id"], err = json.Marshal(a.GraphId)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'graph_id': %w", err)
-		}
-	}
-
-	if a.Name != nil {
-		object["name"], err = json.Marshal(a.Name)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'name': %w", err)
-		}
-	}
-
-	if a.NodeCount != nil {
-		object["node_count"], err = json.Marshal(a.NodeCount)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'node_count': %w", err)
-		}
-	}
-
-	for fieldName, field := range a.AdditionalProperties {
-		object[fieldName], err = json.Marshal(field)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
-		}
-	}
-	return json.Marshal(object)
-}
-
-// Getter for additional properties for GraphStatsResponse. Returns the specified
-// element and whether it was found
-func (a GraphStatsResponse) Get(fieldName string) (value interface{}, found bool) {
-	if a.AdditionalProperties != nil {
-		value, found = a.AdditionalProperties[fieldName]
-	}
-	return
-}
-
-// Setter for additional properties for GraphStatsResponse
-func (a *GraphStatsResponse) Set(fieldName string, value interface{}) {
-	if a.AdditionalProperties == nil {
-		a.AdditionalProperties = make(map[string]interface{})
-	}
-	a.AdditionalProperties[fieldName] = value
-}
-
-// Override default JSON handling for GraphStatsResponse to handle AdditionalProperties
-func (a *GraphStatsResponse) UnmarshalJSON(b []byte) error {
-	object := make(map[string]json.RawMessage)
-	err := json.Unmarshal(b, &object)
-	if err != nil {
-		return err
-	}
-
-	if raw, found := object["density"]; found {
-		err = json.Unmarshal(raw, &a.Density)
-		if err != nil {
-			return fmt.Errorf("error reading 'density': %w", err)
-		}
-		delete(object, "density")
-	}
-
-	if raw, found := object["edge_count"]; found {
-		err = json.Unmarshal(raw, &a.EdgeCount)
-		if err != nil {
-			return fmt.Errorf("error reading 'edge_count': %w", err)
-		}
-		delete(object, "edge_count")
-	}
-
-	if raw, found := object["node_count"]; found {
-		err = json.Unmarshal(raw, &a.NodeCount)
-		if err != nil {
-			return fmt.Errorf("error reading 'node_count': %w", err)
-		}
-		delete(object, "node_count")
-	}
-
-	if len(object) != 0 {
-		a.AdditionalProperties = make(map[string]interface{})
-		for fieldName, fieldBuf := range object {
-			var fieldVal interface{}
-			err := json.Unmarshal(fieldBuf, &fieldVal)
-			if err != nil {
-				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
-			}
-			a.AdditionalProperties[fieldName] = fieldVal
-		}
-	}
-	return nil
-}
-
-// Override default JSON handling for GraphStatsResponse to handle AdditionalProperties
-func (a GraphStatsResponse) MarshalJSON() ([]byte, error) {
-	var err error
-	object := make(map[string]json.RawMessage)
-
-	if a.Density != nil {
-		object["density"], err = json.Marshal(a.Density)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'density': %w", err)
-		}
-	}
-
-	if a.EdgeCount != nil {
-		object["edge_count"], err = json.Marshal(a.EdgeCount)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'edge_count': %w", err)
-		}
-	}
-
-	if a.NodeCount != nil {
-		object["node_count"], err = json.Marshal(a.NodeCount)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'node_count': %w", err)
-		}
-	}
-
-	for fieldName, field := range a.AdditionalProperties {
-		object[fieldName], err = json.Marshal(field)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
-		}
-	}
-	return json.Marshal(object)
-}
-
 // Getter for additional properties for HealthResponse. Returns the specified
 // element and whether it was found
 func (a HealthResponse) Get(fieldName string) (value interface{}, found bool) {
@@ -4661,283 +4210,6 @@ func (a HealthResponse) MarshalJSON() ([]byte, error) {
 		object["version"], err = json.Marshal(a.Version)
 		if err != nil {
 			return nil, fmt.Errorf("error marshaling 'version': %w", err)
-		}
-	}
-
-	for fieldName, field := range a.AdditionalProperties {
-		object[fieldName], err = json.Marshal(field)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
-		}
-	}
-	return json.Marshal(object)
-}
-
-// Getter for additional properties for ListGraphsResponse. Returns the specified
-// element and whether it was found
-func (a ListGraphsResponse) Get(fieldName string) (value interface{}, found bool) {
-	if a.AdditionalProperties != nil {
-		value, found = a.AdditionalProperties[fieldName]
-	}
-	return
-}
-
-// Setter for additional properties for ListGraphsResponse
-func (a *ListGraphsResponse) Set(fieldName string, value interface{}) {
-	if a.AdditionalProperties == nil {
-		a.AdditionalProperties = make(map[string]interface{})
-	}
-	a.AdditionalProperties[fieldName] = value
-}
-
-// Override default JSON handling for ListGraphsResponse to handle AdditionalProperties
-func (a *ListGraphsResponse) UnmarshalJSON(b []byte) error {
-	object := make(map[string]json.RawMessage)
-	err := json.Unmarshal(b, &object)
-	if err != nil {
-		return err
-	}
-
-	if raw, found := object["data"]; found {
-		err = json.Unmarshal(raw, &a.Data)
-		if err != nil {
-			return fmt.Errorf("error reading 'data': %w", err)
-		}
-		delete(object, "data")
-	}
-
-	if raw, found := object["success"]; found {
-		err = json.Unmarshal(raw, &a.Success)
-		if err != nil {
-			return fmt.Errorf("error reading 'success': %w", err)
-		}
-		delete(object, "success")
-	}
-
-	if len(object) != 0 {
-		a.AdditionalProperties = make(map[string]interface{})
-		for fieldName, fieldBuf := range object {
-			var fieldVal interface{}
-			err := json.Unmarshal(fieldBuf, &fieldVal)
-			if err != nil {
-				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
-			}
-			a.AdditionalProperties[fieldName] = fieldVal
-		}
-	}
-	return nil
-}
-
-// Override default JSON handling for ListGraphsResponse to handle AdditionalProperties
-func (a ListGraphsResponse) MarshalJSON() ([]byte, error) {
-	var err error
-	object := make(map[string]json.RawMessage)
-
-	if a.Data != nil {
-		object["data"], err = json.Marshal(a.Data)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'data': %w", err)
-		}
-	}
-
-	if a.Success != nil {
-		object["success"], err = json.Marshal(a.Success)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'success': %w", err)
-		}
-	}
-
-	for fieldName, field := range a.AdditionalProperties {
-		object[fieldName], err = json.Marshal(field)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
-		}
-	}
-	return json.Marshal(object)
-}
-
-// Getter for additional properties for NodeResponse. Returns the specified
-// element and whether it was found
-func (a NodeResponse) Get(fieldName string) (value interface{}, found bool) {
-	if a.AdditionalProperties != nil {
-		value, found = a.AdditionalProperties[fieldName]
-	}
-	return
-}
-
-// Setter for additional properties for NodeResponse
-func (a *NodeResponse) Set(fieldName string, value interface{}) {
-	if a.AdditionalProperties == nil {
-		a.AdditionalProperties = make(map[string]interface{})
-	}
-	a.AdditionalProperties[fieldName] = value
-}
-
-// Override default JSON handling for NodeResponse to handle AdditionalProperties
-func (a *NodeResponse) UnmarshalJSON(b []byte) error {
-	object := make(map[string]json.RawMessage)
-	err := json.Unmarshal(b, &object)
-	if err != nil {
-		return err
-	}
-
-	if raw, found := object["id"]; found {
-		err = json.Unmarshal(raw, &a.Id)
-		if err != nil {
-			return fmt.Errorf("error reading 'id': %w", err)
-		}
-		delete(object, "id")
-	}
-
-	if raw, found := object["labels"]; found {
-		err = json.Unmarshal(raw, &a.Labels)
-		if err != nil {
-			return fmt.Errorf("error reading 'labels': %w", err)
-		}
-		delete(object, "labels")
-	}
-
-	if raw, found := object["properties"]; found {
-		err = json.Unmarshal(raw, &a.Properties)
-		if err != nil {
-			return fmt.Errorf("error reading 'properties': %w", err)
-		}
-		delete(object, "properties")
-	}
-
-	if len(object) != 0 {
-		a.AdditionalProperties = make(map[string]interface{})
-		for fieldName, fieldBuf := range object {
-			var fieldVal interface{}
-			err := json.Unmarshal(fieldBuf, &fieldVal)
-			if err != nil {
-				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
-			}
-			a.AdditionalProperties[fieldName] = fieldVal
-		}
-	}
-	return nil
-}
-
-// Override default JSON handling for NodeResponse to handle AdditionalProperties
-func (a NodeResponse) MarshalJSON() ([]byte, error) {
-	var err error
-	object := make(map[string]json.RawMessage)
-
-	object["id"], err = json.Marshal(a.Id)
-	if err != nil {
-		return nil, fmt.Errorf("error marshaling 'id': %w", err)
-	}
-
-	if a.Labels != nil {
-		object["labels"], err = json.Marshal(a.Labels)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'labels': %w", err)
-		}
-	}
-
-	if a.Properties != nil {
-		object["properties"], err = json.Marshal(a.Properties)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'properties': %w", err)
-		}
-	}
-
-	for fieldName, field := range a.AdditionalProperties {
-		object[fieldName], err = json.Marshal(field)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
-		}
-	}
-	return json.Marshal(object)
-}
-
-// Getter for additional properties for TraverseResponse. Returns the specified
-// element and whether it was found
-func (a TraverseResponse) Get(fieldName string) (value interface{}, found bool) {
-	if a.AdditionalProperties != nil {
-		value, found = a.AdditionalProperties[fieldName]
-	}
-	return
-}
-
-// Setter for additional properties for TraverseResponse
-func (a *TraverseResponse) Set(fieldName string, value interface{}) {
-	if a.AdditionalProperties == nil {
-		a.AdditionalProperties = make(map[string]interface{})
-	}
-	a.AdditionalProperties[fieldName] = value
-}
-
-// Override default JSON handling for TraverseResponse to handle AdditionalProperties
-func (a *TraverseResponse) UnmarshalJSON(b []byte) error {
-	object := make(map[string]json.RawMessage)
-	err := json.Unmarshal(b, &object)
-	if err != nil {
-		return err
-	}
-
-	if raw, found := object["edges"]; found {
-		err = json.Unmarshal(raw, &a.Edges)
-		if err != nil {
-			return fmt.Errorf("error reading 'edges': %w", err)
-		}
-		delete(object, "edges")
-	}
-
-	if raw, found := object["nodes"]; found {
-		err = json.Unmarshal(raw, &a.Nodes)
-		if err != nil {
-			return fmt.Errorf("error reading 'nodes': %w", err)
-		}
-		delete(object, "nodes")
-	}
-
-	if raw, found := object["paths"]; found {
-		err = json.Unmarshal(raw, &a.Paths)
-		if err != nil {
-			return fmt.Errorf("error reading 'paths': %w", err)
-		}
-		delete(object, "paths")
-	}
-
-	if len(object) != 0 {
-		a.AdditionalProperties = make(map[string]interface{})
-		for fieldName, fieldBuf := range object {
-			var fieldVal interface{}
-			err := json.Unmarshal(fieldBuf, &fieldVal)
-			if err != nil {
-				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
-			}
-			a.AdditionalProperties[fieldName] = fieldVal
-		}
-	}
-	return nil
-}
-
-// Override default JSON handling for TraverseResponse to handle AdditionalProperties
-func (a TraverseResponse) MarshalJSON() ([]byte, error) {
-	var err error
-	object := make(map[string]json.RawMessage)
-
-	if a.Edges != nil {
-		object["edges"], err = json.Marshal(a.Edges)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'edges': %w", err)
-		}
-	}
-
-	if a.Nodes != nil {
-		object["nodes"], err = json.Marshal(a.Nodes)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'nodes': %w", err)
-		}
-	}
-
-	if a.Paths != nil {
-		object["paths"], err = json.Marshal(a.Paths)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling 'paths': %w", err)
 		}
 	}
 
@@ -6461,6 +5733,9 @@ type ClientInterface interface {
 
 	// DeleteGraph Delete a graph collection.
 	//
+	// 204 on success (the handler's success body is not transmitted on
+	// a 204). Not-found maps to 404 with the envelope error.
+	//
 	// Corresponds with DELETE /api/v2/graphs/{graph_id} (the `DeleteGraph` operationId).
 	DeleteGraph(ctx context.Context, graphId GraphId, params *DeleteGraphParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -6468,6 +5743,44 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/v2/graphs/{graph_id} (the `GetGraph` operationId).
 	GetGraph(ctx context.Context, graphId GraphId, params *GetGraphParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetConnectedComponents Get the graph's connected components.
+	//
+	// Corresponds with GET /api/v2/graphs/{graph_id}/components (the `GetConnectedComponents` operationId).
+	GetConnectedComponents(ctx context.Context, graphId GraphId, params *GetConnectedComponentsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RemoveUniqueConstraintWithBody Remove a unique constraint on (label, property).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with DELETE /api/v2/graphs/{graph_id}/constraints/unique (the `RemoveUniqueConstraint` operationId).
+	RemoveUniqueConstraintWithBody(ctx context.Context, graphId GraphId, params *RemoveUniqueConstraintParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RemoveUniqueConstraint Remove a unique constraint on (label, property).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with DELETE /api/v2/graphs/{graph_id}/constraints/unique (the `RemoveUniqueConstraint` operationId).
+	RemoveUniqueConstraint(ctx context.Context, graphId GraphId, params *RemoveUniqueConstraintParams, body RemoveUniqueConstraintJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AddUniqueConstraintWithBody Add a unique constraint on (label, property).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/constraints/unique (the `AddUniqueConstraint` operationId).
+	AddUniqueConstraintWithBody(ctx context.Context, graphId GraphId, params *AddUniqueConstraintParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AddUniqueConstraint Add a unique constraint on (label, property).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/constraints/unique (the `AddUniqueConstraint` operationId).
+	AddUniqueConstraint(ctx context.Context, graphId GraphId, params *AddUniqueConstraintParams, body AddUniqueConstraintJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CheckCycles Check whether the graph contains a cycle.
+	//
+	// Corresponds with GET /api/v2/graphs/{graph_id}/cycles (the `CheckCycles` operationId).
+	CheckCycles(ctx context.Context, graphId GraphId, params *CheckCyclesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateEdgeWithBody Create an edge in a graph.
 	//
@@ -6485,7 +5798,8 @@ type ClientInterface interface {
 
 	// BatchCreateEdgesWithBody Create multiple edges in a single call.
 	//
-	// Batch counterpart to `createEdge`.
+	// Per-item rejections ride `failed_count`/`errors[]` while
+	// `results[]` carries what landed; the HTTP status stays 200.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6494,12 +5808,43 @@ type ClientInterface interface {
 
 	// BatchCreateEdges Create multiple edges in a single call.
 	//
-	// Batch counterpart to `createEdge`.
+	// Per-item rejections ride `failed_count`/`errors[]` while
+	// `results[]` carries what landed; the HTTP status stays 200.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /api/v2/graphs/{graph_id}/edges/batch (the `BatchCreateEdges` operationId).
 	BatchCreateEdges(ctx context.Context, graphId GraphId, params *BatchCreateEdgesParams, body BatchCreateEdgesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteEdge Delete an edge by id.
+	//
+	// Corresponds with DELETE /api/v2/graphs/{graph_id}/edges/{edge_id} (the `DeleteEdge` operationId).
+	DeleteEdge(ctx context.Context, graphId GraphId, edgeId EdgeId, params *DeleteEdgeParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetEdge Get an edge by id.
+	//
+	// Corresponds with GET /api/v2/graphs/{graph_id}/edges/{edge_id} (the `GetEdge` operationId).
+	GetEdge(ctx context.Context, graphId GraphId, edgeId EdgeId, params *GetEdgeParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateEdgeWithBody Replace an edge.
+	//
+	// Full replacement: the body is the complete edge input (its `id`
+	// is overwritten by the path's `edge_id`).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /api/v2/graphs/{graph_id}/edges/{edge_id} (the `UpdateEdge` operationId).
+	UpdateEdgeWithBody(ctx context.Context, graphId GraphId, edgeId EdgeId, params *UpdateEdgeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateEdge Replace an edge.
+	//
+	// Full replacement: the body is the complete edge input (its `id`
+	// is overwritten by the path's `edge_id`).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /api/v2/graphs/{graph_id}/edges/{edge_id} (the `UpdateEdge` operationId).
+	UpdateEdge(ctx context.Context, graphId GraphId, edgeId EdgeId, params *UpdateEdgeParams, body UpdateEdgeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// FusionSearchV2WithBody `POST /api/v2/graphs/{graph_id}/fusion-search` — vector seed → graph expand → calibrated fuse-by-oid.
 	//
@@ -6547,8 +5892,8 @@ type ClientInterface interface {
 
 	// BatchCreateNodesWithBody Create multiple nodes in a single call.
 	//
-	// Batch counterpart to `createNode`. Use this on bulk-ingest paths
-	// where individual round-trips would dominate latency.
+	// Per-item rejections ride `failed_count`/`errors[]` while
+	// `results[]` carries what landed; the HTTP status stays 200.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6557,8 +5902,8 @@ type ClientInterface interface {
 
 	// BatchCreateNodes Create multiple nodes in a single call.
 	//
-	// Batch counterpart to `createNode`. Use this on bulk-ingest paths
-	// where individual round-trips would dominate latency.
+	// Per-item rejections ride `failed_count`/`errors[]` while
+	// `results[]` carries what landed; the HTTP status stays 200.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6575,10 +5920,157 @@ type ClientInterface interface {
 	// Corresponds with GET /api/v2/graphs/{graph_id}/nodes/{node_id} (the `GetNode` operationId).
 	GetNode(ctx context.Context, graphId GraphId, nodeId NodeId, params *GetNodeParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// UpdateNodeWithBody Replace a node.
+	//
+	// Full replacement: the body is the complete node input (its `id`
+	// is overwritten by the path's `node_id`).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /api/v2/graphs/{graph_id}/nodes/{node_id} (the `UpdateNode` operationId).
+	UpdateNodeWithBody(ctx context.Context, graphId GraphId, nodeId NodeId, params *UpdateNodeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateNode Replace a node.
+	//
+	// Full replacement: the body is the complete node input (its `id`
+	// is overwritten by the path's `node_id`).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /api/v2/graphs/{graph_id}/nodes/{node_id} (the `UpdateNode` operationId).
+	UpdateNode(ctx context.Context, graphId GraphId, nodeId NodeId, params *UpdateNodeParams, body UpdateNodeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetNodeNeighbors Get a node's neighbors.
+	//
+	// Corresponds with GET /api/v2/graphs/{graph_id}/nodes/{node_id}/neighbors (the `GetNodeNeighbors` operationId).
+	GetNodeNeighbors(ctx context.Context, graphId GraphId, nodeId NodeId, params *GetNodeNeighborsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExecuteGraphQueryWithBody Execute a graph query.
+	//
+	// Executes the query text through the port's JSON query path.
+	// `language` (default `native`) and `timeout_ms` are accepted but
+	// currently unused server-side.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/query (the `ExecuteGraphQuery` operationId).
+	ExecuteGraphQueryWithBody(ctx context.Context, graphId GraphId, params *ExecuteGraphQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExecuteGraphQuery Execute a graph query.
+	//
+	// Executes the query text through the port's JSON query path.
+	// `language` (default `native`) and `timeout_ms` are accepted but
+	// currently unused server-side.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/query (the `ExecuteGraphQuery` operationId).
+	ExecuteGraphQuery(ctx context.Context, graphId GraphId, params *ExecuteGraphQueryParams, body ExecuteGraphQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// QueryEdgesWithBody Query edges by type/endpoints/properties.
+	//
+	// Paginated: `limit` (default 100) + `offset`, or a
+	// `continuation_token` of the form `offset:<n>`. `edge_type`
+	// defaults to the empty string (matches untyped edges).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/query/edges (the `QueryEdges` operationId).
+	QueryEdgesWithBody(ctx context.Context, graphId GraphId, params *QueryEdgesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// QueryEdges Query edges by type/endpoints/properties.
+	//
+	// Paginated: `limit` (default 100) + `offset`, or a
+	// `continuation_token` of the form `offset:<n>`. `edge_type`
+	// defaults to the empty string (matches untyped edges).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/query/edges (the `QueryEdges` operationId).
+	QueryEdges(ctx context.Context, graphId GraphId, params *QueryEdgesParams, body QueryEdgesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// QueryNodesWithBody Query nodes by labels/properties.
+	//
+	// Paginated: `limit` (default 100) + `offset`, or a
+	// `continuation_token` of the form `offset:<n>`.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/query/nodes (the `QueryNodes` operationId).
+	QueryNodesWithBody(ctx context.Context, graphId GraphId, params *QueryNodesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// QueryNodes Query nodes by labels/properties.
+	//
+	// Paginated: `limit` (default 100) + `offset`, or a
+	// `continuation_token` of the form `offset:<n>`.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/query/nodes (the `QueryNodes` operationId).
+	QueryNodes(ctx context.Context, graphId GraphId, params *QueryNodesParams, body QueryNodesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateGraphSchemaWithBody Update a graph collection's schema.
+	//
+	// The body carries the schema as free-form JSON (the handler
+	// deserializes it into the port's GraphSchema). 200 returns the
+	// updated collection (envelope; data = serialized collection);
+	// invalid schema JSON maps to 400.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /api/v2/graphs/{graph_id}/schema (the `UpdateGraphSchema` operationId).
+	UpdateGraphSchemaWithBody(ctx context.Context, graphId GraphId, params *UpdateGraphSchemaParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateGraphSchema Update a graph collection's schema.
+	//
+	// The body carries the schema as free-form JSON (the handler
+	// deserializes it into the port's GraphSchema). 200 returns the
+	// updated collection (envelope; data = serialized collection);
+	// invalid schema JSON maps to 400.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /api/v2/graphs/{graph_id}/schema (the `UpdateGraphSchema` operationId).
+	UpdateGraphSchema(ctx context.Context, graphId GraphId, params *UpdateGraphSchemaParams, body UpdateGraphSchemaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ShortestPathWithBody Shortest path between two nodes.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/shortest-path (the `ShortestPath` operationId).
+	ShortestPathWithBody(ctx context.Context, graphId GraphId, params *ShortestPathParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ShortestPath Shortest path between two nodes.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/shortest-path (the `ShortestPath` operationId).
+	ShortestPath(ctx context.Context, graphId GraphId, params *ShortestPathParams, body ShortestPathJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetGraphStats Get graph statistics.
 	//
 	// Corresponds with GET /api/v2/graphs/{graph_id}/stats (the `GetGraphStats` operationId).
 	GetGraphStats(ctx context.Context, graphId GraphId, params *GetGraphStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StepGraphWithBody Single-step navigation (neighbors of one node).
+	//
+	// Returns the neighbors of `node_id` (optionally restricted to one
+	// `edge_type`) in the traversal result shape.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/step (the `StepGraph` operationId).
+	StepGraphWithBody(ctx context.Context, graphId GraphId, params *StepGraphParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StepGraph Single-step navigation (neighbors of one node).
+	//
+	// Returns the neighbors of `node_id` (optionally restricted to one
+	// `edge_type`) in the traversal result shape.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/step (the `StepGraph` operationId).
+	StepGraph(ctx context.Context, graphId GraphId, params *StepGraphParams, body StepGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// TraverseGraphWithBody Traverse a graph from a start node.
 	//
@@ -6593,6 +6085,26 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v2/graphs/{graph_id}/traverse (the `TraverseGraph` operationId).
 	TraverseGraph(ctx context.Context, graphId GraphId, params *TraverseGraphParams, body TraverseGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// WalkGraphWithBody BFS walk from a start node.
+	//
+	// A traverse with the algorithm pinned to BFS (defaults:
+	// max_depth 2, limit 100).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/walk (the `WalkGraph` operationId).
+	WalkGraphWithBody(ctx context.Context, graphId GraphId, params *WalkGraphParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// WalkGraph BFS walk from a start node.
+	//
+	// A traverse with the algorithm pinned to BFS (defaults:
+	// max_depth 2, limit 100).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/walk (the `WalkGraph` operationId).
+	WalkGraph(ctx context.Context, graphId GraphId, params *WalkGraphParams, body WalkGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// HybridIndexWithBody Index documents for BM25 full-text search.
 	//
@@ -8485,6 +7997,9 @@ func (c *Client) CreateGraph(ctx context.Context, params *CreateGraphParams, bod
 
 // DeleteGraph Delete a graph collection.
 //
+// 204 on success (the handler's success body is not transmitted on
+// a 204). Not-found maps to 404 with the envelope error.
+//
 // Corresponds with DELETE /api/v2/graphs/{graph_id} (the `DeleteGraph` operationId).
 func (c *Client) DeleteGraph(ctx context.Context, graphId GraphId, params *DeleteGraphParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteGraphRequest(c.Server, graphId, params)
@@ -8503,6 +8018,104 @@ func (c *Client) DeleteGraph(ctx context.Context, graphId GraphId, params *Delet
 // Corresponds with GET /api/v2/graphs/{graph_id} (the `GetGraph` operationId).
 func (c *Client) GetGraph(ctx context.Context, graphId GraphId, params *GetGraphParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetGraphRequest(c.Server, graphId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetConnectedComponents Get the graph's connected components.
+//
+// Corresponds with GET /api/v2/graphs/{graph_id}/components (the `GetConnectedComponents` operationId).
+func (c *Client) GetConnectedComponents(ctx context.Context, graphId GraphId, params *GetConnectedComponentsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConnectedComponentsRequest(c.Server, graphId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RemoveUniqueConstraintWithBody Remove a unique constraint on (label, property).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with DELETE /api/v2/graphs/{graph_id}/constraints/unique (the `RemoveUniqueConstraint` operationId).
+func (c *Client) RemoveUniqueConstraintWithBody(ctx context.Context, graphId GraphId, params *RemoveUniqueConstraintParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemoveUniqueConstraintRequestWithBody(c.Server, graphId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RemoveUniqueConstraint Remove a unique constraint on (label, property).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with DELETE /api/v2/graphs/{graph_id}/constraints/unique (the `RemoveUniqueConstraint` operationId).
+func (c *Client) RemoveUniqueConstraint(ctx context.Context, graphId GraphId, params *RemoveUniqueConstraintParams, body RemoveUniqueConstraintJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemoveUniqueConstraintRequest(c.Server, graphId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AddUniqueConstraintWithBody Add a unique constraint on (label, property).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/constraints/unique (the `AddUniqueConstraint` operationId).
+func (c *Client) AddUniqueConstraintWithBody(ctx context.Context, graphId GraphId, params *AddUniqueConstraintParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddUniqueConstraintRequestWithBody(c.Server, graphId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AddUniqueConstraint Add a unique constraint on (label, property).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/constraints/unique (the `AddUniqueConstraint` operationId).
+func (c *Client) AddUniqueConstraint(ctx context.Context, graphId GraphId, params *AddUniqueConstraintParams, body AddUniqueConstraintJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddUniqueConstraintRequest(c.Server, graphId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CheckCycles Check whether the graph contains a cycle.
+//
+// Corresponds with GET /api/v2/graphs/{graph_id}/cycles (the `CheckCycles` operationId).
+func (c *Client) CheckCycles(ctx context.Context, graphId GraphId, params *CheckCyclesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCheckCyclesRequest(c.Server, graphId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -8549,7 +8162,8 @@ func (c *Client) CreateEdge(ctx context.Context, graphId GraphId, params *Create
 
 // BatchCreateEdgesWithBody Create multiple edges in a single call.
 //
-// Batch counterpart to `createEdge`.
+// Per-item rejections ride `failed_count`/`errors[]` while
+// `results[]` carries what landed; the HTTP status stays 200.
 //
 // Takes any type of body and a specified content type.
 //
@@ -8568,13 +8182,84 @@ func (c *Client) BatchCreateEdgesWithBody(ctx context.Context, graphId GraphId, 
 
 // BatchCreateEdges Create multiple edges in a single call.
 //
-// Batch counterpart to `createEdge`.
+// Per-item rejections ride `failed_count`/`errors[]` while
+// `results[]` carries what landed; the HTTP status stays 200.
 //
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /api/v2/graphs/{graph_id}/edges/batch (the `BatchCreateEdges` operationId).
 func (c *Client) BatchCreateEdges(ctx context.Context, graphId GraphId, params *BatchCreateEdgesParams, body BatchCreateEdgesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewBatchCreateEdgesRequest(c.Server, graphId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteEdge Delete an edge by id.
+//
+// Corresponds with DELETE /api/v2/graphs/{graph_id}/edges/{edge_id} (the `DeleteEdge` operationId).
+func (c *Client) DeleteEdge(ctx context.Context, graphId GraphId, edgeId EdgeId, params *DeleteEdgeParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteEdgeRequest(c.Server, graphId, edgeId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetEdge Get an edge by id.
+//
+// Corresponds with GET /api/v2/graphs/{graph_id}/edges/{edge_id} (the `GetEdge` operationId).
+func (c *Client) GetEdge(ctx context.Context, graphId GraphId, edgeId EdgeId, params *GetEdgeParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetEdgeRequest(c.Server, graphId, edgeId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateEdgeWithBody Replace an edge.
+//
+// Full replacement: the body is the complete edge input (its `id`
+// is overwritten by the path's `edge_id`).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /api/v2/graphs/{graph_id}/edges/{edge_id} (the `UpdateEdge` operationId).
+func (c *Client) UpdateEdgeWithBody(ctx context.Context, graphId GraphId, edgeId EdgeId, params *UpdateEdgeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateEdgeRequestWithBody(c.Server, graphId, edgeId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateEdge Replace an edge.
+//
+// Full replacement: the body is the complete edge input (its `id`
+// is overwritten by the path's `edge_id`).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /api/v2/graphs/{graph_id}/edges/{edge_id} (the `UpdateEdge` operationId).
+func (c *Client) UpdateEdge(ctx context.Context, graphId GraphId, edgeId EdgeId, params *UpdateEdgeParams, body UpdateEdgeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateEdgeRequest(c.Server, graphId, edgeId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8691,8 +8376,8 @@ func (c *Client) CreateNode(ctx context.Context, graphId GraphId, params *Create
 
 // BatchCreateNodesWithBody Create multiple nodes in a single call.
 //
-// Batch counterpart to `createNode`. Use this on bulk-ingest paths
-// where individual round-trips would dominate latency.
+// Per-item rejections ride `failed_count`/`errors[]` while
+// `results[]` carries what landed; the HTTP status stays 200.
 //
 // Takes any type of body and a specified content type.
 //
@@ -8711,8 +8396,8 @@ func (c *Client) BatchCreateNodesWithBody(ctx context.Context, graphId GraphId, 
 
 // BatchCreateNodes Create multiple nodes in a single call.
 //
-// Batch counterpart to `createNode`. Use this on bulk-ingest paths
-// where individual round-trips would dominate latency.
+// Per-item rejections ride `failed_count`/`errors[]` while
+// `results[]` carries what landed; the HTTP status stays 200.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -8759,11 +8444,308 @@ func (c *Client) GetNode(ctx context.Context, graphId GraphId, nodeId NodeId, pa
 	return c.Client.Do(req)
 }
 
+// UpdateNodeWithBody Replace a node.
+//
+// Full replacement: the body is the complete node input (its `id`
+// is overwritten by the path's `node_id`).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /api/v2/graphs/{graph_id}/nodes/{node_id} (the `UpdateNode` operationId).
+func (c *Client) UpdateNodeWithBody(ctx context.Context, graphId GraphId, nodeId NodeId, params *UpdateNodeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateNodeRequestWithBody(c.Server, graphId, nodeId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateNode Replace a node.
+//
+// Full replacement: the body is the complete node input (its `id`
+// is overwritten by the path's `node_id`).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /api/v2/graphs/{graph_id}/nodes/{node_id} (the `UpdateNode` operationId).
+func (c *Client) UpdateNode(ctx context.Context, graphId GraphId, nodeId NodeId, params *UpdateNodeParams, body UpdateNodeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateNodeRequest(c.Server, graphId, nodeId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetNodeNeighbors Get a node's neighbors.
+//
+// Corresponds with GET /api/v2/graphs/{graph_id}/nodes/{node_id}/neighbors (the `GetNodeNeighbors` operationId).
+func (c *Client) GetNodeNeighbors(ctx context.Context, graphId GraphId, nodeId NodeId, params *GetNodeNeighborsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetNodeNeighborsRequest(c.Server, graphId, nodeId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExecuteGraphQueryWithBody Execute a graph query.
+//
+// Executes the query text through the port's JSON query path.
+// `language` (default `native`) and `timeout_ms` are accepted but
+// currently unused server-side.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/query (the `ExecuteGraphQuery` operationId).
+func (c *Client) ExecuteGraphQueryWithBody(ctx context.Context, graphId GraphId, params *ExecuteGraphQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExecuteGraphQueryRequestWithBody(c.Server, graphId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExecuteGraphQuery Execute a graph query.
+//
+// Executes the query text through the port's JSON query path.
+// `language` (default `native`) and `timeout_ms` are accepted but
+// currently unused server-side.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/query (the `ExecuteGraphQuery` operationId).
+func (c *Client) ExecuteGraphQuery(ctx context.Context, graphId GraphId, params *ExecuteGraphQueryParams, body ExecuteGraphQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExecuteGraphQueryRequest(c.Server, graphId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// QueryEdgesWithBody Query edges by type/endpoints/properties.
+//
+// Paginated: `limit` (default 100) + `offset`, or a
+// `continuation_token` of the form `offset:<n>`. `edge_type`
+// defaults to the empty string (matches untyped edges).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/query/edges (the `QueryEdges` operationId).
+func (c *Client) QueryEdgesWithBody(ctx context.Context, graphId GraphId, params *QueryEdgesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewQueryEdgesRequestWithBody(c.Server, graphId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// QueryEdges Query edges by type/endpoints/properties.
+//
+// Paginated: `limit` (default 100) + `offset`, or a
+// `continuation_token` of the form `offset:<n>`. `edge_type`
+// defaults to the empty string (matches untyped edges).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/query/edges (the `QueryEdges` operationId).
+func (c *Client) QueryEdges(ctx context.Context, graphId GraphId, params *QueryEdgesParams, body QueryEdgesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewQueryEdgesRequest(c.Server, graphId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// QueryNodesWithBody Query nodes by labels/properties.
+//
+// Paginated: `limit` (default 100) + `offset`, or a
+// `continuation_token` of the form `offset:<n>`.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/query/nodes (the `QueryNodes` operationId).
+func (c *Client) QueryNodesWithBody(ctx context.Context, graphId GraphId, params *QueryNodesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewQueryNodesRequestWithBody(c.Server, graphId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// QueryNodes Query nodes by labels/properties.
+//
+// Paginated: `limit` (default 100) + `offset`, or a
+// `continuation_token` of the form `offset:<n>`.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/query/nodes (the `QueryNodes` operationId).
+func (c *Client) QueryNodes(ctx context.Context, graphId GraphId, params *QueryNodesParams, body QueryNodesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewQueryNodesRequest(c.Server, graphId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateGraphSchemaWithBody Update a graph collection's schema.
+//
+// The body carries the schema as free-form JSON (the handler
+// deserializes it into the port's GraphSchema). 200 returns the
+// updated collection (envelope; data = serialized collection);
+// invalid schema JSON maps to 400.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /api/v2/graphs/{graph_id}/schema (the `UpdateGraphSchema` operationId).
+func (c *Client) UpdateGraphSchemaWithBody(ctx context.Context, graphId GraphId, params *UpdateGraphSchemaParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateGraphSchemaRequestWithBody(c.Server, graphId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateGraphSchema Update a graph collection's schema.
+//
+// The body carries the schema as free-form JSON (the handler
+// deserializes it into the port's GraphSchema). 200 returns the
+// updated collection (envelope; data = serialized collection);
+// invalid schema JSON maps to 400.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /api/v2/graphs/{graph_id}/schema (the `UpdateGraphSchema` operationId).
+func (c *Client) UpdateGraphSchema(ctx context.Context, graphId GraphId, params *UpdateGraphSchemaParams, body UpdateGraphSchemaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateGraphSchemaRequest(c.Server, graphId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ShortestPathWithBody Shortest path between two nodes.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/shortest-path (the `ShortestPath` operationId).
+func (c *Client) ShortestPathWithBody(ctx context.Context, graphId GraphId, params *ShortestPathParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewShortestPathRequestWithBody(c.Server, graphId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ShortestPath Shortest path between two nodes.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/shortest-path (the `ShortestPath` operationId).
+func (c *Client) ShortestPath(ctx context.Context, graphId GraphId, params *ShortestPathParams, body ShortestPathJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewShortestPathRequest(c.Server, graphId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetGraphStats Get graph statistics.
 //
 // Corresponds with GET /api/v2/graphs/{graph_id}/stats (the `GetGraphStats` operationId).
 func (c *Client) GetGraphStats(ctx context.Context, graphId GraphId, params *GetGraphStatsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetGraphStatsRequest(c.Server, graphId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StepGraphWithBody Single-step navigation (neighbors of one node).
+//
+// Returns the neighbors of `node_id` (optionally restricted to one
+// `edge_type`) in the traversal result shape.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/step (the `StepGraph` operationId).
+func (c *Client) StepGraphWithBody(ctx context.Context, graphId GraphId, params *StepGraphParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStepGraphRequestWithBody(c.Server, graphId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StepGraph Single-step navigation (neighbors of one node).
+//
+// Returns the neighbors of `node_id` (optionally restricted to one
+// `edge_type`) in the traversal result shape.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/step (the `StepGraph` operationId).
+func (c *Client) StepGraph(ctx context.Context, graphId GraphId, params *StepGraphParams, body StepGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStepGraphRequest(c.Server, graphId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8798,6 +8780,46 @@ func (c *Client) TraverseGraphWithBody(ctx context.Context, graphId GraphId, par
 // Corresponds with POST /api/v2/graphs/{graph_id}/traverse (the `TraverseGraph` operationId).
 func (c *Client) TraverseGraph(ctx context.Context, graphId GraphId, params *TraverseGraphParams, body TraverseGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewTraverseGraphRequest(c.Server, graphId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// WalkGraphWithBody BFS walk from a start node.
+//
+// A traverse with the algorithm pinned to BFS (defaults:
+// max_depth 2, limit 100).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/walk (the `WalkGraph` operationId).
+func (c *Client) WalkGraphWithBody(ctx context.Context, graphId GraphId, params *WalkGraphParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewWalkGraphRequestWithBody(c.Server, graphId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// WalkGraph BFS walk from a start node.
+//
+// A traverse with the algorithm pinned to BFS (defaults:
+// max_depth 2, limit 100).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/walk (the `WalkGraph` operationId).
+func (c *Client) WalkGraph(ctx context.Context, graphId GraphId, params *WalkGraphParams, body WalkGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewWalkGraphRequest(c.Server, graphId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -12267,6 +12289,228 @@ func NewGetGraphRequest(server string, graphId GraphId, params *GetGraphParams) 
 	return req, nil
 }
 
+// NewGetConnectedComponentsRequest constructs an http.Request for the GetConnectedComponents method
+func NewGetConnectedComponentsRequest(server string, graphId GraphId, params *GetConnectedComponentsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "graph_id", graphId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/graphs/%s/components", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewRemoveUniqueConstraintRequest calls the generic RemoveUniqueConstraint builder with application/json body
+func NewRemoveUniqueConstraintRequest(server string, graphId GraphId, params *RemoveUniqueConstraintParams, body RemoveUniqueConstraintJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRemoveUniqueConstraintRequestWithBody(server, graphId, params, "application/json", bodyReader)
+}
+
+// NewRemoveUniqueConstraintRequestWithBody constructs an http.Request for the RemoveUniqueConstraint method, with any body, and a specified content type
+func NewRemoveUniqueConstraintRequestWithBody(server string, graphId GraphId, params *RemoveUniqueConstraintParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "graph_id", graphId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/graphs/%s/constraints/unique", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewAddUniqueConstraintRequest calls the generic AddUniqueConstraint builder with application/json body
+func NewAddUniqueConstraintRequest(server string, graphId GraphId, params *AddUniqueConstraintParams, body AddUniqueConstraintJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAddUniqueConstraintRequestWithBody(server, graphId, params, "application/json", bodyReader)
+}
+
+// NewAddUniqueConstraintRequestWithBody constructs an http.Request for the AddUniqueConstraint method, with any body, and a specified content type
+func NewAddUniqueConstraintRequestWithBody(server string, graphId GraphId, params *AddUniqueConstraintParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "graph_id", graphId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/graphs/%s/constraints/unique", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewCheckCyclesRequest constructs an http.Request for the CheckCycles method
+func NewCheckCyclesRequest(server string, graphId GraphId, params *CheckCyclesParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "graph_id", graphId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/graphs/%s/cycles", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
 // NewCreateEdgeRequest calls the generic CreateEdge builder with application/json body
 func NewCreateEdgeRequest(server string, graphId GraphId, params *CreateEdgeParams, body CreateEdgeJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -12367,6 +12611,187 @@ func NewBatchCreateEdgesRequestWithBody(server string, graphId GraphId, params *
 	}
 
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewDeleteEdgeRequest constructs an http.Request for the DeleteEdge method
+func NewDeleteEdgeRequest(server string, graphId GraphId, edgeId EdgeId, params *DeleteEdgeParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "graph_id", graphId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "edge_id", edgeId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/graphs/%s/edges/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewGetEdgeRequest constructs an http.Request for the GetEdge method
+func NewGetEdgeRequest(server string, graphId GraphId, edgeId EdgeId, params *GetEdgeParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "graph_id", graphId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "edge_id", edgeId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/graphs/%s/edges/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewUpdateEdgeRequest calls the generic UpdateEdge builder with application/json body
+func NewUpdateEdgeRequest(server string, graphId GraphId, edgeId EdgeId, params *UpdateEdgeParams, body UpdateEdgeJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateEdgeRequestWithBody(server, graphId, edgeId, params, "application/json", bodyReader)
+}
+
+// NewUpdateEdgeRequestWithBody constructs an http.Request for the UpdateEdge method, with any body, and a specified content type
+func NewUpdateEdgeRequestWithBody(server string, graphId GraphId, edgeId EdgeId, params *UpdateEdgeParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "graph_id", graphId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "edge_id", edgeId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/graphs/%s/edges/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -12751,6 +13176,441 @@ func NewGetNodeRequest(server string, graphId GraphId, nodeId NodeId, params *Ge
 	return req, nil
 }
 
+// NewUpdateNodeRequest calls the generic UpdateNode builder with application/json body
+func NewUpdateNodeRequest(server string, graphId GraphId, nodeId NodeId, params *UpdateNodeParams, body UpdateNodeJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateNodeRequestWithBody(server, graphId, nodeId, params, "application/json", bodyReader)
+}
+
+// NewUpdateNodeRequestWithBody constructs an http.Request for the UpdateNode method, with any body, and a specified content type
+func NewUpdateNodeRequestWithBody(server string, graphId GraphId, nodeId NodeId, params *UpdateNodeParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "graph_id", graphId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "node_id", nodeId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/graphs/%s/nodes/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewGetNodeNeighborsRequest constructs an http.Request for the GetNodeNeighbors method
+func NewGetNodeNeighborsRequest(server string, graphId GraphId, nodeId NodeId, params *GetNodeNeighborsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "graph_id", graphId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "node_id", nodeId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/graphs/%s/nodes/%s/neighbors", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewExecuteGraphQueryRequest calls the generic ExecuteGraphQuery builder with application/json body
+func NewExecuteGraphQueryRequest(server string, graphId GraphId, params *ExecuteGraphQueryParams, body ExecuteGraphQueryJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewExecuteGraphQueryRequestWithBody(server, graphId, params, "application/json", bodyReader)
+}
+
+// NewExecuteGraphQueryRequestWithBody constructs an http.Request for the ExecuteGraphQuery method, with any body, and a specified content type
+func NewExecuteGraphQueryRequestWithBody(server string, graphId GraphId, params *ExecuteGraphQueryParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "graph_id", graphId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/graphs/%s/query", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewQueryEdgesRequest calls the generic QueryEdges builder with application/json body
+func NewQueryEdgesRequest(server string, graphId GraphId, params *QueryEdgesParams, body QueryEdgesJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewQueryEdgesRequestWithBody(server, graphId, params, "application/json", bodyReader)
+}
+
+// NewQueryEdgesRequestWithBody constructs an http.Request for the QueryEdges method, with any body, and a specified content type
+func NewQueryEdgesRequestWithBody(server string, graphId GraphId, params *QueryEdgesParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "graph_id", graphId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/graphs/%s/query/edges", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewQueryNodesRequest calls the generic QueryNodes builder with application/json body
+func NewQueryNodesRequest(server string, graphId GraphId, params *QueryNodesParams, body QueryNodesJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewQueryNodesRequestWithBody(server, graphId, params, "application/json", bodyReader)
+}
+
+// NewQueryNodesRequestWithBody constructs an http.Request for the QueryNodes method, with any body, and a specified content type
+func NewQueryNodesRequestWithBody(server string, graphId GraphId, params *QueryNodesParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "graph_id", graphId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/graphs/%s/query/nodes", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewUpdateGraphSchemaRequest calls the generic UpdateGraphSchema builder with application/json body
+func NewUpdateGraphSchemaRequest(server string, graphId GraphId, params *UpdateGraphSchemaParams, body UpdateGraphSchemaJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateGraphSchemaRequestWithBody(server, graphId, params, "application/json", bodyReader)
+}
+
+// NewUpdateGraphSchemaRequestWithBody constructs an http.Request for the UpdateGraphSchema method, with any body, and a specified content type
+func NewUpdateGraphSchemaRequestWithBody(server string, graphId GraphId, params *UpdateGraphSchemaParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "graph_id", graphId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/graphs/%s/schema", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewShortestPathRequest calls the generic ShortestPath builder with application/json body
+func NewShortestPathRequest(server string, graphId GraphId, params *ShortestPathParams, body ShortestPathJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewShortestPathRequestWithBody(server, graphId, params, "application/json", bodyReader)
+}
+
+// NewShortestPathRequestWithBody constructs an http.Request for the ShortestPath method, with any body, and a specified content type
+func NewShortestPathRequestWithBody(server string, graphId GraphId, params *ShortestPathParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "graph_id", graphId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/graphs/%s/shortest-path", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
 // NewGetGraphStatsRequest constructs an http.Request for the GetGraphStats method
 func NewGetGraphStatsRequest(server string, graphId GraphId, params *GetGraphStatsParams) (*http.Request, error) {
 	var err error
@@ -12800,6 +13660,68 @@ func NewGetGraphStatsRequest(server string, graphId GraphId, params *GetGraphSta
 	return req, nil
 }
 
+// NewStepGraphRequest calls the generic StepGraph builder with application/json body
+func NewStepGraphRequest(server string, graphId GraphId, params *StepGraphParams, body StepGraphJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewStepGraphRequestWithBody(server, graphId, params, "application/json", bodyReader)
+}
+
+// NewStepGraphRequestWithBody constructs an http.Request for the StepGraph method, with any body, and a specified content type
+func NewStepGraphRequestWithBody(server string, graphId GraphId, params *StepGraphParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "graph_id", graphId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/graphs/%s/step", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
 // NewTraverseGraphRequest calls the generic TraverseGraph builder with application/json body
 func NewTraverseGraphRequest(server string, graphId GraphId, params *TraverseGraphParams, body TraverseGraphJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -12828,6 +13750,68 @@ func NewTraverseGraphRequestWithBody(server string, graphId GraphId, params *Tra
 	}
 
 	operationPath := fmt.Sprintf("/api/v2/graphs/%s/traverse", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewWalkGraphRequest calls the generic WalkGraph builder with application/json body
+func NewWalkGraphRequest(server string, graphId GraphId, params *WalkGraphParams, body WalkGraphJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewWalkGraphRequestWithBody(server, graphId, params, "application/json", bodyReader)
+}
+
+// NewWalkGraphRequestWithBody constructs an http.Request for the WalkGraph method, with any body, and a specified content type
+func NewWalkGraphRequestWithBody(server string, graphId GraphId, params *WalkGraphParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "graph_id", graphId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/graphs/%s/walk", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -15159,6 +16143,9 @@ type ClientWithResponsesInterface interface {
 
 	// DeleteGraphWithResponse Delete a graph collection.
 	//
+	// 204 on success (the handler's success body is not transmitted on
+	// a 204). Not-found maps to 404 with the envelope error.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /api/v2/graphs/{graph_id} (the `DeleteGraph` operationId).
@@ -15170,6 +16157,48 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/v2/graphs/{graph_id} (the `GetGraph` operationId).
 	GetGraphWithResponse(ctx context.Context, graphId GraphId, params *GetGraphParams, reqEditors ...RequestEditorFn) (*GetGraphHTTPResp, error)
+
+	// GetConnectedComponentsWithResponse Get the graph's connected components.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v2/graphs/{graph_id}/components (the `GetConnectedComponents` operationId).
+	GetConnectedComponentsWithResponse(ctx context.Context, graphId GraphId, params *GetConnectedComponentsParams, reqEditors ...RequestEditorFn) (*GetConnectedComponentsHTTPResp, error)
+
+	// RemoveUniqueConstraintWithBodyWithResponse Remove a unique constraint on (label, property).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v2/graphs/{graph_id}/constraints/unique (the `RemoveUniqueConstraint` operationId).
+	RemoveUniqueConstraintWithBodyWithResponse(ctx context.Context, graphId GraphId, params *RemoveUniqueConstraintParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RemoveUniqueConstraintHTTPResp, error)
+
+	// RemoveUniqueConstraintWithResponse Remove a unique constraint on (label, property).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v2/graphs/{graph_id}/constraints/unique (the `RemoveUniqueConstraint` operationId).
+	RemoveUniqueConstraintWithResponse(ctx context.Context, graphId GraphId, params *RemoveUniqueConstraintParams, body RemoveUniqueConstraintJSONRequestBody, reqEditors ...RequestEditorFn) (*RemoveUniqueConstraintHTTPResp, error)
+
+	// AddUniqueConstraintWithBodyWithResponse Add a unique constraint on (label, property).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/constraints/unique (the `AddUniqueConstraint` operationId).
+	AddUniqueConstraintWithBodyWithResponse(ctx context.Context, graphId GraphId, params *AddUniqueConstraintParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddUniqueConstraintHTTPResp, error)
+
+	// AddUniqueConstraintWithResponse Add a unique constraint on (label, property).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/constraints/unique (the `AddUniqueConstraint` operationId).
+	AddUniqueConstraintWithResponse(ctx context.Context, graphId GraphId, params *AddUniqueConstraintParams, body AddUniqueConstraintJSONRequestBody, reqEditors ...RequestEditorFn) (*AddUniqueConstraintHTTPResp, error)
+
+	// CheckCyclesWithResponse Check whether the graph contains a cycle.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v2/graphs/{graph_id}/cycles (the `CheckCycles` operationId).
+	CheckCyclesWithResponse(ctx context.Context, graphId GraphId, params *CheckCyclesParams, reqEditors ...RequestEditorFn) (*CheckCyclesHTTPResp, error)
 
 	// CreateEdgeWithBodyWithResponse Create an edge in a graph.
 	//
@@ -15187,7 +16216,8 @@ type ClientWithResponsesInterface interface {
 
 	// BatchCreateEdgesWithBodyWithResponse Create multiple edges in a single call.
 	//
-	// Batch counterpart to `createEdge`.
+	// Per-item rejections ride `failed_count`/`errors[]` while
+	// `results[]` carries what landed; the HTTP status stays 200.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -15196,12 +16226,47 @@ type ClientWithResponsesInterface interface {
 
 	// BatchCreateEdgesWithResponse Create multiple edges in a single call.
 	//
-	// Batch counterpart to `createEdge`.
+	// Per-item rejections ride `failed_count`/`errors[]` while
+	// `results[]` carries what landed; the HTTP status stays 200.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v2/graphs/{graph_id}/edges/batch (the `BatchCreateEdges` operationId).
 	BatchCreateEdgesWithResponse(ctx context.Context, graphId GraphId, params *BatchCreateEdgesParams, body BatchCreateEdgesJSONRequestBody, reqEditors ...RequestEditorFn) (*BatchCreateEdgesHTTPResp, error)
+
+	// DeleteEdgeWithResponse Delete an edge by id.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v2/graphs/{graph_id}/edges/{edge_id} (the `DeleteEdge` operationId).
+	DeleteEdgeWithResponse(ctx context.Context, graphId GraphId, edgeId EdgeId, params *DeleteEdgeParams, reqEditors ...RequestEditorFn) (*DeleteEdgeHTTPResp, error)
+
+	// GetEdgeWithResponse Get an edge by id.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v2/graphs/{graph_id}/edges/{edge_id} (the `GetEdge` operationId).
+	GetEdgeWithResponse(ctx context.Context, graphId GraphId, edgeId EdgeId, params *GetEdgeParams, reqEditors ...RequestEditorFn) (*GetEdgeHTTPResp, error)
+
+	// UpdateEdgeWithBodyWithResponse Replace an edge.
+	//
+	// Full replacement: the body is the complete edge input (its `id`
+	// is overwritten by the path's `edge_id`).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v2/graphs/{graph_id}/edges/{edge_id} (the `UpdateEdge` operationId).
+	UpdateEdgeWithBodyWithResponse(ctx context.Context, graphId GraphId, edgeId EdgeId, params *UpdateEdgeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateEdgeHTTPResp, error)
+
+	// UpdateEdgeWithResponse Replace an edge.
+	//
+	// Full replacement: the body is the complete edge input (its `id`
+	// is overwritten by the path's `edge_id`).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v2/graphs/{graph_id}/edges/{edge_id} (the `UpdateEdge` operationId).
+	UpdateEdgeWithResponse(ctx context.Context, graphId GraphId, edgeId EdgeId, params *UpdateEdgeParams, body UpdateEdgeJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateEdgeHTTPResp, error)
 
 	// FusionSearchV2WithBodyWithResponse `POST /api/v2/graphs/{graph_id}/fusion-search` — vector seed → graph expand → calibrated fuse-by-oid.
 	//
@@ -15249,8 +16314,8 @@ type ClientWithResponsesInterface interface {
 
 	// BatchCreateNodesWithBodyWithResponse Create multiple nodes in a single call.
 	//
-	// Batch counterpart to `createNode`. Use this on bulk-ingest paths
-	// where individual round-trips would dominate latency.
+	// Per-item rejections ride `failed_count`/`errors[]` while
+	// `results[]` carries what landed; the HTTP status stays 200.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -15259,8 +16324,8 @@ type ClientWithResponsesInterface interface {
 
 	// BatchCreateNodesWithResponse Create multiple nodes in a single call.
 	//
-	// Batch counterpart to `createNode`. Use this on bulk-ingest paths
-	// where individual round-trips would dominate latency.
+	// Per-item rejections ride `failed_count`/`errors[]` while
+	// `results[]` carries what landed; the HTTP status stays 200.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -15281,12 +16346,161 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/v2/graphs/{graph_id}/nodes/{node_id} (the `GetNode` operationId).
 	GetNodeWithResponse(ctx context.Context, graphId GraphId, nodeId NodeId, params *GetNodeParams, reqEditors ...RequestEditorFn) (*GetNodeHTTPResp, error)
 
+	// UpdateNodeWithBodyWithResponse Replace a node.
+	//
+	// Full replacement: the body is the complete node input (its `id`
+	// is overwritten by the path's `node_id`).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v2/graphs/{graph_id}/nodes/{node_id} (the `UpdateNode` operationId).
+	UpdateNodeWithBodyWithResponse(ctx context.Context, graphId GraphId, nodeId NodeId, params *UpdateNodeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateNodeHTTPResp, error)
+
+	// UpdateNodeWithResponse Replace a node.
+	//
+	// Full replacement: the body is the complete node input (its `id`
+	// is overwritten by the path's `node_id`).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v2/graphs/{graph_id}/nodes/{node_id} (the `UpdateNode` operationId).
+	UpdateNodeWithResponse(ctx context.Context, graphId GraphId, nodeId NodeId, params *UpdateNodeParams, body UpdateNodeJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateNodeHTTPResp, error)
+
+	// GetNodeNeighborsWithResponse Get a node's neighbors.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v2/graphs/{graph_id}/nodes/{node_id}/neighbors (the `GetNodeNeighbors` operationId).
+	GetNodeNeighborsWithResponse(ctx context.Context, graphId GraphId, nodeId NodeId, params *GetNodeNeighborsParams, reqEditors ...RequestEditorFn) (*GetNodeNeighborsHTTPResp, error)
+
+	// ExecuteGraphQueryWithBodyWithResponse Execute a graph query.
+	//
+	// Executes the query text through the port's JSON query path.
+	// `language` (default `native`) and `timeout_ms` are accepted but
+	// currently unused server-side.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/query (the `ExecuteGraphQuery` operationId).
+	ExecuteGraphQueryWithBodyWithResponse(ctx context.Context, graphId GraphId, params *ExecuteGraphQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecuteGraphQueryHTTPResp, error)
+
+	// ExecuteGraphQueryWithResponse Execute a graph query.
+	//
+	// Executes the query text through the port's JSON query path.
+	// `language` (default `native`) and `timeout_ms` are accepted but
+	// currently unused server-side.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/query (the `ExecuteGraphQuery` operationId).
+	ExecuteGraphQueryWithResponse(ctx context.Context, graphId GraphId, params *ExecuteGraphQueryParams, body ExecuteGraphQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*ExecuteGraphQueryHTTPResp, error)
+
+	// QueryEdgesWithBodyWithResponse Query edges by type/endpoints/properties.
+	//
+	// Paginated: `limit` (default 100) + `offset`, or a
+	// `continuation_token` of the form `offset:<n>`. `edge_type`
+	// defaults to the empty string (matches untyped edges).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/query/edges (the `QueryEdges` operationId).
+	QueryEdgesWithBodyWithResponse(ctx context.Context, graphId GraphId, params *QueryEdgesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*QueryEdgesHTTPResp, error)
+
+	// QueryEdgesWithResponse Query edges by type/endpoints/properties.
+	//
+	// Paginated: `limit` (default 100) + `offset`, or a
+	// `continuation_token` of the form `offset:<n>`. `edge_type`
+	// defaults to the empty string (matches untyped edges).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/query/edges (the `QueryEdges` operationId).
+	QueryEdgesWithResponse(ctx context.Context, graphId GraphId, params *QueryEdgesParams, body QueryEdgesJSONRequestBody, reqEditors ...RequestEditorFn) (*QueryEdgesHTTPResp, error)
+
+	// QueryNodesWithBodyWithResponse Query nodes by labels/properties.
+	//
+	// Paginated: `limit` (default 100) + `offset`, or a
+	// `continuation_token` of the form `offset:<n>`.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/query/nodes (the `QueryNodes` operationId).
+	QueryNodesWithBodyWithResponse(ctx context.Context, graphId GraphId, params *QueryNodesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*QueryNodesHTTPResp, error)
+
+	// QueryNodesWithResponse Query nodes by labels/properties.
+	//
+	// Paginated: `limit` (default 100) + `offset`, or a
+	// `continuation_token` of the form `offset:<n>`.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/query/nodes (the `QueryNodes` operationId).
+	QueryNodesWithResponse(ctx context.Context, graphId GraphId, params *QueryNodesParams, body QueryNodesJSONRequestBody, reqEditors ...RequestEditorFn) (*QueryNodesHTTPResp, error)
+
+	// UpdateGraphSchemaWithBodyWithResponse Update a graph collection's schema.
+	//
+	// The body carries the schema as free-form JSON (the handler
+	// deserializes it into the port's GraphSchema). 200 returns the
+	// updated collection (envelope; data = serialized collection);
+	// invalid schema JSON maps to 400.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v2/graphs/{graph_id}/schema (the `UpdateGraphSchema` operationId).
+	UpdateGraphSchemaWithBodyWithResponse(ctx context.Context, graphId GraphId, params *UpdateGraphSchemaParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateGraphSchemaHTTPResp, error)
+
+	// UpdateGraphSchemaWithResponse Update a graph collection's schema.
+	//
+	// The body carries the schema as free-form JSON (the handler
+	// deserializes it into the port's GraphSchema). 200 returns the
+	// updated collection (envelope; data = serialized collection);
+	// invalid schema JSON maps to 400.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v2/graphs/{graph_id}/schema (the `UpdateGraphSchema` operationId).
+	UpdateGraphSchemaWithResponse(ctx context.Context, graphId GraphId, params *UpdateGraphSchemaParams, body UpdateGraphSchemaJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateGraphSchemaHTTPResp, error)
+
+	// ShortestPathWithBodyWithResponse Shortest path between two nodes.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/shortest-path (the `ShortestPath` operationId).
+	ShortestPathWithBodyWithResponse(ctx context.Context, graphId GraphId, params *ShortestPathParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ShortestPathHTTPResp, error)
+
+	// ShortestPathWithResponse Shortest path between two nodes.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/shortest-path (the `ShortestPath` operationId).
+	ShortestPathWithResponse(ctx context.Context, graphId GraphId, params *ShortestPathParams, body ShortestPathJSONRequestBody, reqEditors ...RequestEditorFn) (*ShortestPathHTTPResp, error)
+
 	// GetGraphStatsWithResponse Get graph statistics.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /api/v2/graphs/{graph_id}/stats (the `GetGraphStats` operationId).
 	GetGraphStatsWithResponse(ctx context.Context, graphId GraphId, params *GetGraphStatsParams, reqEditors ...RequestEditorFn) (*GetGraphStatsHTTPResp, error)
+
+	// StepGraphWithBodyWithResponse Single-step navigation (neighbors of one node).
+	//
+	// Returns the neighbors of `node_id` (optionally restricted to one
+	// `edge_type`) in the traversal result shape.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/step (the `StepGraph` operationId).
+	StepGraphWithBodyWithResponse(ctx context.Context, graphId GraphId, params *StepGraphParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StepGraphHTTPResp, error)
+
+	// StepGraphWithResponse Single-step navigation (neighbors of one node).
+	//
+	// Returns the neighbors of `node_id` (optionally restricted to one
+	// `edge_type`) in the traversal result shape.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/step (the `StepGraph` operationId).
+	StepGraphWithResponse(ctx context.Context, graphId GraphId, params *StepGraphParams, body StepGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*StepGraphHTTPResp, error)
 
 	// TraverseGraphWithBodyWithResponse Traverse a graph from a start node.
 	//
@@ -15301,6 +16515,26 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v2/graphs/{graph_id}/traverse (the `TraverseGraph` operationId).
 	TraverseGraphWithResponse(ctx context.Context, graphId GraphId, params *TraverseGraphParams, body TraverseGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*TraverseGraphHTTPResp, error)
+
+	// WalkGraphWithBodyWithResponse BFS walk from a start node.
+	//
+	// A traverse with the algorithm pinned to BFS (defaults:
+	// max_depth 2, limit 100).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/walk (the `WalkGraph` operationId).
+	WalkGraphWithBodyWithResponse(ctx context.Context, graphId GraphId, params *WalkGraphParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WalkGraphHTTPResp, error)
+
+	// WalkGraphWithResponse BFS walk from a start node.
+	//
+	// A traverse with the algorithm pinned to BFS (defaults:
+	// max_depth 2, limit 100).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/graphs/{graph_id}/walk (the `WalkGraph` operationId).
+	WalkGraphWithResponse(ctx context.Context, graphId GraphId, params *WalkGraphParams, body WalkGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*WalkGraphHTTPResp, error)
 
 	// HybridIndexWithBodyWithResponse Index documents for BM25 full-text search.
 	//
@@ -18072,12 +19306,19 @@ type ListGraphsHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ListGraphsResponse
+	JSON200 *GraphCollectionListResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListGraphsHTTPResp) GetJSON200() *ListGraphsResponse {
+func (r ListGraphsHTTPResp) GetJSON200() *GraphCollectionListResponse {
 	return r.JSON200
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListGraphsHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -18112,20 +19353,27 @@ func (r ListGraphsHTTPResp) ContentType() string {
 type CreateGraphHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *GraphCollectionResponse
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *GraphCollectionResponse
 	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
+	JSON400 *GraphBadRequest
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
 }
 
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r CreateGraphHTTPResp) GetJSON200() *GraphCollectionResponse {
-	return r.JSON200
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateGraphHTTPResp) GetJSON201() *GraphCollectionResponse {
+	return r.JSON201
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r CreateGraphHTTPResp) GetJSON400() *BadRequest {
+func (r CreateGraphHTTPResp) GetJSON400() *GraphBadRequest {
 	return r.JSON400
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateGraphHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -18160,20 +19408,20 @@ func (r CreateGraphHTTPResp) ContentType() string {
 type DeleteGraphHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *DeleteGraphResponse
 	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r DeleteGraphHTTPResp) GetJSON200() *DeleteGraphResponse {
-	return r.JSON200
+	JSON404 *GraphNotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r DeleteGraphHTTPResp) GetJSON404() *NotFound {
+func (r DeleteGraphHTTPResp) GetJSON404() *GraphNotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteGraphHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -18211,7 +19459,9 @@ type GetGraphHTTPResp struct {
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *GraphCollectionResponse
 	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
+	JSON404 *GraphNotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -18220,8 +19470,13 @@ func (r GetGraphHTTPResp) GetJSON200() *GraphCollectionResponse {
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r GetGraphHTTPResp) GetJSON404() *NotFound {
+func (r GetGraphHTTPResp) GetJSON404() *GraphNotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetGraphHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -18253,30 +19508,243 @@ func (r GetGraphHTTPResp) ContentType() string {
 	return ""
 }
 
-type CreateEdgeHTTPResp struct {
+type GetConnectedComponentsHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *EdgeResponse
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
+	JSON200 *GraphComponentsResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r CreateEdgeHTTPResp) GetJSON200() *EdgeResponse {
+func (r GetConnectedComponentsHTTPResp) GetJSON200() *GraphComponentsResponse {
+	return r.JSON200
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetConnectedComponentsHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetConnectedComponentsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetConnectedComponentsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetConnectedComponentsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetConnectedComponentsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RemoveUniqueConstraintHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *GraphDdlResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *GraphBadRequest
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RemoveUniqueConstraintHTTPResp) GetJSON200() *GraphDdlResponse {
 	return r.JSON200
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r CreateEdgeHTTPResp) GetJSON400() *BadRequest {
+func (r RemoveUniqueConstraintHTTPResp) GetJSON400() *GraphBadRequest {
+	return r.JSON400
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r RemoveUniqueConstraintHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r RemoveUniqueConstraintHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RemoveUniqueConstraintHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RemoveUniqueConstraintHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RemoveUniqueConstraintHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AddUniqueConstraintHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *GraphDdlResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *GraphBadRequest
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AddUniqueConstraintHTTPResp) GetJSON200() *GraphDdlResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r AddUniqueConstraintHTTPResp) GetJSON400() *GraphBadRequest {
+	return r.JSON400
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AddUniqueConstraintHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r AddUniqueConstraintHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AddUniqueConstraintHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AddUniqueConstraintHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AddUniqueConstraintHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CheckCyclesHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *GraphCyclesResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CheckCyclesHTTPResp) GetJSON200() *GraphCyclesResponse {
+	return r.JSON200
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CheckCyclesHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r CheckCyclesHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CheckCyclesHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CheckCyclesHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CheckCyclesHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateEdgeHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *GraphEdgeResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *GraphBadRequest
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GraphNotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateEdgeHTTPResp) GetJSON201() *GraphEdgeResponse {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateEdgeHTTPResp) GetJSON400() *GraphBadRequest {
 	return r.JSON400
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r CreateEdgeHTTPResp) GetJSON404() *NotFound {
+func (r CreateEdgeHTTPResp) GetJSON404() *GraphNotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateEdgeHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -18312,26 +19780,26 @@ type BatchCreateEdgesHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *BatchEdgesResponse
+	JSON200 *GraphBatchEdgesResponse
 	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
+	JSON400 *GraphBadRequest
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r BatchCreateEdgesHTTPResp) GetJSON200() *BatchEdgesResponse {
+func (r BatchCreateEdgesHTTPResp) GetJSON200() *GraphBatchEdgesResponse {
 	return r.JSON200
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r BatchCreateEdgesHTTPResp) GetJSON400() *BadRequest {
+func (r BatchCreateEdgesHTTPResp) GetJSON400() *GraphBadRequest {
 	return r.JSON400
 }
 
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r BatchCreateEdgesHTTPResp) GetJSON404() *NotFound {
-	return r.JSON404
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r BatchCreateEdgesHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -18357,6 +19825,178 @@ func (r BatchCreateEdgesHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r BatchCreateEdgesHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteEdgeHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *GraphEdgeResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GraphNotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DeleteEdgeHTTPResp) GetJSON200() *GraphEdgeResponse {
+	return r.JSON200
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteEdgeHTTPResp) GetJSON404() *GraphNotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteEdgeHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteEdgeHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteEdgeHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteEdgeHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteEdgeHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetEdgeHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *GraphEdgeResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GraphNotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetEdgeHTTPResp) GetJSON200() *GraphEdgeResponse {
+	return r.JSON200
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetEdgeHTTPResp) GetJSON404() *GraphNotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetEdgeHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetEdgeHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetEdgeHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetEdgeHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetEdgeHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateEdgeHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *GraphEdgeResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *GraphBadRequest
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GraphNotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateEdgeHTTPResp) GetJSON200() *GraphEdgeResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UpdateEdgeHTTPResp) GetJSON400() *GraphBadRequest {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r UpdateEdgeHTTPResp) GetJSON404() *GraphNotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateEdgeHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateEdgeHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateEdgeHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateEdgeHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateEdgeHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -18476,27 +20116,34 @@ func (r ImpactAnalysisV2HTTPResp) ContentType() string {
 type CreateNodeHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *NodeResponse
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *GraphNodeResponse
 	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
+	JSON400 *GraphBadRequest
 	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
+	JSON404 *GraphNotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
 }
 
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r CreateNodeHTTPResp) GetJSON200() *NodeResponse {
-	return r.JSON200
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateNodeHTTPResp) GetJSON201() *GraphNodeResponse {
+	return r.JSON201
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r CreateNodeHTTPResp) GetJSON400() *BadRequest {
+func (r CreateNodeHTTPResp) GetJSON400() *GraphBadRequest {
 	return r.JSON400
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r CreateNodeHTTPResp) GetJSON404() *NotFound {
+func (r CreateNodeHTTPResp) GetJSON404() *GraphNotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateNodeHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -18532,26 +20179,26 @@ type BatchCreateNodesHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *BatchNodesResponse
+	JSON200 *GraphBatchNodesResponse
 	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
+	JSON400 *GraphBadRequest
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r BatchCreateNodesHTTPResp) GetJSON200() *BatchNodesResponse {
+func (r BatchCreateNodesHTTPResp) GetJSON200() *GraphBatchNodesResponse {
 	return r.JSON200
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r BatchCreateNodesHTTPResp) GetJSON400() *BadRequest {
+func (r BatchCreateNodesHTTPResp) GetJSON400() *GraphBadRequest {
 	return r.JSON400
 }
 
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r BatchCreateNodesHTTPResp) GetJSON404() *NotFound {
-	return r.JSON404
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r BatchCreateNodesHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -18587,19 +20234,26 @@ type DeleteNodeHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *DeleteNodeResponse
+	JSON200 *GraphNodeResponse
 	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
+	JSON404 *GraphNotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r DeleteNodeHTTPResp) GetJSON200() *DeleteNodeResponse {
+func (r DeleteNodeHTTPResp) GetJSON200() *GraphNodeResponse {
 	return r.JSON200
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r DeleteNodeHTTPResp) GetJSON404() *NotFound {
+func (r DeleteNodeHTTPResp) GetJSON404() *GraphNotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteNodeHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -18635,19 +20289,26 @@ type GetNodeHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *NodeResponse
+	JSON200 *GraphNodeResponse
 	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
+	JSON404 *GraphNotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetNodeHTTPResp) GetJSON200() *NodeResponse {
+func (r GetNodeHTTPResp) GetJSON200() *GraphNodeResponse {
 	return r.JSON200
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r GetNodeHTTPResp) GetJSON404() *NotFound {
+func (r GetNodeHTTPResp) GetJSON404() *GraphNotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetNodeHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -18679,16 +20340,429 @@ func (r GetNodeHTTPResp) ContentType() string {
 	return ""
 }
 
+type UpdateNodeHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *GraphNodeResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *GraphBadRequest
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GraphNotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateNodeHTTPResp) GetJSON200() *GraphNodeResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UpdateNodeHTTPResp) GetJSON400() *GraphBadRequest {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r UpdateNodeHTTPResp) GetJSON404() *GraphNotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateNodeHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateNodeHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateNodeHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateNodeHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateNodeHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetNodeNeighborsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *GraphNodeListResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GraphNotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetNodeNeighborsHTTPResp) GetJSON200() *GraphNodeListResponse {
+	return r.JSON200
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetNodeNeighborsHTTPResp) GetJSON404() *GraphNotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetNodeNeighborsHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetNodeNeighborsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetNodeNeighborsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetNodeNeighborsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetNodeNeighborsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ExecuteGraphQueryHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *GraphQueryResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *GraphBadRequest
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ExecuteGraphQueryHTTPResp) GetJSON200() *GraphQueryResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ExecuteGraphQueryHTTPResp) GetJSON400() *GraphBadRequest {
+	return r.JSON400
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ExecuteGraphQueryHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ExecuteGraphQueryHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExecuteGraphQueryHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExecuteGraphQueryHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExecuteGraphQueryHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type QueryEdgesHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *GraphEdgeQueryResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *GraphBadRequest
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r QueryEdgesHTTPResp) GetJSON200() *GraphEdgeQueryResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r QueryEdgesHTTPResp) GetJSON400() *GraphBadRequest {
+	return r.JSON400
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r QueryEdgesHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r QueryEdgesHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r QueryEdgesHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r QueryEdgesHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r QueryEdgesHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type QueryNodesHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *GraphNodeQueryResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *GraphBadRequest
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r QueryNodesHTTPResp) GetJSON200() *GraphNodeQueryResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r QueryNodesHTTPResp) GetJSON400() *GraphBadRequest {
+	return r.JSON400
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r QueryNodesHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r QueryNodesHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r QueryNodesHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r QueryNodesHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r QueryNodesHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateGraphSchemaHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *GraphCollectionResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *GraphBadRequest
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GraphNotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateGraphSchemaHTTPResp) GetJSON200() *GraphCollectionResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UpdateGraphSchemaHTTPResp) GetJSON400() *GraphBadRequest {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r UpdateGraphSchemaHTTPResp) GetJSON404() *GraphNotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateGraphSchemaHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateGraphSchemaHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateGraphSchemaHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateGraphSchemaHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateGraphSchemaHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ShortestPathHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *GraphShortestPathResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *GraphBadRequest
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GraphNotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ShortestPathHTTPResp) GetJSON200() *GraphShortestPathResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ShortestPathHTTPResp) GetJSON400() *GraphBadRequest {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ShortestPathHTTPResp) GetJSON404() *GraphNotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ShortestPathHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ShortestPathHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ShortestPathHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ShortestPathHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ShortestPathHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetGraphStatsHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *GraphStatsResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r GetGraphStatsHTTPResp) GetJSON200() *GraphStatsResponse {
 	return r.JSON200
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetGraphStatsHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -18720,23 +20794,99 @@ func (r GetGraphStatsHTTPResp) ContentType() string {
 	return ""
 }
 
-type TraverseGraphHTTPResp struct {
+type StepGraphHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *TraverseResponse
+	JSON200 *GraphTraversalResponse
 	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
+	JSON400 *GraphBadRequest
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GraphNotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r TraverseGraphHTTPResp) GetJSON200() *TraverseResponse {
+func (r StepGraphHTTPResp) GetJSON200() *GraphTraversalResponse {
 	return r.JSON200
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r TraverseGraphHTTPResp) GetJSON400() *BadRequest {
+func (r StepGraphHTTPResp) GetJSON400() *GraphBadRequest {
 	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r StepGraphHTTPResp) GetJSON404() *GraphNotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r StepGraphHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r StepGraphHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StepGraphHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StepGraphHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StepGraphHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type TraverseGraphHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *GraphTraversalResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *GraphBadRequest
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GraphNotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r TraverseGraphHTTPResp) GetJSON200() *GraphTraversalResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r TraverseGraphHTTPResp) GetJSON400() *GraphBadRequest {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r TraverseGraphHTTPResp) GetJSON404() *GraphNotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r TraverseGraphHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -18762,6 +20912,68 @@ func (r TraverseGraphHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r TraverseGraphHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type WalkGraphHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *GraphTraversalResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *GraphBadRequest
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *GraphNotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *GraphInternal
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r WalkGraphHTTPResp) GetJSON200() *GraphTraversalResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r WalkGraphHTTPResp) GetJSON400() *GraphBadRequest {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r WalkGraphHTTPResp) GetJSON404() *GraphNotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r WalkGraphHTTPResp) GetJSON500() *GraphInternal {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r WalkGraphHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r WalkGraphHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r WalkGraphHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r WalkGraphHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -21349,6 +23561,9 @@ func (c *ClientWithResponses) CreateGraphWithResponse(ctx context.Context, param
 
 // DeleteGraphWithResponse Delete a graph collection.
 //
+// 204 on success (the handler's success body is not transmitted on
+// a 204). Not-found maps to 404 with the envelope error.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /api/v2/graphs/{graph_id} (the `DeleteGraph` operationId).
@@ -21371,6 +23586,84 @@ func (c *ClientWithResponses) GetGraphWithResponse(ctx context.Context, graphId 
 		return nil, err
 	}
 	return ParseGetGraphHTTPResp(rsp)
+}
+
+// GetConnectedComponentsWithResponse Get the graph's connected components.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v2/graphs/{graph_id}/components (the `GetConnectedComponents` operationId).
+func (c *ClientWithResponses) GetConnectedComponentsWithResponse(ctx context.Context, graphId GraphId, params *GetConnectedComponentsParams, reqEditors ...RequestEditorFn) (*GetConnectedComponentsHTTPResp, error) {
+	rsp, err := c.GetConnectedComponents(ctx, graphId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetConnectedComponentsHTTPResp(rsp)
+}
+
+// RemoveUniqueConstraintWithBodyWithResponse Remove a unique constraint on (label, property).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v2/graphs/{graph_id}/constraints/unique (the `RemoveUniqueConstraint` operationId).
+func (c *ClientWithResponses) RemoveUniqueConstraintWithBodyWithResponse(ctx context.Context, graphId GraphId, params *RemoveUniqueConstraintParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RemoveUniqueConstraintHTTPResp, error) {
+	rsp, err := c.RemoveUniqueConstraintWithBody(ctx, graphId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemoveUniqueConstraintHTTPResp(rsp)
+}
+
+// RemoveUniqueConstraintWithResponse Remove a unique constraint on (label, property).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v2/graphs/{graph_id}/constraints/unique (the `RemoveUniqueConstraint` operationId).
+func (c *ClientWithResponses) RemoveUniqueConstraintWithResponse(ctx context.Context, graphId GraphId, params *RemoveUniqueConstraintParams, body RemoveUniqueConstraintJSONRequestBody, reqEditors ...RequestEditorFn) (*RemoveUniqueConstraintHTTPResp, error) {
+	rsp, err := c.RemoveUniqueConstraint(ctx, graphId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemoveUniqueConstraintHTTPResp(rsp)
+}
+
+// AddUniqueConstraintWithBodyWithResponse Add a unique constraint on (label, property).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/constraints/unique (the `AddUniqueConstraint` operationId).
+func (c *ClientWithResponses) AddUniqueConstraintWithBodyWithResponse(ctx context.Context, graphId GraphId, params *AddUniqueConstraintParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddUniqueConstraintHTTPResp, error) {
+	rsp, err := c.AddUniqueConstraintWithBody(ctx, graphId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAddUniqueConstraintHTTPResp(rsp)
+}
+
+// AddUniqueConstraintWithResponse Add a unique constraint on (label, property).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/constraints/unique (the `AddUniqueConstraint` operationId).
+func (c *ClientWithResponses) AddUniqueConstraintWithResponse(ctx context.Context, graphId GraphId, params *AddUniqueConstraintParams, body AddUniqueConstraintJSONRequestBody, reqEditors ...RequestEditorFn) (*AddUniqueConstraintHTTPResp, error) {
+	rsp, err := c.AddUniqueConstraint(ctx, graphId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAddUniqueConstraintHTTPResp(rsp)
+}
+
+// CheckCyclesWithResponse Check whether the graph contains a cycle.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v2/graphs/{graph_id}/cycles (the `CheckCycles` operationId).
+func (c *ClientWithResponses) CheckCyclesWithResponse(ctx context.Context, graphId GraphId, params *CheckCyclesParams, reqEditors ...RequestEditorFn) (*CheckCyclesHTTPResp, error) {
+	rsp, err := c.CheckCycles(ctx, graphId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCheckCyclesHTTPResp(rsp)
 }
 
 // CreateEdgeWithBodyWithResponse Create an edge in a graph.
@@ -21401,7 +23694,8 @@ func (c *ClientWithResponses) CreateEdgeWithResponse(ctx context.Context, graphI
 
 // BatchCreateEdgesWithBodyWithResponse Create multiple edges in a single call.
 //
-// Batch counterpart to `createEdge`.
+// Per-item rejections ride `failed_count`/`errors[]` while
+// `results[]` carries what landed; the HTTP status stays 200.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -21416,7 +23710,8 @@ func (c *ClientWithResponses) BatchCreateEdgesWithBodyWithResponse(ctx context.C
 
 // BatchCreateEdgesWithResponse Create multiple edges in a single call.
 //
-// Batch counterpart to `createEdge`.
+// Per-item rejections ride `failed_count`/`errors[]` while
+// `results[]` carries what landed; the HTTP status stays 200.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -21427,6 +23722,64 @@ func (c *ClientWithResponses) BatchCreateEdgesWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseBatchCreateEdgesHTTPResp(rsp)
+}
+
+// DeleteEdgeWithResponse Delete an edge by id.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v2/graphs/{graph_id}/edges/{edge_id} (the `DeleteEdge` operationId).
+func (c *ClientWithResponses) DeleteEdgeWithResponse(ctx context.Context, graphId GraphId, edgeId EdgeId, params *DeleteEdgeParams, reqEditors ...RequestEditorFn) (*DeleteEdgeHTTPResp, error) {
+	rsp, err := c.DeleteEdge(ctx, graphId, edgeId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteEdgeHTTPResp(rsp)
+}
+
+// GetEdgeWithResponse Get an edge by id.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v2/graphs/{graph_id}/edges/{edge_id} (the `GetEdge` operationId).
+func (c *ClientWithResponses) GetEdgeWithResponse(ctx context.Context, graphId GraphId, edgeId EdgeId, params *GetEdgeParams, reqEditors ...RequestEditorFn) (*GetEdgeHTTPResp, error) {
+	rsp, err := c.GetEdge(ctx, graphId, edgeId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetEdgeHTTPResp(rsp)
+}
+
+// UpdateEdgeWithBodyWithResponse Replace an edge.
+//
+// Full replacement: the body is the complete edge input (its `id`
+// is overwritten by the path's `edge_id`).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v2/graphs/{graph_id}/edges/{edge_id} (the `UpdateEdge` operationId).
+func (c *ClientWithResponses) UpdateEdgeWithBodyWithResponse(ctx context.Context, graphId GraphId, edgeId EdgeId, params *UpdateEdgeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateEdgeHTTPResp, error) {
+	rsp, err := c.UpdateEdgeWithBody(ctx, graphId, edgeId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateEdgeHTTPResp(rsp)
+}
+
+// UpdateEdgeWithResponse Replace an edge.
+//
+// Full replacement: the body is the complete edge input (its `id`
+// is overwritten by the path's `edge_id`).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v2/graphs/{graph_id}/edges/{edge_id} (the `UpdateEdge` operationId).
+func (c *ClientWithResponses) UpdateEdgeWithResponse(ctx context.Context, graphId GraphId, edgeId EdgeId, params *UpdateEdgeParams, body UpdateEdgeJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateEdgeHTTPResp, error) {
+	rsp, err := c.UpdateEdge(ctx, graphId, edgeId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateEdgeHTTPResp(rsp)
 }
 
 // FusionSearchV2WithBodyWithResponse `POST /api/v2/graphs/{graph_id}/fusion-search` — vector seed → graph expand → calibrated fuse-by-oid.
@@ -21511,8 +23864,8 @@ func (c *ClientWithResponses) CreateNodeWithResponse(ctx context.Context, graphI
 
 // BatchCreateNodesWithBodyWithResponse Create multiple nodes in a single call.
 //
-// Batch counterpart to `createNode`. Use this on bulk-ingest paths
-// where individual round-trips would dominate latency.
+// Per-item rejections ride `failed_count`/`errors[]` while
+// `results[]` carries what landed; the HTTP status stays 200.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -21527,8 +23880,8 @@ func (c *ClientWithResponses) BatchCreateNodesWithBodyWithResponse(ctx context.C
 
 // BatchCreateNodesWithResponse Create multiple nodes in a single call.
 //
-// Batch counterpart to `createNode`. Use this on bulk-ingest paths
-// where individual round-trips would dominate latency.
+// Per-item rejections ride `failed_count`/`errors[]` while
+// `results[]` carries what landed; the HTTP status stays 200.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -21567,6 +23920,213 @@ func (c *ClientWithResponses) GetNodeWithResponse(ctx context.Context, graphId G
 	return ParseGetNodeHTTPResp(rsp)
 }
 
+// UpdateNodeWithBodyWithResponse Replace a node.
+//
+// Full replacement: the body is the complete node input (its `id`
+// is overwritten by the path's `node_id`).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v2/graphs/{graph_id}/nodes/{node_id} (the `UpdateNode` operationId).
+func (c *ClientWithResponses) UpdateNodeWithBodyWithResponse(ctx context.Context, graphId GraphId, nodeId NodeId, params *UpdateNodeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateNodeHTTPResp, error) {
+	rsp, err := c.UpdateNodeWithBody(ctx, graphId, nodeId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateNodeHTTPResp(rsp)
+}
+
+// UpdateNodeWithResponse Replace a node.
+//
+// Full replacement: the body is the complete node input (its `id`
+// is overwritten by the path's `node_id`).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v2/graphs/{graph_id}/nodes/{node_id} (the `UpdateNode` operationId).
+func (c *ClientWithResponses) UpdateNodeWithResponse(ctx context.Context, graphId GraphId, nodeId NodeId, params *UpdateNodeParams, body UpdateNodeJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateNodeHTTPResp, error) {
+	rsp, err := c.UpdateNode(ctx, graphId, nodeId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateNodeHTTPResp(rsp)
+}
+
+// GetNodeNeighborsWithResponse Get a node's neighbors.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v2/graphs/{graph_id}/nodes/{node_id}/neighbors (the `GetNodeNeighbors` operationId).
+func (c *ClientWithResponses) GetNodeNeighborsWithResponse(ctx context.Context, graphId GraphId, nodeId NodeId, params *GetNodeNeighborsParams, reqEditors ...RequestEditorFn) (*GetNodeNeighborsHTTPResp, error) {
+	rsp, err := c.GetNodeNeighbors(ctx, graphId, nodeId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetNodeNeighborsHTTPResp(rsp)
+}
+
+// ExecuteGraphQueryWithBodyWithResponse Execute a graph query.
+//
+// Executes the query text through the port's JSON query path.
+// `language` (default `native`) and `timeout_ms` are accepted but
+// currently unused server-side.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/query (the `ExecuteGraphQuery` operationId).
+func (c *ClientWithResponses) ExecuteGraphQueryWithBodyWithResponse(ctx context.Context, graphId GraphId, params *ExecuteGraphQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecuteGraphQueryHTTPResp, error) {
+	rsp, err := c.ExecuteGraphQueryWithBody(ctx, graphId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExecuteGraphQueryHTTPResp(rsp)
+}
+
+// ExecuteGraphQueryWithResponse Execute a graph query.
+//
+// Executes the query text through the port's JSON query path.
+// `language` (default `native`) and `timeout_ms` are accepted but
+// currently unused server-side.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/query (the `ExecuteGraphQuery` operationId).
+func (c *ClientWithResponses) ExecuteGraphQueryWithResponse(ctx context.Context, graphId GraphId, params *ExecuteGraphQueryParams, body ExecuteGraphQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*ExecuteGraphQueryHTTPResp, error) {
+	rsp, err := c.ExecuteGraphQuery(ctx, graphId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExecuteGraphQueryHTTPResp(rsp)
+}
+
+// QueryEdgesWithBodyWithResponse Query edges by type/endpoints/properties.
+//
+// Paginated: `limit` (default 100) + `offset`, or a
+// `continuation_token` of the form `offset:<n>`. `edge_type`
+// defaults to the empty string (matches untyped edges).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/query/edges (the `QueryEdges` operationId).
+func (c *ClientWithResponses) QueryEdgesWithBodyWithResponse(ctx context.Context, graphId GraphId, params *QueryEdgesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*QueryEdgesHTTPResp, error) {
+	rsp, err := c.QueryEdgesWithBody(ctx, graphId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseQueryEdgesHTTPResp(rsp)
+}
+
+// QueryEdgesWithResponse Query edges by type/endpoints/properties.
+//
+// Paginated: `limit` (default 100) + `offset`, or a
+// `continuation_token` of the form `offset:<n>`. `edge_type`
+// defaults to the empty string (matches untyped edges).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/query/edges (the `QueryEdges` operationId).
+func (c *ClientWithResponses) QueryEdgesWithResponse(ctx context.Context, graphId GraphId, params *QueryEdgesParams, body QueryEdgesJSONRequestBody, reqEditors ...RequestEditorFn) (*QueryEdgesHTTPResp, error) {
+	rsp, err := c.QueryEdges(ctx, graphId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseQueryEdgesHTTPResp(rsp)
+}
+
+// QueryNodesWithBodyWithResponse Query nodes by labels/properties.
+//
+// Paginated: `limit` (default 100) + `offset`, or a
+// `continuation_token` of the form `offset:<n>`.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/query/nodes (the `QueryNodes` operationId).
+func (c *ClientWithResponses) QueryNodesWithBodyWithResponse(ctx context.Context, graphId GraphId, params *QueryNodesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*QueryNodesHTTPResp, error) {
+	rsp, err := c.QueryNodesWithBody(ctx, graphId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseQueryNodesHTTPResp(rsp)
+}
+
+// QueryNodesWithResponse Query nodes by labels/properties.
+//
+// Paginated: `limit` (default 100) + `offset`, or a
+// `continuation_token` of the form `offset:<n>`.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/query/nodes (the `QueryNodes` operationId).
+func (c *ClientWithResponses) QueryNodesWithResponse(ctx context.Context, graphId GraphId, params *QueryNodesParams, body QueryNodesJSONRequestBody, reqEditors ...RequestEditorFn) (*QueryNodesHTTPResp, error) {
+	rsp, err := c.QueryNodes(ctx, graphId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseQueryNodesHTTPResp(rsp)
+}
+
+// UpdateGraphSchemaWithBodyWithResponse Update a graph collection's schema.
+//
+// The body carries the schema as free-form JSON (the handler
+// deserializes it into the port's GraphSchema). 200 returns the
+// updated collection (envelope; data = serialized collection);
+// invalid schema JSON maps to 400.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v2/graphs/{graph_id}/schema (the `UpdateGraphSchema` operationId).
+func (c *ClientWithResponses) UpdateGraphSchemaWithBodyWithResponse(ctx context.Context, graphId GraphId, params *UpdateGraphSchemaParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateGraphSchemaHTTPResp, error) {
+	rsp, err := c.UpdateGraphSchemaWithBody(ctx, graphId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateGraphSchemaHTTPResp(rsp)
+}
+
+// UpdateGraphSchemaWithResponse Update a graph collection's schema.
+//
+// The body carries the schema as free-form JSON (the handler
+// deserializes it into the port's GraphSchema). 200 returns the
+// updated collection (envelope; data = serialized collection);
+// invalid schema JSON maps to 400.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v2/graphs/{graph_id}/schema (the `UpdateGraphSchema` operationId).
+func (c *ClientWithResponses) UpdateGraphSchemaWithResponse(ctx context.Context, graphId GraphId, params *UpdateGraphSchemaParams, body UpdateGraphSchemaJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateGraphSchemaHTTPResp, error) {
+	rsp, err := c.UpdateGraphSchema(ctx, graphId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateGraphSchemaHTTPResp(rsp)
+}
+
+// ShortestPathWithBodyWithResponse Shortest path between two nodes.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/shortest-path (the `ShortestPath` operationId).
+func (c *ClientWithResponses) ShortestPathWithBodyWithResponse(ctx context.Context, graphId GraphId, params *ShortestPathParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ShortestPathHTTPResp, error) {
+	rsp, err := c.ShortestPathWithBody(ctx, graphId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseShortestPathHTTPResp(rsp)
+}
+
+// ShortestPathWithResponse Shortest path between two nodes.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/shortest-path (the `ShortestPath` operationId).
+func (c *ClientWithResponses) ShortestPathWithResponse(ctx context.Context, graphId GraphId, params *ShortestPathParams, body ShortestPathJSONRequestBody, reqEditors ...RequestEditorFn) (*ShortestPathHTTPResp, error) {
+	rsp, err := c.ShortestPath(ctx, graphId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseShortestPathHTTPResp(rsp)
+}
+
 // GetGraphStatsWithResponse Get graph statistics.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -21578,6 +24138,38 @@ func (c *ClientWithResponses) GetGraphStatsWithResponse(ctx context.Context, gra
 		return nil, err
 	}
 	return ParseGetGraphStatsHTTPResp(rsp)
+}
+
+// StepGraphWithBodyWithResponse Single-step navigation (neighbors of one node).
+//
+// Returns the neighbors of `node_id` (optionally restricted to one
+// `edge_type`) in the traversal result shape.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/step (the `StepGraph` operationId).
+func (c *ClientWithResponses) StepGraphWithBodyWithResponse(ctx context.Context, graphId GraphId, params *StepGraphParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StepGraphHTTPResp, error) {
+	rsp, err := c.StepGraphWithBody(ctx, graphId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStepGraphHTTPResp(rsp)
+}
+
+// StepGraphWithResponse Single-step navigation (neighbors of one node).
+//
+// Returns the neighbors of `node_id` (optionally restricted to one
+// `edge_type`) in the traversal result shape.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/step (the `StepGraph` operationId).
+func (c *ClientWithResponses) StepGraphWithResponse(ctx context.Context, graphId GraphId, params *StepGraphParams, body StepGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*StepGraphHTTPResp, error) {
+	rsp, err := c.StepGraph(ctx, graphId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStepGraphHTTPResp(rsp)
 }
 
 // TraverseGraphWithBodyWithResponse Traverse a graph from a start node.
@@ -21604,6 +24196,38 @@ func (c *ClientWithResponses) TraverseGraphWithResponse(ctx context.Context, gra
 		return nil, err
 	}
 	return ParseTraverseGraphHTTPResp(rsp)
+}
+
+// WalkGraphWithBodyWithResponse BFS walk from a start node.
+//
+// A traverse with the algorithm pinned to BFS (defaults:
+// max_depth 2, limit 100).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/walk (the `WalkGraph` operationId).
+func (c *ClientWithResponses) WalkGraphWithBodyWithResponse(ctx context.Context, graphId GraphId, params *WalkGraphParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WalkGraphHTTPResp, error) {
+	rsp, err := c.WalkGraphWithBody(ctx, graphId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseWalkGraphHTTPResp(rsp)
+}
+
+// WalkGraphWithResponse BFS walk from a start node.
+//
+// A traverse with the algorithm pinned to BFS (defaults:
+// max_depth 2, limit 100).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/graphs/{graph_id}/walk (the `WalkGraph` operationId).
+func (c *ClientWithResponses) WalkGraphWithResponse(ctx context.Context, graphId GraphId, params *WalkGraphParams, body WalkGraphJSONRequestBody, reqEditors ...RequestEditorFn) (*WalkGraphHTTPResp, error) {
+	rsp, err := c.WalkGraph(ctx, graphId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseWalkGraphHTTPResp(rsp)
 }
 
 // HybridIndexWithBodyWithResponse Index documents for BM25 full-text search.
@@ -24002,11 +26626,18 @@ func ParseListGraphsHTTPResp(rsp *http.Response) (*ListGraphsHTTPResp, error) {
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ListGraphsResponse
+		var dest GraphCollectionListResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -24027,19 +26658,26 @@ func ParseCreateGraphHTTPResp(rsp *http.Response) (*CreateGraphHTTPResp, error) 
 	}
 
 	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
 		var dest GraphCollectionResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON200 = &dest
+		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
+		var dest GraphBadRequest
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -24060,19 +26698,22 @@ func ParseDeleteGraphHTTPResp(rsp *http.Response) (*DeleteGraphHTTPResp, error) 
 	}
 
 	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest DeleteGraphResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
+	case rsp.StatusCode == 204:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
+		var dest GraphNotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -24101,11 +26742,164 @@ func ParseGetGraphHTTPResp(rsp *http.Response) (*GetGraphHTTPResp, error) {
 		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
+		var dest GraphNotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetConnectedComponentsHTTPResp parses an HTTP response from a GetConnectedComponentsWithResponse call
+func ParseGetConnectedComponentsHTTPResp(rsp *http.Response) (*GetConnectedComponentsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetConnectedComponentsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GraphComponentsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRemoveUniqueConstraintHTTPResp parses an HTTP response from a RemoveUniqueConstraintWithResponse call
+func ParseRemoveUniqueConstraintHTTPResp(rsp *http.Response) (*RemoveUniqueConstraintHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RemoveUniqueConstraintHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GraphDdlResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest GraphBadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAddUniqueConstraintHTTPResp parses an HTTP response from a AddUniqueConstraintWithResponse call
+func ParseAddUniqueConstraintHTTPResp(rsp *http.Response) (*AddUniqueConstraintHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AddUniqueConstraintHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GraphDdlResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest GraphBadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCheckCyclesHTTPResp parses an HTTP response from a CheckCyclesWithResponse call
+func ParseCheckCyclesHTTPResp(rsp *http.Response) (*CheckCyclesHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CheckCyclesHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GraphCyclesResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -24126,26 +26920,33 @@ func ParseCreateEdgeHTTPResp(rsp *http.Response) (*CreateEdgeHTTPResp, error) {
 	}
 
 	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest EdgeResponse
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest GraphEdgeResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON200 = &dest
+		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
+		var dest GraphBadRequest
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
+		var dest GraphNotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -24167,25 +26968,152 @@ func ParseBatchCreateEdgesHTTPResp(rsp *http.Response) (*BatchCreateEdgesHTTPRes
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest BatchEdgesResponse
+		var dest GraphBatchEdgesResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
+		var dest GraphBadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteEdgeHTTPResp parses an HTTP response from a DeleteEdgeWithResponse call
+func ParseDeleteEdgeHTTPResp(rsp *http.Response) (*DeleteEdgeHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteEdgeHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GraphEdgeResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GraphNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetEdgeHTTPResp parses an HTTP response from a GetEdgeWithResponse call
+func ParseGetEdgeHTTPResp(rsp *http.Response) (*GetEdgeHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetEdgeHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GraphEdgeResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GraphNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateEdgeHTTPResp parses an HTTP response from a UpdateEdgeWithResponse call
+func ParseUpdateEdgeHTTPResp(rsp *http.Response) (*UpdateEdgeHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateEdgeHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GraphEdgeResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest GraphBadRequest
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
+		var dest GraphNotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -24286,26 +27214,33 @@ func ParseCreateNodeHTTPResp(rsp *http.Response) (*CreateNodeHTTPResp, error) {
 	}
 
 	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest NodeResponse
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest GraphNodeResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON200 = &dest
+		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
+		var dest GraphBadRequest
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
+		var dest GraphNotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -24327,25 +27262,25 @@ func ParseBatchCreateNodesHTTPResp(rsp *http.Response) (*BatchCreateNodesHTTPRes
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest BatchNodesResponse
+		var dest GraphBatchNodesResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
+		var dest GraphBadRequest
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON400 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON404 = &dest
+		response.JSON500 = &dest
 
 	}
 
@@ -24367,18 +27302,25 @@ func ParseDeleteNodeHTTPResp(rsp *http.Response) (*DeleteNodeHTTPResp, error) {
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest DeleteNodeResponse
+		var dest GraphNodeResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
+		var dest GraphNotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -24400,18 +27342,326 @@ func ParseGetNodeHTTPResp(rsp *http.Response) (*GetNodeHTTPResp, error) {
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest NodeResponse
+		var dest GraphNodeResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
+		var dest GraphNotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateNodeHTTPResp parses an HTTP response from a UpdateNodeWithResponse call
+func ParseUpdateNodeHTTPResp(rsp *http.Response) (*UpdateNodeHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateNodeHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GraphNodeResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest GraphBadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GraphNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetNodeNeighborsHTTPResp parses an HTTP response from a GetNodeNeighborsWithResponse call
+func ParseGetNodeNeighborsHTTPResp(rsp *http.Response) (*GetNodeNeighborsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetNodeNeighborsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GraphNodeListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GraphNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseExecuteGraphQueryHTTPResp parses an HTTP response from a ExecuteGraphQueryWithResponse call
+func ParseExecuteGraphQueryHTTPResp(rsp *http.Response) (*ExecuteGraphQueryHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExecuteGraphQueryHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GraphQueryResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest GraphBadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseQueryEdgesHTTPResp parses an HTTP response from a QueryEdgesWithResponse call
+func ParseQueryEdgesHTTPResp(rsp *http.Response) (*QueryEdgesHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &QueryEdgesHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GraphEdgeQueryResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest GraphBadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseQueryNodesHTTPResp parses an HTTP response from a QueryNodesWithResponse call
+func ParseQueryNodesHTTPResp(rsp *http.Response) (*QueryNodesHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &QueryNodesHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GraphNodeQueryResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest GraphBadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateGraphSchemaHTTPResp parses an HTTP response from a UpdateGraphSchemaWithResponse call
+func ParseUpdateGraphSchemaHTTPResp(rsp *http.Response) (*UpdateGraphSchemaHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateGraphSchemaHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GraphCollectionResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest GraphBadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GraphNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseShortestPathHTTPResp parses an HTTP response from a ShortestPathWithResponse call
+func ParseShortestPathHTTPResp(rsp *http.Response) (*ShortestPathHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ShortestPathHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GraphShortestPathResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest GraphBadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GraphNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -24439,6 +27689,60 @@ func ParseGetGraphStatsHTTPResp(rsp *http.Response) (*GetGraphStatsHTTPResp, err
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseStepGraphHTTPResp parses an HTTP response from a StepGraphWithResponse call
+func ParseStepGraphHTTPResp(rsp *http.Response) (*StepGraphHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StepGraphHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GraphTraversalResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest GraphBadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GraphNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -24459,18 +27763,79 @@ func ParseTraverseGraphHTTPResp(rsp *http.Response) (*TraverseGraphHTTPResp, err
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest TraverseResponse
+		var dest GraphTraversalResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
+		var dest GraphBadRequest
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GraphNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseWalkGraphHTTPResp parses an HTTP response from a WalkGraphWithResponse call
+func ParseWalkGraphHTTPResp(rsp *http.Response) (*WalkGraphHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &WalkGraphHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest GraphTraversalResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest GraphBadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GraphNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest GraphInternal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

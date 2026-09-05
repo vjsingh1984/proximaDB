@@ -1539,6 +1539,74 @@ pub mod types {
             Default::default()
         }
     }
+    ///`AddUniqueConstraintGraphId`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct AddUniqueConstraintGraphId(::std::string::String);
+    impl ::std::ops::Deref for AddUniqueConstraintGraphId {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<AddUniqueConstraintGraphId> for ::std::string::String {
+        fn from(value: AddUniqueConstraintGraphId) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for AddUniqueConstraintGraphId {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for AddUniqueConstraintGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for AddUniqueConstraintGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for AddUniqueConstraintGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for AddUniqueConstraintGraphId {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
     /// `status` is always `"dropped"`; the `dropped` flag
     /// distinguishes an actual removal from a no-op.
     ///
@@ -2064,13 +2132,12 @@ pub mod types {
                 })
         }
     }
-    /// Body for `POST /api/v2/graphs/{id}/edges/batch`.
+    ///`BatchCreateEdgesRequest`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "Body for `POST /api/v2/graphs/{id}/edges/batch`.\n",
     ///  "type": "object",
     ///  "required": [
     ///    "edges"
@@ -2080,8 +2147,7 @@ pub mod types {
     ///      "type": "array",
     ///      "items": {
     ///        "$ref": "#/components/schemas/EdgeInput"
-    ///      },
-    ///      "minItems": 1
+    ///      }
     ///    }
     ///  }
     ///}
@@ -2164,13 +2230,12 @@ pub mod types {
                 })
         }
     }
-    /// Body for `POST /api/v2/graphs/{id}/nodes/batch`.
+    ///`BatchCreateNodesRequest`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "Body for `POST /api/v2/graphs/{id}/nodes/batch`.\n",
     ///  "type": "object",
     ///  "required": [
     ///    "nodes"
@@ -2180,8 +2245,7 @@ pub mod types {
     ///      "type": "array",
     ///      "items": {
     ///        "$ref": "#/components/schemas/NodeInput"
-    ///      },
-    ///      "minItems": 1
+    ///      }
     ///    }
     ///  }
     ///}
@@ -2193,194 +2257,6 @@ pub mod types {
     }
     impl BatchCreateNodesRequest {
         pub fn builder() -> builder::BatchCreateNodesRequest {
-            Default::default()
-        }
-    }
-    /// Server returns a `GraphResponse<BatchResults<Edge>>` envelope.
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "description": "Server returns a `GraphResponse<BatchResults<Edge>>` envelope.\n",
-    ///  "type": "object",
-    ///  "properties": {
-    ///    "data": {
-    ///      "type": "object",
-    ///      "properties": {
-    ///        "count": {
-    ///          "type": "integer"
-    ///        },
-    ///        "results": {
-    ///          "type": "array",
-    ///          "items": {
-    ///            "$ref": "#/components/schemas/EdgeResponse"
-    ///          }
-    ///        }
-    ///      },
-    ///      "additionalProperties": true
-    ///    },
-    ///    "success": {
-    ///      "type": "boolean"
-    ///    }
-    ///  },
-    ///  "additionalProperties": true
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct BatchEdgesResponse {
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub data: ::std::option::Option<BatchEdgesResponseData>,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub success: ::std::option::Option<bool>,
-    }
-    impl ::std::default::Default for BatchEdgesResponse {
-        fn default() -> Self {
-            Self {
-                data: Default::default(),
-                success: Default::default(),
-            }
-        }
-    }
-    impl BatchEdgesResponse {
-        pub fn builder() -> builder::BatchEdgesResponse {
-            Default::default()
-        }
-    }
-    ///`BatchEdgesResponseData`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "properties": {
-    ///    "count": {
-    ///      "type": "integer"
-    ///    },
-    ///    "results": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "$ref": "#/components/schemas/EdgeResponse"
-    ///      }
-    ///    }
-    ///  },
-    ///  "additionalProperties": true
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct BatchEdgesResponseData {
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub count: ::std::option::Option<i64>,
-        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
-        pub results: ::std::vec::Vec<EdgeResponse>,
-    }
-    impl ::std::default::Default for BatchEdgesResponseData {
-        fn default() -> Self {
-            Self {
-                count: Default::default(),
-                results: Default::default(),
-            }
-        }
-    }
-    impl BatchEdgesResponseData {
-        pub fn builder() -> builder::BatchEdgesResponseData {
-            Default::default()
-        }
-    }
-    /// Server returns a `GraphResponse<BatchResults<Node>>` envelope.
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "description": "Server returns a `GraphResponse<BatchResults<Node>>` envelope.\n",
-    ///  "type": "object",
-    ///  "properties": {
-    ///    "data": {
-    ///      "type": "object",
-    ///      "properties": {
-    ///        "count": {
-    ///          "type": "integer"
-    ///        },
-    ///        "results": {
-    ///          "type": "array",
-    ///          "items": {
-    ///            "$ref": "#/components/schemas/NodeResponse"
-    ///          }
-    ///        }
-    ///      },
-    ///      "additionalProperties": true
-    ///    },
-    ///    "success": {
-    ///      "type": "boolean"
-    ///    }
-    ///  },
-    ///  "additionalProperties": true
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct BatchNodesResponse {
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub data: ::std::option::Option<BatchNodesResponseData>,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub success: ::std::option::Option<bool>,
-    }
-    impl ::std::default::Default for BatchNodesResponse {
-        fn default() -> Self {
-            Self {
-                data: Default::default(),
-                success: Default::default(),
-            }
-        }
-    }
-    impl BatchNodesResponse {
-        pub fn builder() -> builder::BatchNodesResponse {
-            Default::default()
-        }
-    }
-    ///`BatchNodesResponseData`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "properties": {
-    ///    "count": {
-    ///      "type": "integer"
-    ///    },
-    ///    "results": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "$ref": "#/components/schemas/NodeResponse"
-    ///      }
-    ///    }
-    ///  },
-    ///  "additionalProperties": true
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct BatchNodesResponseData {
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub count: ::std::option::Option<i64>,
-        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
-        pub results: ::std::vec::Vec<NodeResponse>,
-    }
-    impl ::std::default::Default for BatchNodesResponseData {
-        fn default() -> Self {
-            Self {
-                count: Default::default(),
-                results: Default::default(),
-            }
-        }
-    }
-    impl BatchNodesResponseData {
-        pub fn builder() -> builder::BatchNodesResponseData {
             Default::default()
         }
     }
@@ -2443,6 +2319,125 @@ pub mod types {
     }
     impl BulkMetricIngestRequest {
         pub fn builder() -> builder::BulkMetricIngestRequest {
+            Default::default()
+        }
+    }
+    ///`CanonicalEdge`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "created_at",
+    ///    "edge_type",
+    ///    "from_node_id",
+    ///    "id",
+    ///    "properties",
+    ///    "to_node_id",
+    ///    "updated_at"
+    ///  ],
+    ///  "properties": {
+    ///    "created_at": {
+    ///      "type": "string"
+    ///    },
+    ///    "edge_type": {
+    ///      "type": "string"
+    ///    },
+    ///    "from_node_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "id": {
+    ///      "type": "string"
+    ///    },
+    ///    "properties": {
+    ///      "type": "object",
+    ///      "additionalProperties": true
+    ///    },
+    ///    "to_node_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "updated_at": {
+    ///      "type": "string"
+    ///    },
+    ///    "weight": {
+    ///      "type": "number"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct CanonicalEdge {
+        pub created_at: ::std::string::String,
+        pub edge_type: ::std::string::String,
+        pub from_node_id: ::std::string::String,
+        pub id: ::std::string::String,
+        pub properties: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+        pub to_node_id: ::std::string::String,
+        pub updated_at: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub weight: ::std::option::Option<f64>,
+    }
+    impl CanonicalEdge {
+        pub fn builder() -> builder::CanonicalEdge {
+            Default::default()
+        }
+    }
+    ///`CanonicalNode`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "created_at",
+    ///    "id",
+    ///    "labels",
+    ///    "properties",
+    ///    "updated_at"
+    ///  ],
+    ///  "properties": {
+    ///    "created_at": {
+    ///      "type": "string"
+    ///    },
+    ///    "embedding": {
+    ///      "$ref": "#/components/schemas/GraphEmbedding"
+    ///    },
+    ///    "id": {
+    ///      "type": "string"
+    ///    },
+    ///    "labels": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "properties": {
+    ///      "type": "object",
+    ///      "additionalProperties": true
+    ///    },
+    ///    "updated_at": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct CanonicalNode {
+        pub created_at: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub embedding: ::std::option::Option<GraphEmbedding>,
+        pub id: ::std::string::String,
+        pub labels: ::std::vec::Vec<::std::string::String>,
+        pub properties: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+        pub updated_at: ::std::string::String,
+    }
+    impl CanonicalNode {
+        pub fn builder() -> builder::CanonicalNode {
             Default::default()
         }
     }
@@ -3766,6 +3761,74 @@ pub mod types {
             Self::UpsertDeployment(value)
         }
     }
+    ///`CheckCyclesGraphId`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct CheckCyclesGraphId(::std::string::String);
+    impl ::std::ops::Deref for CheckCyclesGraphId {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<CheckCyclesGraphId> for ::std::string::String {
+        fn from(value: CheckCyclesGraphId) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for CheckCyclesGraphId {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for CheckCyclesGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for CheckCyclesGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for CheckCyclesGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for CheckCyclesGraphId {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
     ///Collection statistics for v2 API
     ///
     /// <details><summary>JSON schema</summary>
@@ -4439,13 +4502,12 @@ pub mod types {
                 })
         }
     }
-    /// Wrapped envelope: server expects `{"edge": EdgeInput}`.
+    ///`CreateEdgeRequest`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "Wrapped envelope: server expects `{\"edge\": EdgeInput}`.\n",
     ///  "type": "object",
     ///  "required": [
     ///    "edge"
@@ -4479,22 +4541,13 @@ pub mod types {
     ///  ],
     ///  "properties": {
     ///    "description": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
+    ///      "type": "string"
     ///    },
     ///    "graph_id": {
-    ///      "description": "Unique identifier for the new graph collection.",
-    ///      "type": "string",
-    ///      "minLength": 1
+    ///      "type": "string"
     ///    },
     ///    "name": {
-    ///      "description": "Optional human-readable name (defaults to graph_id).",
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
+    ///      "type": "string"
     ///    }
     ///  }
     ///}
@@ -4504,84 +4557,13 @@ pub mod types {
     pub struct CreateGraphRequest {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub description: ::std::option::Option<::std::string::String>,
-        ///Unique identifier for the new graph collection.
-        pub graph_id: CreateGraphRequestGraphId,
-        ///Optional human-readable name (defaults to graph_id).
+        pub graph_id: ::std::string::String,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub name: ::std::option::Option<::std::string::String>,
     }
     impl CreateGraphRequest {
         pub fn builder() -> builder::CreateGraphRequest {
             Default::default()
-        }
-    }
-    ///Unique identifier for the new graph collection.
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "description": "Unique identifier for the new graph collection.",
-    ///  "type": "string",
-    ///  "minLength": 1
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct CreateGraphRequestGraphId(::std::string::String);
-    impl ::std::ops::Deref for CreateGraphRequestGraphId {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-    impl ::std::convert::From<CreateGraphRequestGraphId> for ::std::string::String {
-        fn from(value: CreateGraphRequestGraphId) -> Self {
-            value.0
-        }
-    }
-    impl ::std::str::FromStr for CreateGraphRequestGraphId {
-        type Err = self::error::ConversionError;
-        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            if value.chars().count() < 1usize {
-                return Err("shorter than 1 characters".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-    impl ::std::convert::TryFrom<&str> for CreateGraphRequestGraphId {
-        type Error = self::error::ConversionError;
-        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String> for CreateGraphRequestGraphId {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String> for CreateGraphRequestGraphId {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl<'de> ::serde::Deserialize<'de> for CreateGraphRequestGraphId {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
         }
     }
     ///`CreateModelRegistryRequest`
@@ -4681,13 +4663,12 @@ pub mod types {
                 })
         }
     }
-    /// Wrapped envelope: server expects `{"node": NodeInput}`.
+    ///`CreateNodeRequest`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "Wrapped envelope: server expects `{\"node\": NodeInput}`.\n",
     ///  "type": "object",
     ///  "required": [
     ///    "node"
@@ -4897,6 +4878,142 @@ pub mod types {
             Default::default()
         }
     }
+    ///`DeleteEdgeEdgeId`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct DeleteEdgeEdgeId(::std::string::String);
+    impl ::std::ops::Deref for DeleteEdgeEdgeId {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<DeleteEdgeEdgeId> for ::std::string::String {
+        fn from(value: DeleteEdgeEdgeId) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for DeleteEdgeEdgeId {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for DeleteEdgeEdgeId {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for DeleteEdgeEdgeId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for DeleteEdgeEdgeId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for DeleteEdgeEdgeId {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`DeleteEdgeGraphId`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct DeleteEdgeGraphId(::std::string::String);
+    impl ::std::ops::Deref for DeleteEdgeGraphId {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<DeleteEdgeGraphId> for ::std::string::String {
+        fn from(value: DeleteEdgeGraphId) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for DeleteEdgeGraphId {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for DeleteEdgeGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for DeleteEdgeGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for DeleteEdgeGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for DeleteEdgeGraphId {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
     ///`DeleteGraphGraphId`
     ///
     /// <details><summary>JSON schema</summary>
@@ -4963,41 +5080,6 @@ pub mod types {
                 .map_err(|e: self::error::ConversionError| {
                     <D::Error as ::serde::de::Error>::custom(e.to_string())
                 })
-        }
-    }
-    /// 204 No Content on success with an empty `GraphResponse` envelope;
-    /// 404 Not Found with an error envelope when the graph is missing.
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "description": "204 No Content on success with an empty `GraphResponse` envelope;\n404 Not Found with an error envelope when the graph is missing.\n",
-    ///  "type": "object",
-    ///  "properties": {
-    ///    "success": {
-    ///      "type": "boolean"
-    ///    }
-    ///  },
-    ///  "additionalProperties": true
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct DeleteGraphResponse {
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub success: ::std::option::Option<bool>,
-    }
-    impl ::std::default::Default for DeleteGraphResponse {
-        fn default() -> Self {
-            Self {
-                success: Default::default(),
-            }
-        }
-    }
-    impl DeleteGraphResponse {
-        pub fn builder() -> builder::DeleteGraphResponse {
-            Default::default()
         }
     }
     ///`DeleteNodeGraphId`
@@ -5136,45 +5218,6 @@ pub mod types {
                 })
         }
     }
-    ///`DeleteNodeResponse`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "properties": {
-    ///    "id": {
-    ///      "type": "string"
-    ///    },
-    ///    "success": {
-    ///      "type": "boolean"
-    ///    }
-    ///  },
-    ///  "additionalProperties": true
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct DeleteNodeResponse {
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub id: ::std::option::Option<::std::string::String>,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub success: ::std::option::Option<bool>,
-    }
-    impl ::std::default::Default for DeleteNodeResponse {
-        fn default() -> Self {
-            Self {
-                id: Default::default(),
-                success: Default::default(),
-            }
-        }
-    }
-    impl DeleteNodeResponse {
-        pub fn builder() -> builder::DeleteNodeResponse {
-            Default::default()
-        }
-    }
     ///Response for deleting a single record.
     ///
     /// <details><summary>JSON schema</summary>
@@ -5220,14 +5263,12 @@ pub mod types {
             Default::default()
         }
     }
-    /// Edge payload nested inside `CreateEdgeRequest.edge`. Matches
-    /// `RestEdgeInput` in proximadb-api's graph handler.
+    ///`EdgeInput`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "Edge payload nested inside `CreateEdgeRequest.edge`. Matches\n`RestEdgeInput` in proximadb-api's graph handler.\n",
     ///  "type": "object",
     ///  "required": [
     ///    "edge_type",
@@ -5243,8 +5284,7 @@ pub mod types {
     ///      "type": "string"
     ///    },
     ///    "id": {
-    ///      "type": "string",
-    ///      "minLength": 1
+    ///      "type": "string"
     ///    },
     ///    "properties": {
     ///      "type": "object",
@@ -5254,11 +5294,7 @@ pub mod types {
     ///      "type": "string"
     ///    },
     ///    "weight": {
-    ///      "type": [
-    ///        "number",
-    ///        "null"
-    ///      ],
-    ///      "format": "double"
+    ///      "type": "number"
     ///    }
     ///  }
     ///}
@@ -5268,7 +5304,7 @@ pub mod types {
     pub struct EdgeInput {
         pub edge_type: ::std::string::String,
         pub from_node_id: ::std::string::String,
-        pub id: EdgeInputId,
+        pub id: ::std::string::String,
         #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
         pub properties: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
         pub to_node_id: ::std::string::String,
@@ -5277,186 +5313,6 @@ pub mod types {
     }
     impl EdgeInput {
         pub fn builder() -> builder::EdgeInput {
-            Default::default()
-        }
-    }
-    ///`EdgeInputId`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "minLength": 1
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct EdgeInputId(::std::string::String);
-    impl ::std::ops::Deref for EdgeInputId {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-    impl ::std::convert::From<EdgeInputId> for ::std::string::String {
-        fn from(value: EdgeInputId) -> Self {
-            value.0
-        }
-    }
-    impl ::std::str::FromStr for EdgeInputId {
-        type Err = self::error::ConversionError;
-        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            if value.chars().count() < 1usize {
-                return Err("shorter than 1 characters".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-    impl ::std::convert::TryFrom<&str> for EdgeInputId {
-        type Error = self::error::ConversionError;
-        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String> for EdgeInputId {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String> for EdgeInputId {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl<'de> ::serde::Deserialize<'de> for EdgeInputId {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-    ///`EdgeResponse`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "id"
-    ///  ],
-    ///  "properties": {
-    ///    "edge_type": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "from_node_id": {
-    ///      "type": "string"
-    ///    },
-    ///    "id": {
-    ///      "type": "string"
-    ///    },
-    ///    "properties": {
-    ///      "type": [
-    ///        "object",
-    ///        "null"
-    ///      ],
-    ///      "additionalProperties": true
-    ///    },
-    ///    "to_node_id": {
-    ///      "type": "string"
-    ///    },
-    ///    "weight": {
-    ///      "type": [
-    ///        "number",
-    ///        "null"
-    ///      ],
-    ///      "format": "double"
-    ///    }
-    ///  },
-    ///  "additionalProperties": true
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct EdgeResponse {
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub edge_type: ::std::option::Option<::std::string::String>,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub from_node_id: ::std::option::Option<::std::string::String>,
-        pub id: ::std::string::String,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub properties:
-            ::std::option::Option<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub to_node_id: ::std::option::Option<::std::string::String>,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub weight: ::std::option::Option<f64>,
-    }
-    impl EdgeResponse {
-        pub fn builder() -> builder::EdgeResponse {
-            Default::default()
-        }
-    }
-    ///`EmbeddingInput`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "required": [
-    ///    "vector"
-    ///  ],
-    ///  "properties": {
-    ///    "modality": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "model_id": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "vector": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "type": "number",
-    ///        "format": "float"
-    ///      }
-    ///    }
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct EmbeddingInput {
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub modality: ::std::option::Option<::std::string::String>,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub model_id: ::std::option::Option<::std::string::String>,
-        pub vector: ::std::vec::Vec<f32>,
-    }
-    impl EmbeddingInput {
-        pub fn builder() -> builder::EmbeddingInput {
             Default::default()
         }
     }
@@ -5798,6 +5654,74 @@ pub mod types {
     impl ErrorResponse {
         pub fn builder() -> builder::ErrorResponse {
             Default::default()
+        }
+    }
+    ///`ExecuteGraphQueryGraphId`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct ExecuteGraphQueryGraphId(::std::string::String);
+    impl ::std::ops::Deref for ExecuteGraphQueryGraphId {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<ExecuteGraphQueryGraphId> for ::std::string::String {
+        fn from(value: ExecuteGraphQueryGraphId) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for ExecuteGraphQueryGraphId {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for ExecuteGraphQueryGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for ExecuteGraphQueryGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for ExecuteGraphQueryGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for ExecuteGraphQueryGraphId {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
         }
     }
     ///`ExplainQueryRequest`
@@ -6214,6 +6138,210 @@ pub mod types {
             Default::default()
         }
     }
+    ///`GetConnectedComponentsGraphId`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetConnectedComponentsGraphId(::std::string::String);
+    impl ::std::ops::Deref for GetConnectedComponentsGraphId {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<GetConnectedComponentsGraphId> for ::std::string::String {
+        fn from(value: GetConnectedComponentsGraphId) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for GetConnectedComponentsGraphId {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for GetConnectedComponentsGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for GetConnectedComponentsGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for GetConnectedComponentsGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for GetConnectedComponentsGraphId {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetEdgeEdgeId`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetEdgeEdgeId(::std::string::String);
+    impl ::std::ops::Deref for GetEdgeEdgeId {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<GetEdgeEdgeId> for ::std::string::String {
+        fn from(value: GetEdgeEdgeId) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for GetEdgeEdgeId {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for GetEdgeEdgeId {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for GetEdgeEdgeId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for GetEdgeEdgeId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for GetEdgeEdgeId {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetEdgeGraphId`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetEdgeGraphId(::std::string::String);
+    impl ::std::ops::Deref for GetEdgeGraphId {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<GetEdgeGraphId> for ::std::string::String {
+        fn from(value: GetEdgeGraphId) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for GetEdgeGraphId {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for GetEdgeGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for GetEdgeGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for GetEdgeGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for GetEdgeGraphId {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
     ///`GetGraphGraphId`
     ///
     /// <details><summary>JSON schema</summary>
@@ -6418,6 +6546,142 @@ pub mod types {
                 })
         }
     }
+    ///`GetNodeNeighborsGraphId`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetNodeNeighborsGraphId(::std::string::String);
+    impl ::std::ops::Deref for GetNodeNeighborsGraphId {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<GetNodeNeighborsGraphId> for ::std::string::String {
+        fn from(value: GetNodeNeighborsGraphId) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for GetNodeNeighborsGraphId {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for GetNodeNeighborsGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for GetNodeNeighborsGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for GetNodeNeighborsGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for GetNodeNeighborsGraphId {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`GetNodeNeighborsNodeId`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct GetNodeNeighborsNodeId(::std::string::String);
+    impl ::std::ops::Deref for GetNodeNeighborsNodeId {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<GetNodeNeighborsNodeId> for ::std::string::String {
+        fn from(value: GetNodeNeighborsNodeId) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for GetNodeNeighborsNodeId {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for GetNodeNeighborsNodeId {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for GetNodeNeighborsNodeId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for GetNodeNeighborsNodeId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for GetNodeNeighborsNodeId {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
     ///`GetNodeNodeId`
     ///
     /// <details><summary>JSON schema</summary>
@@ -6486,75 +6750,1463 @@ pub mod types {
                 })
         }
     }
-    /// Server returns a `GraphResponse<T>` envelope around graph
-    /// collection metadata. The fields below are the common subset
-    /// SDKs rely on; extra server-side fields are passed through.
+    ///`GraphBatchEdgesResponse`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "Server returns a `GraphResponse<T>` envelope around graph\ncollection metadata. The fields below are the common subset\nSDKs rely on; extra server-side fields are passed through.\n",
     ///  "type": "object",
+    ///  "required": [
+    ///    "success"
+    ///  ],
     ///  "properties": {
-    ///    "description": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
+    ///    "data": {
+    ///      "$ref": "#/components/schemas/GraphEdgeBatchResults"
     ///    },
-    ///    "edge_count": {
-    ///      "type": [
-    ///        "integer",
-    ///        "null"
-    ///      ]
+    ///    "error": {
+    ///      "$ref": "#/components/schemas/GraphErrorBody"
     ///    },
-    ///    "graph_id": {
-    ///      "type": "string"
+    ///    "metadata": {
+    ///      "$ref": "#/components/schemas/GraphResponseMetadata"
     ///    },
-    ///    "name": {
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
-    ///    },
-    ///    "node_count": {
-    ///      "type": [
-    ///        "integer",
-    ///        "null"
-    ///      ]
+    ///    "success": {
+    ///      "type": "boolean"
     ///    }
-    ///  },
-    ///  "additionalProperties": true
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphBatchEdgesResponse {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub data: ::std::option::Option<GraphEdgeBatchResults>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub error: ::std::option::Option<GraphErrorBody>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub metadata: ::std::option::Option<GraphResponseMetadata>,
+        pub success: bool,
+    }
+    impl GraphBatchEdgesResponse {
+        pub fn builder() -> builder::GraphBatchEdgesResponse {
+            Default::default()
+        }
+    }
+    ///`GraphBatchNodesResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "data": {
+    ///      "$ref": "#/components/schemas/GraphNodeBatchResults"
+    ///    },
+    ///    "error": {
+    ///      "$ref": "#/components/schemas/GraphErrorBody"
+    ///    },
+    ///    "metadata": {
+    ///      "$ref": "#/components/schemas/GraphResponseMetadata"
+    ///    },
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphBatchNodesResponse {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub data: ::std::option::Option<GraphNodeBatchResults>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub error: ::std::option::Option<GraphErrorBody>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub metadata: ::std::option::Option<GraphResponseMetadata>,
+        pub success: bool,
+    }
+    impl GraphBatchNodesResponse {
+        pub fn builder() -> builder::GraphBatchNodesResponse {
+            Default::default()
+        }
+    }
+    ///`GraphCollectionListResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "data": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "object",
+    ///        "additionalProperties": true
+    ///      }
+    ///    },
+    ///    "error": {
+    ///      "$ref": "#/components/schemas/GraphErrorBody"
+    ///    },
+    ///    "metadata": {
+    ///      "$ref": "#/components/schemas/GraphResponseMetadata"
+    ///    },
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphCollectionListResponse {
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub data: ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub error: ::std::option::Option<GraphErrorBody>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub metadata: ::std::option::Option<GraphResponseMetadata>,
+        pub success: bool,
+    }
+    impl GraphCollectionListResponse {
+        pub fn builder() -> builder::GraphCollectionListResponse {
+            Default::default()
+        }
+    }
+    /// Envelope around the serialized graph-collection object. The
+    /// payload is the port's collection record rendered as JSON — an
+    /// open object (the field set is the proto collection's, subject to
+    /// port evolution).
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Envelope around the serialized graph-collection object. The\npayload is the port's collection record rendered as JSON — an\nopen object (the field set is the proto collection's, subject to\nport evolution).\n",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "data": {
+    ///      "type": "object",
+    ///      "additionalProperties": true
+    ///    },
+    ///    "error": {
+    ///      "$ref": "#/components/schemas/GraphErrorBody"
+    ///    },
+    ///    "metadata": {
+    ///      "$ref": "#/components/schemas/GraphResponseMetadata"
+    ///    },
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
     ///}
     /// ```
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
     pub struct GraphCollectionResponse {
+        #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
+        pub data: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub description: ::std::option::Option<::std::string::String>,
+        pub error: ::std::option::Option<GraphErrorBody>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub edge_count: ::std::option::Option<i64>,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub graph_id: ::std::option::Option<::std::string::String>,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub name: ::std::option::Option<::std::string::String>,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub node_count: ::std::option::Option<i64>,
-    }
-    impl ::std::default::Default for GraphCollectionResponse {
-        fn default() -> Self {
-            Self {
-                description: Default::default(),
-                edge_count: Default::default(),
-                graph_id: Default::default(),
-                name: Default::default(),
-                node_count: Default::default(),
-            }
-        }
+        pub metadata: ::std::option::Option<GraphResponseMetadata>,
+        pub success: bool,
     }
     impl GraphCollectionResponse {
         pub fn builder() -> builder::GraphCollectionResponse {
+            Default::default()
+        }
+    }
+    ///`GraphComponentsData`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "components"
+    ///  ],
+    ///  "properties": {
+    ///    "components": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "array",
+    ///        "items": {
+    ///          "type": "string"
+    ///        }
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphComponentsData {
+        pub components: ::std::vec::Vec<::std::vec::Vec<::std::string::String>>,
+    }
+    impl GraphComponentsData {
+        pub fn builder() -> builder::GraphComponentsData {
+            Default::default()
+        }
+    }
+    ///`GraphComponentsResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "data": {
+    ///      "$ref": "#/components/schemas/GraphComponentsData"
+    ///    },
+    ///    "error": {
+    ///      "$ref": "#/components/schemas/GraphErrorBody"
+    ///    },
+    ///    "metadata": {
+    ///      "$ref": "#/components/schemas/GraphResponseMetadata"
+    ///    },
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphComponentsResponse {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub data: ::std::option::Option<GraphComponentsData>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub error: ::std::option::Option<GraphErrorBody>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub metadata: ::std::option::Option<GraphResponseMetadata>,
+        pub success: bool,
+    }
+    impl GraphComponentsResponse {
+        pub fn builder() -> builder::GraphComponentsResponse {
+            Default::default()
+        }
+    }
+    ///`GraphCyclesData`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "has_cycle"
+    ///  ],
+    ///  "properties": {
+    ///    "has_cycle": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphCyclesData {
+        pub has_cycle: bool,
+    }
+    impl GraphCyclesData {
+        pub fn builder() -> builder::GraphCyclesData {
+            Default::default()
+        }
+    }
+    ///`GraphCyclesResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "data": {
+    ///      "$ref": "#/components/schemas/GraphCyclesData"
+    ///    },
+    ///    "error": {
+    ///      "$ref": "#/components/schemas/GraphErrorBody"
+    ///    },
+    ///    "metadata": {
+    ///      "$ref": "#/components/schemas/GraphResponseMetadata"
+    ///    },
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphCyclesResponse {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub data: ::std::option::Option<GraphCyclesData>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub error: ::std::option::Option<GraphErrorBody>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub metadata: ::std::option::Option<GraphResponseMetadata>,
+        pub success: bool,
+    }
+    impl GraphCyclesResponse {
+        pub fn builder() -> builder::GraphCyclesResponse {
+            Default::default()
+        }
+    }
+    ///`GraphDdlData`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphDdlData {
+        pub success: bool,
+    }
+    impl GraphDdlData {
+        pub fn builder() -> builder::GraphDdlData {
+            Default::default()
+        }
+    }
+    ///`GraphDdlResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "data": {
+    ///      "$ref": "#/components/schemas/GraphDdlData"
+    ///    },
+    ///    "error": {
+    ///      "$ref": "#/components/schemas/GraphErrorBody"
+    ///    },
+    ///    "metadata": {
+    ///      "$ref": "#/components/schemas/GraphResponseMetadata"
+    ///    },
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphDdlResponse {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub data: ::std::option::Option<GraphDdlData>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub error: ::std::option::Option<GraphErrorBody>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub metadata: ::std::option::Option<GraphResponseMetadata>,
+        pub success: bool,
+    }
+    impl GraphDdlResponse {
+        pub fn builder() -> builder::GraphDdlResponse {
+            Default::default()
+        }
+    }
+    ///`GraphEdgeBatchResults`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "created_count",
+    ///    "errors",
+    ///    "failed_count",
+    ///    "results",
+    ///    "updated_count"
+    ///  ],
+    ///  "properties": {
+    ///    "created_count": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "errors": {
+    ///      "type": "array",
+    ///      "items": {}
+    ///    },
+    ///    "failed_count": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "results": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/CanonicalEdge"
+    ///      }
+    ///    },
+    ///    "updated_count": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphEdgeBatchResults {
+        pub created_count: u64,
+        pub errors: ::std::vec::Vec<::serde_json::Value>,
+        pub failed_count: u64,
+        pub results: ::std::vec::Vec<CanonicalEdge>,
+        pub updated_count: u64,
+    }
+    impl GraphEdgeBatchResults {
+        pub fn builder() -> builder::GraphEdgeBatchResults {
+            Default::default()
+        }
+    }
+    ///`GraphEdgeQuery`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "continuation_token": {
+    ///      "description": "\"offset:<n>\" form; decodes to the offset.",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "edge_type": {
+    ///      "default": "",
+    ///      "type": "string"
+    ///    },
+    ///    "from_node_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "limit": {
+    ///      "default": 100,
+    ///      "type": "integer",
+    ///      "format": "uint32"
+    ///    },
+    ///    "offset": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint32"
+    ///    },
+    ///    "properties": {
+    ///      "type": "object",
+    ///      "additionalProperties": true
+    ///    },
+    ///    "to_node_id": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphEdgeQuery {
+        ///"offset:<n>" form; decodes to the offset.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub continuation_token: ::std::option::Option<::std::string::String>,
+        #[serde(default)]
+        pub edge_type: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub from_node_id: ::std::option::Option<::std::string::String>,
+        #[serde(default = "defaults::default_u64::<u32, 100>")]
+        pub limit: u32,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub offset: ::std::option::Option<u32>,
+        #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
+        pub properties: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub to_node_id: ::std::option::Option<::std::string::String>,
+    }
+    impl ::std::default::Default for GraphEdgeQuery {
+        fn default() -> Self {
+            Self {
+                continuation_token: Default::default(),
+                edge_type: Default::default(),
+                from_node_id: Default::default(),
+                limit: defaults::default_u64::<u32, 100>(),
+                offset: Default::default(),
+                properties: Default::default(),
+                to_node_id: Default::default(),
+            }
+        }
+    }
+    impl GraphEdgeQuery {
+        pub fn builder() -> builder::GraphEdgeQuery {
+            Default::default()
+        }
+    }
+    ///`GraphEdgeQueryResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "data": {
+    ///      "$ref": "#/components/schemas/GraphEdgeQueryResults"
+    ///    },
+    ///    "error": {
+    ///      "$ref": "#/components/schemas/GraphErrorBody"
+    ///    },
+    ///    "metadata": {
+    ///      "$ref": "#/components/schemas/GraphResponseMetadata"
+    ///    },
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphEdgeQueryResponse {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub data: ::std::option::Option<GraphEdgeQueryResults>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub error: ::std::option::Option<GraphErrorBody>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub metadata: ::std::option::Option<GraphResponseMetadata>,
+        pub success: bool,
+    }
+    impl GraphEdgeQueryResponse {
+        pub fn builder() -> builder::GraphEdgeQueryResponse {
+            Default::default()
+        }
+    }
+    ///`GraphEdgeQueryResults`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "has_more",
+    ///    "items"
+    ///  ],
+    ///  "properties": {
+    ///    "has_more": {
+    ///      "type": "boolean"
+    ///    },
+    ///    "items": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/CanonicalEdge"
+    ///      }
+    ///    },
+    ///    "next_token": {
+    ///      "type": "string"
+    ///    },
+    ///    "total_count": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphEdgeQueryResults {
+        pub has_more: bool,
+        pub items: ::std::vec::Vec<CanonicalEdge>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub next_token: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub total_count: ::std::option::Option<u64>,
+    }
+    impl GraphEdgeQueryResults {
+        pub fn builder() -> builder::GraphEdgeQueryResults {
+            Default::default()
+        }
+    }
+    ///`GraphEdgeResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "data": {
+    ///      "$ref": "#/components/schemas/CanonicalEdge"
+    ///    },
+    ///    "error": {
+    ///      "$ref": "#/components/schemas/GraphErrorBody"
+    ///    },
+    ///    "metadata": {
+    ///      "$ref": "#/components/schemas/GraphResponseMetadata"
+    ///    },
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphEdgeResponse {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub data: ::std::option::Option<CanonicalEdge>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub error: ::std::option::Option<GraphErrorBody>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub metadata: ::std::option::Option<GraphResponseMetadata>,
+        pub success: bool,
+    }
+    impl GraphEdgeResponse {
+        pub fn builder() -> builder::GraphEdgeResponse {
+            Default::default()
+        }
+    }
+    ///`GraphEmbedding`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "dimension",
+    ///    "model_id",
+    ///    "model_version",
+    ///    "vector"
+    ///  ],
+    ///  "properties": {
+    ///    "dimension": {
+    ///      "type": "integer",
+    ///      "format": "uint32"
+    ///    },
+    ///    "model_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "model_version": {
+    ///      "type": "string"
+    ///    },
+    ///    "vector": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "number"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphEmbedding {
+        pub dimension: u32,
+        pub model_id: ::std::string::String,
+        pub model_version: ::std::string::String,
+        pub vector: ::std::vec::Vec<f64>,
+    }
+    impl GraphEmbedding {
+        pub fn builder() -> builder::GraphEmbedding {
+            Default::default()
+        }
+    }
+    ///`GraphErrorBody`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "code",
+    ///    "message"
+    ///  ],
+    ///  "properties": {
+    ///    "code": {
+    ///      "type": "string",
+    ///      "enum": [
+    ///        "NOT_FOUND",
+    ///        "ALREADY_EXISTS",
+    ///        "INVALID_ARGUMENT",
+    ///        "CONSTRAINT_VIOLATION",
+    ///        "INTERNAL_ERROR",
+    ///        "TIMEOUT",
+    ///        "PERMISSION_DENIED"
+    ///      ]
+    ///    },
+    ///    "details": {},
+    ///    "message": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphErrorBody {
+        pub code: GraphErrorBodyCode,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub details: ::std::option::Option<::serde_json::Value>,
+        pub message: ::std::string::String,
+    }
+    impl GraphErrorBody {
+        pub fn builder() -> builder::GraphErrorBody {
+            Default::default()
+        }
+    }
+    ///`GraphErrorBodyCode`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "enum": [
+    ///    "NOT_FOUND",
+    ///    "ALREADY_EXISTS",
+    ///    "INVALID_ARGUMENT",
+    ///    "CONSTRAINT_VIOLATION",
+    ///    "INTERNAL_ERROR",
+    ///    "TIMEOUT",
+    ///    "PERMISSION_DENIED"
+    ///  ]
+    ///}
+    /// ```
+    /// </details>
+    #[derive(
+        ::serde::Deserialize,
+        ::serde::Serialize,
+        Clone,
+        Copy,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
+    )]
+    pub enum GraphErrorBodyCode {
+        #[serde(rename = "NOT_FOUND")]
+        NotFound,
+        #[serde(rename = "ALREADY_EXISTS")]
+        AlreadyExists,
+        #[serde(rename = "INVALID_ARGUMENT")]
+        InvalidArgument,
+        #[serde(rename = "CONSTRAINT_VIOLATION")]
+        ConstraintViolation,
+        #[serde(rename = "INTERNAL_ERROR")]
+        InternalError,
+        #[serde(rename = "TIMEOUT")]
+        Timeout,
+        #[serde(rename = "PERMISSION_DENIED")]
+        PermissionDenied,
+    }
+    impl ::std::fmt::Display for GraphErrorBodyCode {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            match *self {
+                Self::NotFound => f.write_str("NOT_FOUND"),
+                Self::AlreadyExists => f.write_str("ALREADY_EXISTS"),
+                Self::InvalidArgument => f.write_str("INVALID_ARGUMENT"),
+                Self::ConstraintViolation => f.write_str("CONSTRAINT_VIOLATION"),
+                Self::InternalError => f.write_str("INTERNAL_ERROR"),
+                Self::Timeout => f.write_str("TIMEOUT"),
+                Self::PermissionDenied => f.write_str("PERMISSION_DENIED"),
+            }
+        }
+    }
+    impl ::std::str::FromStr for GraphErrorBodyCode {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            match value {
+                "NOT_FOUND" => Ok(Self::NotFound),
+                "ALREADY_EXISTS" => Ok(Self::AlreadyExists),
+                "INVALID_ARGUMENT" => Ok(Self::InvalidArgument),
+                "CONSTRAINT_VIOLATION" => Ok(Self::ConstraintViolation),
+                "INTERNAL_ERROR" => Ok(Self::InternalError),
+                "TIMEOUT" => Ok(Self::Timeout),
+                "PERMISSION_DENIED" => Ok(Self::PermissionDenied),
+                _ => Err("invalid value".into()),
+            }
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for GraphErrorBodyCode {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for GraphErrorBodyCode {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for GraphErrorBodyCode {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    ///`GraphNodeBatchResults`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "created_count",
+    ///    "errors",
+    ///    "failed_count",
+    ///    "results",
+    ///    "updated_count"
+    ///  ],
+    ///  "properties": {
+    ///    "created_count": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "errors": {
+    ///      "type": "array",
+    ///      "items": {}
+    ///    },
+    ///    "failed_count": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "results": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/CanonicalNode"
+    ///      }
+    ///    },
+    ///    "updated_count": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphNodeBatchResults {
+        pub created_count: u64,
+        pub errors: ::std::vec::Vec<::serde_json::Value>,
+        pub failed_count: u64,
+        pub results: ::std::vec::Vec<CanonicalNode>,
+        pub updated_count: u64,
+    }
+    impl GraphNodeBatchResults {
+        pub fn builder() -> builder::GraphNodeBatchResults {
+            Default::default()
+        }
+    }
+    ///`GraphNodeListResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "data": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/CanonicalNode"
+    ///      }
+    ///    },
+    ///    "error": {
+    ///      "$ref": "#/components/schemas/GraphErrorBody"
+    ///    },
+    ///    "metadata": {
+    ///      "$ref": "#/components/schemas/GraphResponseMetadata"
+    ///    },
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphNodeListResponse {
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub data: ::std::vec::Vec<CanonicalNode>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub error: ::std::option::Option<GraphErrorBody>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub metadata: ::std::option::Option<GraphResponseMetadata>,
+        pub success: bool,
+    }
+    impl GraphNodeListResponse {
+        pub fn builder() -> builder::GraphNodeListResponse {
+            Default::default()
+        }
+    }
+    ///`GraphNodeQuery`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "continuation_token": {
+    ///      "description": "\"offset:<n>\" form; decodes to the offset.",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "labels": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "limit": {
+    ///      "default": 100,
+    ///      "type": "integer",
+    ///      "format": "uint32"
+    ///    },
+    ///    "offset": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint32"
+    ///    },
+    ///    "properties": {
+    ///      "type": "object",
+    ///      "additionalProperties": true
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphNodeQuery {
+        ///"offset:<n>" form; decodes to the offset.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub continuation_token: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub labels: ::std::vec::Vec<::std::string::String>,
+        #[serde(default = "defaults::default_u64::<u32, 100>")]
+        pub limit: u32,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub offset: ::std::option::Option<u32>,
+        #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
+        pub properties: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    }
+    impl ::std::default::Default for GraphNodeQuery {
+        fn default() -> Self {
+            Self {
+                continuation_token: Default::default(),
+                labels: Default::default(),
+                limit: defaults::default_u64::<u32, 100>(),
+                offset: Default::default(),
+                properties: Default::default(),
+            }
+        }
+    }
+    impl GraphNodeQuery {
+        pub fn builder() -> builder::GraphNodeQuery {
+            Default::default()
+        }
+    }
+    ///`GraphNodeQueryResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "data": {
+    ///      "$ref": "#/components/schemas/GraphNodeQueryResults"
+    ///    },
+    ///    "error": {
+    ///      "$ref": "#/components/schemas/GraphErrorBody"
+    ///    },
+    ///    "metadata": {
+    ///      "$ref": "#/components/schemas/GraphResponseMetadata"
+    ///    },
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphNodeQueryResponse {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub data: ::std::option::Option<GraphNodeQueryResults>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub error: ::std::option::Option<GraphErrorBody>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub metadata: ::std::option::Option<GraphResponseMetadata>,
+        pub success: bool,
+    }
+    impl GraphNodeQueryResponse {
+        pub fn builder() -> builder::GraphNodeQueryResponse {
+            Default::default()
+        }
+    }
+    ///`GraphNodeQueryResults`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "has_more",
+    ///    "items"
+    ///  ],
+    ///  "properties": {
+    ///    "has_more": {
+    ///      "type": "boolean"
+    ///    },
+    ///    "items": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/CanonicalNode"
+    ///      }
+    ///    },
+    ///    "next_token": {
+    ///      "type": "string"
+    ///    },
+    ///    "total_count": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphNodeQueryResults {
+        pub has_more: bool,
+        pub items: ::std::vec::Vec<CanonicalNode>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub next_token: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub total_count: ::std::option::Option<u64>,
+    }
+    impl GraphNodeQueryResults {
+        pub fn builder() -> builder::GraphNodeQueryResults {
+            Default::default()
+        }
+    }
+    ///`GraphNodeResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "data": {
+    ///      "$ref": "#/components/schemas/CanonicalNode"
+    ///    },
+    ///    "error": {
+    ///      "$ref": "#/components/schemas/GraphErrorBody"
+    ///    },
+    ///    "metadata": {
+    ///      "$ref": "#/components/schemas/GraphResponseMetadata"
+    ///    },
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphNodeResponse {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub data: ::std::option::Option<CanonicalNode>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub error: ::std::option::Option<GraphErrorBody>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub metadata: ::std::option::Option<GraphResponseMetadata>,
+        pub success: bool,
+    }
+    impl GraphNodeResponse {
+        pub fn builder() -> builder::GraphNodeResponse {
+            Default::default()
+        }
+    }
+    ///`GraphQueryData`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "row_count",
+    ///    "rows"
+    ///  ],
+    ///  "properties": {
+    ///    "row_count": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "rows": {
+    ///      "type": "array",
+    ///      "items": {}
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphQueryData {
+        pub row_count: u64,
+        pub rows: ::std::vec::Vec<::serde_json::Value>,
+    }
+    impl GraphQueryData {
+        pub fn builder() -> builder::GraphQueryData {
+            Default::default()
+        }
+    }
+    ///`GraphQueryRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "query"
+    ///  ],
+    ///  "properties": {
+    ///    "language": {
+    ///      "description": "Accepted but currently unused server-side.",
+    ///      "default": "native",
+    ///      "type": "string"
+    ///    },
+    ///    "query": {
+    ///      "type": "string"
+    ///    },
+    ///    "timeout_ms": {
+    ///      "description": "Accepted but currently unused server-side.",
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint32"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphQueryRequest {
+        ///Accepted but currently unused server-side.
+        #[serde(default = "defaults::graph_query_request_language")]
+        pub language: ::std::string::String,
+        pub query: ::std::string::String,
+        ///Accepted but currently unused server-side.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub timeout_ms: ::std::option::Option<u32>,
+    }
+    impl GraphQueryRequest {
+        pub fn builder() -> builder::GraphQueryRequest {
+            Default::default()
+        }
+    }
+    ///`GraphQueryResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "data": {
+    ///      "$ref": "#/components/schemas/GraphQueryData"
+    ///    },
+    ///    "error": {
+    ///      "$ref": "#/components/schemas/GraphErrorBody"
+    ///    },
+    ///    "metadata": {
+    ///      "$ref": "#/components/schemas/GraphResponseMetadata"
+    ///    },
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphQueryResponse {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub data: ::std::option::Option<GraphQueryData>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub error: ::std::option::Option<GraphErrorBody>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub metadata: ::std::option::Option<GraphResponseMetadata>,
+        pub success: bool,
+    }
+    impl GraphQueryResponse {
+        pub fn builder() -> builder::GraphQueryResponse {
+            Default::default()
+        }
+    }
+    ///`GraphResponseMetadata`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "execution_time_ms": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "request_id": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphResponseMetadata {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub execution_time_ms: ::std::option::Option<u64>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub request_id: ::std::option::Option<::std::string::String>,
+    }
+    impl ::std::default::Default for GraphResponseMetadata {
+        fn default() -> Self {
+            Self {
+                execution_time_ms: Default::default(),
+                request_id: Default::default(),
+            }
+        }
+    }
+    impl GraphResponseMetadata {
+        pub fn builder() -> builder::GraphResponseMetadata {
+            Default::default()
+        }
+    }
+    ///`GraphShortestPathData`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "found",
+    ///    "path"
+    ///  ],
+    ///  "properties": {
+    ///    "found": {
+    ///      "type": "boolean"
+    ///    },
+    ///    "path": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "total_weight": {
+    ///      "type": "number"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphShortestPathData {
+        pub found: bool,
+        pub path: ::std::vec::Vec<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub total_weight: ::std::option::Option<f64>,
+    }
+    impl GraphShortestPathData {
+        pub fn builder() -> builder::GraphShortestPathData {
+            Default::default()
+        }
+    }
+    ///`GraphShortestPathResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "data": {
+    ///      "$ref": "#/components/schemas/GraphShortestPathData"
+    ///    },
+    ///    "error": {
+    ///      "$ref": "#/components/schemas/GraphErrorBody"
+    ///    },
+    ///    "metadata": {
+    ///      "$ref": "#/components/schemas/GraphResponseMetadata"
+    ///    },
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphShortestPathResponse {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub data: ::std::option::Option<GraphShortestPathData>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub error: ::std::option::Option<GraphErrorBody>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub metadata: ::std::option::Option<GraphResponseMetadata>,
+        pub success: bool,
+    }
+    impl GraphShortestPathResponse {
+        pub fn builder() -> builder::GraphShortestPathResponse {
+            Default::default()
+        }
+    }
+    ///`GraphStats`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "average_degree",
+    ///    "connected_components",
+    ///    "edge_type_stats",
+    ///    "label_stats",
+    ///    "max_degree",
+    ///    "memory_usage_bytes",
+    ///    "total_edges",
+    ///    "total_nodes",
+    ///    "total_properties"
+    ///  ],
+    ///  "properties": {
+    ///    "average_degree": {
+    ///      "type": "number"
+    ///    },
+    ///    "connected_components": {
+    ///      "type": "integer",
+    ///      "format": "uint32"
+    ///    },
+    ///    "edge_type_stats": {
+    ///      "type": "array",
+    ///      "items": {}
+    ///    },
+    ///    "label_stats": {
+    ///      "type": "array",
+    ///      "items": {}
+    ///    },
+    ///    "max_degree": {
+    ///      "type": "integer",
+    ///      "format": "uint32"
+    ///    },
+    ///    "memory_usage_bytes": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "total_edges": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "total_nodes": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "total_properties": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphStats {
+        pub average_degree: f64,
+        pub connected_components: u32,
+        pub edge_type_stats: ::std::vec::Vec<::serde_json::Value>,
+        pub label_stats: ::std::vec::Vec<::serde_json::Value>,
+        pub max_degree: u32,
+        pub memory_usage_bytes: u64,
+        pub total_edges: u64,
+        pub total_nodes: u64,
+        pub total_properties: u64,
+    }
+    impl GraphStats {
+        pub fn builder() -> builder::GraphStats {
             Default::default()
         }
     }
@@ -6565,45 +8217,180 @@ pub mod types {
     /// ```json
     ///{
     ///  "type": "object",
+    ///  "required": [
+    ///    "success"
+    ///  ],
     ///  "properties": {
-    ///    "density": {
-    ///      "type": [
-    ///        "number",
-    ///        "null"
-    ///      ],
-    ///      "format": "double"
+    ///    "data": {
+    ///      "$ref": "#/components/schemas/GraphStats"
     ///    },
-    ///    "edge_count": {
-    ///      "type": "integer"
+    ///    "error": {
+    ///      "$ref": "#/components/schemas/GraphErrorBody"
     ///    },
-    ///    "node_count": {
-    ///      "type": "integer"
+    ///    "metadata": {
+    ///      "$ref": "#/components/schemas/GraphResponseMetadata"
+    ///    },
+    ///    "success": {
+    ///      "type": "boolean"
     ///    }
-    ///  },
-    ///  "additionalProperties": true
+    ///  }
     ///}
     /// ```
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
     pub struct GraphStatsResponse {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub density: ::std::option::Option<f64>,
+        pub data: ::std::option::Option<GraphStats>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub edge_count: ::std::option::Option<i64>,
+        pub error: ::std::option::Option<GraphErrorBody>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub node_count: ::std::option::Option<i64>,
-    }
-    impl ::std::default::Default for GraphStatsResponse {
-        fn default() -> Self {
-            Self {
-                density: Default::default(),
-                edge_count: Default::default(),
-                node_count: Default::default(),
-            }
-        }
+        pub metadata: ::std::option::Option<GraphResponseMetadata>,
+        pub success: bool,
     }
     impl GraphStatsResponse {
         pub fn builder() -> builder::GraphStatsResponse {
+            Default::default()
+        }
+    }
+    ///`GraphTraversalData`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "edges",
+    ///    "nodes"
+    ///  ],
+    ///  "properties": {
+    ///    "edges": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/CanonicalEdge"
+    ///      }
+    ///    },
+    ///    "nodes": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/CanonicalNode"
+    ///      }
+    ///    },
+    ///    "paths": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "array",
+    ///        "items": {
+    ///          "type": "string"
+    ///        }
+    ///      }
+    ///    },
+    ///    "stats": {
+    ///      "$ref": "#/components/schemas/GraphTraversalStats"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphTraversalData {
+        pub edges: ::std::vec::Vec<CanonicalEdge>,
+        pub nodes: ::std::vec::Vec<CanonicalNode>,
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub paths: ::std::vec::Vec<::std::vec::Vec<::std::string::String>>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub stats: ::std::option::Option<GraphTraversalStats>,
+    }
+    impl GraphTraversalData {
+        pub fn builder() -> builder::GraphTraversalData {
+            Default::default()
+        }
+    }
+    ///`GraphTraversalResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "data": {
+    ///      "$ref": "#/components/schemas/GraphTraversalData"
+    ///    },
+    ///    "error": {
+    ///      "$ref": "#/components/schemas/GraphErrorBody"
+    ///    },
+    ///    "metadata": {
+    ///      "$ref": "#/components/schemas/GraphResponseMetadata"
+    ///    },
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphTraversalResponse {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub data: ::std::option::Option<GraphTraversalData>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub error: ::std::option::Option<GraphErrorBody>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub metadata: ::std::option::Option<GraphResponseMetadata>,
+        pub success: bool,
+    }
+    impl GraphTraversalResponse {
+        pub fn builder() -> builder::GraphTraversalResponse {
+            Default::default()
+        }
+    }
+    ///`GraphTraversalStats`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "edges_traversed",
+    ///    "max_depth_reached",
+    ///    "nodes_visited"
+    ///  ],
+    ///  "properties": {
+    ///    "edges_traversed": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "execution_time_ms": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "max_depth_reached": {
+    ///      "type": "integer",
+    ///      "format": "uint32"
+    ///    },
+    ///    "nodes_visited": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct GraphTraversalStats {
+        pub edges_traversed: u64,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub execution_time_ms: ::std::option::Option<u64>,
+        pub max_depth_reached: u32,
+        pub nodes_visited: u64,
+    }
+    impl GraphTraversalStats {
+        pub fn builder() -> builder::GraphTraversalStats {
             Default::default()
         }
     }
@@ -7687,50 +9474,6 @@ pub mod types {
             Default::default()
         }
     }
-    /// Server returns a `GraphResponse<Vec<...>>` envelope with `data`
-    /// containing the graph collections.
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "description": "Server returns a `GraphResponse<Vec<...>>` envelope with `data`\ncontaining the graph collections.\n",
-    ///  "type": "object",
-    ///  "properties": {
-    ///    "data": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "$ref": "#/components/schemas/GraphCollectionResponse"
-    ///      }
-    ///    },
-    ///    "success": {
-    ///      "type": "boolean"
-    ///    }
-    ///  },
-    ///  "additionalProperties": true
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct ListGraphsResponse {
-        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
-        pub data: ::std::vec::Vec<GraphCollectionResponse>,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub success: ::std::option::Option<bool>,
-    }
-    impl ::std::default::Default for ListGraphsResponse {
-        fn default() -> Self {
-            Self {
-                data: Default::default(),
-                success: Default::default(),
-            }
-        }
-    }
-    impl ListGraphsResponse {
-        pub fn builder() -> builder::ListGraphsResponse {
-            Default::default()
-        }
-    }
     ///`ListModelRegistriesResponse`
     ///
     /// <details><summary>JSON schema</summary>
@@ -8381,25 +10124,39 @@ pub mod types {
             Default::default()
         }
     }
-    /// Node payload nested inside `CreateNodeRequest.node`. Matches
-    /// `RestNodeInput` in proximadb-api's graph handler.
+    ///`NodeInput`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "Node payload nested inside `CreateNodeRequest.node`. Matches\n`RestNodeInput` in proximadb-api's graph handler.\n",
     ///  "type": "object",
     ///  "required": [
     ///    "id"
     ///  ],
     ///  "properties": {
     ///    "embedding": {
-    ///      "$ref": "#/components/schemas/EmbeddingInput"
+    ///      "type": "object",
+    ///      "required": [
+    ///        "vector"
+    ///      ],
+    ///      "properties": {
+    ///        "model_id": {
+    ///          "type": "string"
+    ///        },
+    ///        "vector": {
+    ///          "type": "array",
+    ///          "items": {
+    ///            "type": "number"
+    ///          }
+    ///        },
+    ///        "version": {
+    ///          "type": "string"
+    ///        }
+    ///      }
     ///    },
     ///    "id": {
-    ///      "type": "string",
-    ///      "minLength": 1
+    ///      "type": "string"
     ///    },
     ///    "labels": {
     ///      "type": "array",
@@ -8418,8 +10175,8 @@ pub mod types {
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
     pub struct NodeInput {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub embedding: ::std::option::Option<EmbeddingInput>,
-        pub id: NodeInputId,
+        pub embedding: ::std::option::Option<NodeInputEmbedding>,
+        pub id: ::std::string::String,
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub labels: ::std::vec::Vec<::std::string::String>,
         #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
@@ -8430,75 +10187,7 @@ pub mod types {
             Default::default()
         }
     }
-    ///`NodeInputId`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "string",
-    ///  "minLength": 1
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    #[serde(transparent)]
-    pub struct NodeInputId(::std::string::String);
-    impl ::std::ops::Deref for NodeInputId {
-        type Target = ::std::string::String;
-        fn deref(&self) -> &::std::string::String {
-            &self.0
-        }
-    }
-    impl ::std::convert::From<NodeInputId> for ::std::string::String {
-        fn from(value: NodeInputId) -> Self {
-            value.0
-        }
-    }
-    impl ::std::str::FromStr for NodeInputId {
-        type Err = self::error::ConversionError;
-        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            if value.chars().count() < 1usize {
-                return Err("shorter than 1 characters".into());
-            }
-            Ok(Self(value.to_string()))
-        }
-    }
-    impl ::std::convert::TryFrom<&str> for NodeInputId {
-        type Error = self::error::ConversionError;
-        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<&::std::string::String> for NodeInputId {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: &::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl ::std::convert::TryFrom<::std::string::String> for NodeInputId {
-        type Error = self::error::ConversionError;
-        fn try_from(
-            value: ::std::string::String,
-        ) -> ::std::result::Result<Self, self::error::ConversionError> {
-            value.parse()
-        }
-    }
-    impl<'de> ::serde::Deserialize<'de> for NodeInputId {
-        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-        where
-            D: ::serde::Deserializer<'de>,
-        {
-            ::std::string::String::deserialize(deserializer)?
-                .parse()
-                .map_err(|e: self::error::ConversionError| {
-                    <D::Error as ::serde::de::Error>::custom(e.to_string())
-                })
-        }
-    }
-    ///`NodeResponse`
+    ///`NodeInputEmbedding`
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -8506,44 +10195,35 @@ pub mod types {
     ///{
     ///  "type": "object",
     ///  "required": [
-    ///    "id"
+    ///    "vector"
     ///  ],
     ///  "properties": {
-    ///    "id": {
+    ///    "model_id": {
     ///      "type": "string"
     ///    },
-    ///    "labels": {
-    ///      "type": [
-    ///        "array",
-    ///        "null"
-    ///      ],
+    ///    "vector": {
+    ///      "type": "array",
     ///      "items": {
-    ///        "type": "string"
+    ///        "type": "number"
     ///      }
     ///    },
-    ///    "properties": {
-    ///      "type": [
-    ///        "object",
-    ///        "null"
-    ///      ],
-    ///      "additionalProperties": true
+    ///    "version": {
+    ///      "type": "string"
     ///    }
-    ///  },
-    ///  "additionalProperties": true
+    ///  }
     ///}
     /// ```
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct NodeResponse {
-        pub id: ::std::string::String,
+    pub struct NodeInputEmbedding {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub labels: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+        pub model_id: ::std::option::Option<::std::string::String>,
+        pub vector: ::std::vec::Vec<f64>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub properties:
-            ::std::option::Option<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+        pub version: ::std::option::Option<::std::string::String>,
     }
-    impl NodeResponse {
-        pub fn builder() -> builder::NodeResponse {
+    impl NodeInputEmbedding {
+        pub fn builder() -> builder::NodeInputEmbedding {
             Default::default()
         }
     }
@@ -9707,6 +11387,74 @@ pub mod types {
             Default::default()
         }
     }
+    ///`QueryEdgesGraphId`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct QueryEdgesGraphId(::std::string::String);
+    impl ::std::ops::Deref for QueryEdgesGraphId {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<QueryEdgesGraphId> for ::std::string::String {
+        fn from(value: QueryEdgesGraphId) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for QueryEdgesGraphId {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for QueryEdgesGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for QueryEdgesGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for QueryEdgesGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for QueryEdgesGraphId {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
     ///`QueryLanguage`
     ///
     /// <details><summary>JSON schema</summary>
@@ -9782,6 +11530,74 @@ pub mod types {
             value: ::std::string::String,
         ) -> ::std::result::Result<Self, self::error::ConversionError> {
             value.parse()
+        }
+    }
+    ///`QueryNodesGraphId`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct QueryNodesGraphId(::std::string::String);
+    impl ::std::ops::Deref for QueryNodesGraphId {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<QueryNodesGraphId> for ::std::string::String {
+        fn from(value: QueryNodesGraphId) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for QueryNodesGraphId {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for QueryNodesGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for QueryNodesGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for QueryNodesGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for QueryNodesGraphId {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
         }
     }
     ///`QueryRequest`
@@ -10038,6 +11854,74 @@ pub mod types {
     impl RecordV2Response {
         pub fn builder() -> builder::RecordV2Response {
             Default::default()
+        }
+    }
+    ///`RemoveUniqueConstraintGraphId`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct RemoveUniqueConstraintGraphId(::std::string::String);
+    impl ::std::ops::Deref for RemoveUniqueConstraintGraphId {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<RemoveUniqueConstraintGraphId> for ::std::string::String {
+        fn from(value: RemoveUniqueConstraintGraphId) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for RemoveUniqueConstraintGraphId {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for RemoveUniqueConstraintGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for RemoveUniqueConstraintGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for RemoveUniqueConstraintGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for RemoveUniqueConstraintGraphId {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
         }
     }
     ///`ResolveModelAliasRequest`
@@ -10760,6 +12644,137 @@ pub mod types {
             Default::default()
         }
     }
+    ///`ShortestPathGraphId`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct ShortestPathGraphId(::std::string::String);
+    impl ::std::ops::Deref for ShortestPathGraphId {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<ShortestPathGraphId> for ::std::string::String {
+        fn from(value: ShortestPathGraphId) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for ShortestPathGraphId {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for ShortestPathGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for ShortestPathGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for ShortestPathGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for ShortestPathGraphId {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`ShortestPathRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "start_node_id",
+    ///    "target_node_id"
+    ///  ],
+    ///  "properties": {
+    ///    "algorithm": {
+    ///      "type": "string"
+    ///    },
+    ///    "edge_types": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "k": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint32"
+    ///    },
+    ///    "max_depth": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint32"
+    ///    },
+    ///    "start_node_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "target_node_id": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct ShortestPathRequest {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub algorithm: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub edge_types: ::std::vec::Vec<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub k: ::std::option::Option<u32>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub max_depth: ::std::option::Option<u32>,
+        pub start_node_id: ::std::string::String,
+        pub target_node_id: ::std::string::String,
+    }
+    impl ShortestPathRequest {
+        pub fn builder() -> builder::ShortestPathRequest {
+            Default::default()
+        }
+    }
     /// One SQL statement executed through the shared SQL authority.
     ///
     /// Parameter binding is intentionally not advertised yet: the relational
@@ -10963,6 +12978,74 @@ pub mod types {
     impl SqlResponse {
         pub fn builder() -> builder::SqlResponse {
             Default::default()
+        }
+    }
+    ///`StepGraphGraphId`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct StepGraphGraphId(::std::string::String);
+    impl ::std::ops::Deref for StepGraphGraphId {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<StepGraphGraphId> for ::std::string::String {
+        fn from(value: StepGraphGraphId) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for StepGraphGraphId {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for StepGraphGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for StepGraphGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for StepGraphGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for StepGraphGraphId {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
         }
     }
     ///`TableWriteCandidateExplanation`
@@ -11964,25 +14047,20 @@ pub mod types {
                 })
         }
     }
-    /// Flat shape (no wrapper). Matches `RestTraversalRequest` in
-    /// proximadb-api.
+    ///`TraverseRequest`
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "Flat shape (no wrapper). Matches `RestTraversalRequest` in\nproximadb-api.\n",
     ///  "type": "object",
     ///  "required": [
     ///    "start_node_id"
     ///  ],
     ///  "properties": {
     ///    "algorithm": {
-    ///      "description": "bfs | dfs | shortest_path",
-    ///      "type": [
-    ///        "string",
-    ///        "null"
-    ///      ]
+    ///      "default": "bfs",
+    ///      "type": "string"
     ///    },
     ///    "edge_types": {
     ///      "type": "array",
@@ -11995,12 +14073,12 @@ pub mod types {
     ///        "integer",
     ///        "null"
     ///      ],
-    ///      "minimum": 1.0
+    ///      "format": "uint32"
     ///    },
     ///    "max_depth": {
-    ///      "default": 3,
+    ///      "default": 5,
     ///      "type": "integer",
-    ///      "minimum": 1.0
+    ///      "format": "uint32"
     ///    },
     ///    "node_labels": {
     ///      "type": "array",
@@ -12017,78 +14095,20 @@ pub mod types {
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
     pub struct TraverseRequest {
-        ///bfs | dfs | shortest_path
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub algorithm: ::std::option::Option<::std::string::String>,
+        #[serde(default = "defaults::traverse_request_algorithm")]
+        pub algorithm: ::std::string::String,
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub edge_types: ::std::vec::Vec<::std::string::String>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub limit: ::std::option::Option<::std::num::NonZeroU64>,
-        #[serde(default = "defaults::default_nzu64::<::std::num::NonZeroU64, 3>")]
-        pub max_depth: ::std::num::NonZeroU64,
+        pub limit: ::std::option::Option<u32>,
+        #[serde(default = "defaults::default_u64::<u32, 5>")]
+        pub max_depth: u32,
         #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
         pub node_labels: ::std::vec::Vec<::std::string::String>,
         pub start_node_id: ::std::string::String,
     }
     impl TraverseRequest {
         pub fn builder() -> builder::TraverseRequest {
-            Default::default()
-        }
-    }
-    ///`TraverseResponse`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "object",
-    ///  "properties": {
-    ///    "edges": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "$ref": "#/components/schemas/EdgeResponse"
-    ///      }
-    ///    },
-    ///    "nodes": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "$ref": "#/components/schemas/NodeResponse"
-    ///      }
-    ///    },
-    ///    "paths": {
-    ///      "type": "array",
-    ///      "items": {
-    ///        "type": "array",
-    ///        "items": {
-    ///          "type": "string"
-    ///        }
-    ///      }
-    ///    }
-    ///  },
-    ///  "additionalProperties": true
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    pub struct TraverseResponse {
-        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
-        pub edges: ::std::vec::Vec<EdgeResponse>,
-        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
-        pub nodes: ::std::vec::Vec<NodeResponse>,
-        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
-        pub paths: ::std::vec::Vec<::std::vec::Vec<::std::string::String>>,
-    }
-    impl ::std::default::Default for TraverseResponse {
-        fn default() -> Self {
-            Self {
-                edges: Default::default(),
-                nodes: Default::default(),
-                paths: Default::default(),
-            }
-        }
-    }
-    impl TraverseResponse {
-        pub fn builder() -> builder::TraverseResponse {
             Default::default()
         }
     }
@@ -12423,6 +14443,406 @@ pub mod types {
             Default::default()
         }
     }
+    ///`UniqueConstraintRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "label",
+    ///    "property"
+    ///  ],
+    ///  "properties": {
+    ///    "label": {
+    ///      "type": "string"
+    ///    },
+    ///    "property": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct UniqueConstraintRequest {
+        pub label: ::std::string::String,
+        pub property: ::std::string::String,
+    }
+    impl UniqueConstraintRequest {
+        pub fn builder() -> builder::UniqueConstraintRequest {
+            Default::default()
+        }
+    }
+    ///`UpdateEdgeEdgeId`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct UpdateEdgeEdgeId(::std::string::String);
+    impl ::std::ops::Deref for UpdateEdgeEdgeId {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<UpdateEdgeEdgeId> for ::std::string::String {
+        fn from(value: UpdateEdgeEdgeId) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for UpdateEdgeEdgeId {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for UpdateEdgeEdgeId {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for UpdateEdgeEdgeId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for UpdateEdgeEdgeId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for UpdateEdgeEdgeId {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`UpdateEdgeGraphId`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct UpdateEdgeGraphId(::std::string::String);
+    impl ::std::ops::Deref for UpdateEdgeGraphId {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<UpdateEdgeGraphId> for ::std::string::String {
+        fn from(value: UpdateEdgeGraphId) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for UpdateEdgeGraphId {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for UpdateEdgeGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for UpdateEdgeGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for UpdateEdgeGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for UpdateEdgeGraphId {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`UpdateGraphSchemaGraphId`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct UpdateGraphSchemaGraphId(::std::string::String);
+    impl ::std::ops::Deref for UpdateGraphSchemaGraphId {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<UpdateGraphSchemaGraphId> for ::std::string::String {
+        fn from(value: UpdateGraphSchemaGraphId) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for UpdateGraphSchemaGraphId {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for UpdateGraphSchemaGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for UpdateGraphSchemaGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for UpdateGraphSchemaGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for UpdateGraphSchemaGraphId {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`UpdateGraphSchemaRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "schema"
+    ///  ],
+    ///  "properties": {
+    ///    "schema": {
+    ///      "type": "object",
+    ///      "additionalProperties": true
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct UpdateGraphSchemaRequest {
+        pub schema: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+    }
+    impl UpdateGraphSchemaRequest {
+        pub fn builder() -> builder::UpdateGraphSchemaRequest {
+            Default::default()
+        }
+    }
+    ///`UpdateNodeGraphId`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct UpdateNodeGraphId(::std::string::String);
+    impl ::std::ops::Deref for UpdateNodeGraphId {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<UpdateNodeGraphId> for ::std::string::String {
+        fn from(value: UpdateNodeGraphId) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for UpdateNodeGraphId {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for UpdateNodeGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for UpdateNodeGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for UpdateNodeGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for UpdateNodeGraphId {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`UpdateNodeNodeId`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct UpdateNodeNodeId(::std::string::String);
+    impl ::std::ops::Deref for UpdateNodeNodeId {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<UpdateNodeNodeId> for ::std::string::String {
+        fn from(value: UpdateNodeNodeId) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for UpdateNodeNodeId {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for UpdateNodeNodeId {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for UpdateNodeNodeId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for UpdateNodeNodeId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for UpdateNodeNodeId {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
     /// Request to update schema
     ///
     /// ## Schema Evolution Rules
@@ -12680,6 +15100,156 @@ pub mod types {
     }
     impl UpsertEntityResponse {
         pub fn builder() -> builder::UpsertEntityResponse {
+            Default::default()
+        }
+    }
+    ///`WalkGraphGraphId`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "string",
+    ///  "minLength": 1
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    #[serde(transparent)]
+    pub struct WalkGraphGraphId(::std::string::String);
+    impl ::std::ops::Deref for WalkGraphGraphId {
+        type Target = ::std::string::String;
+        fn deref(&self) -> &::std::string::String {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<WalkGraphGraphId> for ::std::string::String {
+        fn from(value: WalkGraphGraphId) -> Self {
+            value.0
+        }
+    }
+    impl ::std::str::FromStr for WalkGraphGraphId {
+        type Err = self::error::ConversionError;
+        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            if value.chars().count() < 1usize {
+                return Err("shorter than 1 characters".into());
+            }
+            Ok(Self(value.to_string()))
+        }
+    }
+    impl ::std::convert::TryFrom<&str> for WalkGraphGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<&::std::string::String> for WalkGraphGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: &::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl ::std::convert::TryFrom<::std::string::String> for WalkGraphGraphId {
+        type Error = self::error::ConversionError;
+        fn try_from(
+            value: ::std::string::String,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
+            value.parse()
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for WalkGraphGraphId {
+        fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+        where
+            D: ::serde::Deserializer<'de>,
+        {
+            ::std::string::String::deserialize(deserializer)?
+                .parse()
+                .map_err(|e: self::error::ConversionError| {
+                    <D::Error as ::serde::de::Error>::custom(e.to_string())
+                })
+        }
+    }
+    ///`WalkRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "start_node_id"
+    ///  ],
+    ///  "properties": {
+    ///    "limit": {
+    ///      "default": 100,
+    ///      "type": "integer",
+    ///      "format": "uint32"
+    ///    },
+    ///    "max_depth": {
+    ///      "default": 2,
+    ///      "type": "integer",
+    ///      "format": "uint32"
+    ///    },
+    ///    "start_node_id": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct WalkRequest {
+        #[serde(default = "defaults::default_u64::<u32, 100>")]
+        pub limit: u32,
+        #[serde(default = "defaults::default_u64::<u32, 2>")]
+        pub max_depth: u32,
+        pub start_node_id: ::std::string::String,
+    }
+    impl WalkRequest {
+        pub fn builder() -> builder::WalkRequest {
+            Default::default()
+        }
+    }
+    ///`WalkStepRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "node_id"
+    ///  ],
+    ///  "properties": {
+    ///    "edge_type": {
+    ///      "type": "string"
+    ///    },
+    ///    "limit": {
+    ///      "description": "Accepted but currently unused server-side.",
+    ///      "default": 50,
+    ///      "type": "integer",
+    ///      "format": "uint32"
+    ///    },
+    ///    "node_id": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct WalkStepRequest {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub edge_type: ::std::option::Option<::std::string::String>,
+        ///Accepted but currently unused server-side.
+        #[serde(default = "defaults::default_u64::<u32, 50>")]
+        pub limit: u32,
+        pub node_id: ::std::string::String,
+    }
+    impl WalkStepRequest {
+        pub fn builder() -> builder::WalkStepRequest {
             Default::default()
         }
     }
@@ -14463,230 +17033,6 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
-        pub struct BatchEdgesResponse {
-            data: ::std::result::Result<
-                ::std::option::Option<super::BatchEdgesResponseData>,
-                ::std::string::String,
-            >,
-            success: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
-        }
-        impl ::std::default::Default for BatchEdgesResponse {
-            fn default() -> Self {
-                Self {
-                    data: Ok(Default::default()),
-                    success: Ok(Default::default()),
-                }
-            }
-        }
-        impl BatchEdgesResponse {
-            pub fn data<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::option::Option<super::BatchEdgesResponseData>>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.data = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for data: {e}"));
-                self
-            }
-            pub fn success<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::option::Option<bool>>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.success = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for success: {e}"));
-                self
-            }
-        }
-        impl ::std::convert::TryFrom<BatchEdgesResponse> for super::BatchEdgesResponse {
-            type Error = super::error::ConversionError;
-            fn try_from(
-                value: BatchEdgesResponse,
-            ) -> ::std::result::Result<Self, super::error::ConversionError> {
-                Ok(Self {
-                    data: value.data?,
-                    success: value.success?,
-                })
-            }
-        }
-        impl ::std::convert::From<super::BatchEdgesResponse> for BatchEdgesResponse {
-            fn from(value: super::BatchEdgesResponse) -> Self {
-                Self {
-                    data: Ok(value.data),
-                    success: Ok(value.success),
-                }
-            }
-        }
-        #[derive(Clone, Debug)]
-        pub struct BatchEdgesResponseData {
-            count: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
-            results:
-                ::std::result::Result<::std::vec::Vec<super::EdgeResponse>, ::std::string::String>,
-        }
-        impl ::std::default::Default for BatchEdgesResponseData {
-            fn default() -> Self {
-                Self {
-                    count: Ok(Default::default()),
-                    results: Ok(Default::default()),
-                }
-            }
-        }
-        impl BatchEdgesResponseData {
-            pub fn count<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::option::Option<i64>>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.count = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for count: {e}"));
-                self
-            }
-            pub fn results<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::vec::Vec<super::EdgeResponse>>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.results = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for results: {e}"));
-                self
-            }
-        }
-        impl ::std::convert::TryFrom<BatchEdgesResponseData> for super::BatchEdgesResponseData {
-            type Error = super::error::ConversionError;
-            fn try_from(
-                value: BatchEdgesResponseData,
-            ) -> ::std::result::Result<Self, super::error::ConversionError> {
-                Ok(Self {
-                    count: value.count?,
-                    results: value.results?,
-                })
-            }
-        }
-        impl ::std::convert::From<super::BatchEdgesResponseData> for BatchEdgesResponseData {
-            fn from(value: super::BatchEdgesResponseData) -> Self {
-                Self {
-                    count: Ok(value.count),
-                    results: Ok(value.results),
-                }
-            }
-        }
-        #[derive(Clone, Debug)]
-        pub struct BatchNodesResponse {
-            data: ::std::result::Result<
-                ::std::option::Option<super::BatchNodesResponseData>,
-                ::std::string::String,
-            >,
-            success: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
-        }
-        impl ::std::default::Default for BatchNodesResponse {
-            fn default() -> Self {
-                Self {
-                    data: Ok(Default::default()),
-                    success: Ok(Default::default()),
-                }
-            }
-        }
-        impl BatchNodesResponse {
-            pub fn data<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::option::Option<super::BatchNodesResponseData>>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.data = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for data: {e}"));
-                self
-            }
-            pub fn success<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::option::Option<bool>>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.success = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for success: {e}"));
-                self
-            }
-        }
-        impl ::std::convert::TryFrom<BatchNodesResponse> for super::BatchNodesResponse {
-            type Error = super::error::ConversionError;
-            fn try_from(
-                value: BatchNodesResponse,
-            ) -> ::std::result::Result<Self, super::error::ConversionError> {
-                Ok(Self {
-                    data: value.data?,
-                    success: value.success?,
-                })
-            }
-        }
-        impl ::std::convert::From<super::BatchNodesResponse> for BatchNodesResponse {
-            fn from(value: super::BatchNodesResponse) -> Self {
-                Self {
-                    data: Ok(value.data),
-                    success: Ok(value.success),
-                }
-            }
-        }
-        #[derive(Clone, Debug)]
-        pub struct BatchNodesResponseData {
-            count: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
-            results:
-                ::std::result::Result<::std::vec::Vec<super::NodeResponse>, ::std::string::String>,
-        }
-        impl ::std::default::Default for BatchNodesResponseData {
-            fn default() -> Self {
-                Self {
-                    count: Ok(Default::default()),
-                    results: Ok(Default::default()),
-                }
-            }
-        }
-        impl BatchNodesResponseData {
-            pub fn count<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::option::Option<i64>>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.count = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for count: {e}"));
-                self
-            }
-            pub fn results<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::vec::Vec<super::NodeResponse>>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.results = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for results: {e}"));
-                self
-            }
-        }
-        impl ::std::convert::TryFrom<BatchNodesResponseData> for super::BatchNodesResponseData {
-            type Error = super::error::ConversionError;
-            fn try_from(
-                value: BatchNodesResponseData,
-            ) -> ::std::result::Result<Self, super::error::ConversionError> {
-                Ok(Self {
-                    count: value.count?,
-                    results: value.results?,
-                })
-            }
-        }
-        impl ::std::convert::From<super::BatchNodesResponseData> for BatchNodesResponseData {
-            fn from(value: super::BatchNodesResponseData) -> Self {
-                Self {
-                    count: Ok(value.count),
-                    results: Ok(value.results),
-                }
-            }
-        }
-        #[derive(Clone, Debug)]
         pub struct BulkLogIngestRequest {
             logs:
                 ::std::result::Result<::std::vec::Vec<super::LogEntryInput>, ::std::string::String>,
@@ -14765,6 +17111,270 @@ pub mod types {
             fn from(value: super::BulkMetricIngestRequest) -> Self {
                 Self {
                     metrics: Ok(value.metrics),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct CanonicalEdge {
+            created_at: ::std::result::Result<::std::string::String, ::std::string::String>,
+            edge_type: ::std::result::Result<::std::string::String, ::std::string::String>,
+            from_node_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            properties: ::std::result::Result<
+                ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                ::std::string::String,
+            >,
+            to_node_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            updated_at: ::std::result::Result<::std::string::String, ::std::string::String>,
+            weight: ::std::result::Result<::std::option::Option<f64>, ::std::string::String>,
+        }
+        impl ::std::default::Default for CanonicalEdge {
+            fn default() -> Self {
+                Self {
+                    created_at: Err("no value supplied for created_at".to_string()),
+                    edge_type: Err("no value supplied for edge_type".to_string()),
+                    from_node_id: Err("no value supplied for from_node_id".to_string()),
+                    id: Err("no value supplied for id".to_string()),
+                    properties: Err("no value supplied for properties".to_string()),
+                    to_node_id: Err("no value supplied for to_node_id".to_string()),
+                    updated_at: Err("no value supplied for updated_at".to_string()),
+                    weight: Ok(Default::default()),
+                }
+            }
+        }
+        impl CanonicalEdge {
+            pub fn created_at<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.created_at = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for created_at: {e}"));
+                self
+            }
+            pub fn edge_type<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.edge_type = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for edge_type: {e}"));
+                self
+            }
+            pub fn from_node_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.from_node_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for from_node_id: {e}"));
+                self
+            }
+            pub fn id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for id: {e}"));
+                self
+            }
+            pub fn properties<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.properties = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for properties: {e}"));
+                self
+            }
+            pub fn to_node_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.to_node_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for to_node_id: {e}"));
+                self
+            }
+            pub fn updated_at<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.updated_at = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for updated_at: {e}"));
+                self
+            }
+            pub fn weight<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<f64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.weight = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for weight: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<CanonicalEdge> for super::CanonicalEdge {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: CanonicalEdge,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    created_at: value.created_at?,
+                    edge_type: value.edge_type?,
+                    from_node_id: value.from_node_id?,
+                    id: value.id?,
+                    properties: value.properties?,
+                    to_node_id: value.to_node_id?,
+                    updated_at: value.updated_at?,
+                    weight: value.weight?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::CanonicalEdge> for CanonicalEdge {
+            fn from(value: super::CanonicalEdge) -> Self {
+                Self {
+                    created_at: Ok(value.created_at),
+                    edge_type: Ok(value.edge_type),
+                    from_node_id: Ok(value.from_node_id),
+                    id: Ok(value.id),
+                    properties: Ok(value.properties),
+                    to_node_id: Ok(value.to_node_id),
+                    updated_at: Ok(value.updated_at),
+                    weight: Ok(value.weight),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct CanonicalNode {
+            created_at: ::std::result::Result<::std::string::String, ::std::string::String>,
+            embedding: ::std::result::Result<
+                ::std::option::Option<super::GraphEmbedding>,
+                ::std::string::String,
+            >,
+            id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            labels: ::std::result::Result<
+                ::std::vec::Vec<::std::string::String>,
+                ::std::string::String,
+            >,
+            properties: ::std::result::Result<
+                ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                ::std::string::String,
+            >,
+            updated_at: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for CanonicalNode {
+            fn default() -> Self {
+                Self {
+                    created_at: Err("no value supplied for created_at".to_string()),
+                    embedding: Ok(Default::default()),
+                    id: Err("no value supplied for id".to_string()),
+                    labels: Err("no value supplied for labels".to_string()),
+                    properties: Err("no value supplied for properties".to_string()),
+                    updated_at: Err("no value supplied for updated_at".to_string()),
+                }
+            }
+        }
+        impl CanonicalNode {
+            pub fn created_at<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.created_at = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for created_at: {e}"));
+                self
+            }
+            pub fn embedding<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphEmbedding>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.embedding = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for embedding: {e}"));
+                self
+            }
+            pub fn id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for id: {e}"));
+                self
+            }
+            pub fn labels<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.labels = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for labels: {e}"));
+                self
+            }
+            pub fn properties<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.properties = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for properties: {e}"));
+                self
+            }
+            pub fn updated_at<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.updated_at = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for updated_at: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<CanonicalNode> for super::CanonicalNode {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: CanonicalNode,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    created_at: value.created_at?,
+                    embedding: value.embedding?,
+                    id: value.id?,
+                    labels: value.labels?,
+                    properties: value.properties?,
+                    updated_at: value.updated_at?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::CanonicalNode> for CanonicalNode {
+            fn from(value: super::CanonicalNode) -> Self {
+                Self {
+                    created_at: Ok(value.created_at),
+                    embedding: Ok(value.embedding),
+                    id: Ok(value.id),
+                    labels: Ok(value.labels),
+                    properties: Ok(value.properties),
+                    updated_at: Ok(value.updated_at),
                 }
             }
         }
@@ -17231,8 +19841,7 @@ pub mod types {
                 ::std::option::Option<::std::string::String>,
                 ::std::string::String,
             >,
-            graph_id:
-                ::std::result::Result<super::CreateGraphRequestGraphId, ::std::string::String>,
+            graph_id: ::std::result::Result<::std::string::String, ::std::string::String>,
             name: ::std::result::Result<
                 ::std::option::Option<::std::string::String>,
                 ::std::string::String,
@@ -17260,7 +19869,7 @@ pub mod types {
             }
             pub fn graph_id<T>(mut self, value: T) -> Self
             where
-                T: ::std::convert::TryInto<super::CreateGraphRequestGraphId>,
+                T: ::std::convert::TryInto<::std::string::String>,
                 T::Error: ::std::fmt::Display,
             {
                 self.graph_id = value
@@ -17578,103 +20187,6 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
-        pub struct DeleteGraphResponse {
-            success: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
-        }
-        impl ::std::default::Default for DeleteGraphResponse {
-            fn default() -> Self {
-                Self {
-                    success: Ok(Default::default()),
-                }
-            }
-        }
-        impl DeleteGraphResponse {
-            pub fn success<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::option::Option<bool>>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.success = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for success: {e}"));
-                self
-            }
-        }
-        impl ::std::convert::TryFrom<DeleteGraphResponse> for super::DeleteGraphResponse {
-            type Error = super::error::ConversionError;
-            fn try_from(
-                value: DeleteGraphResponse,
-            ) -> ::std::result::Result<Self, super::error::ConversionError> {
-                Ok(Self {
-                    success: value.success?,
-                })
-            }
-        }
-        impl ::std::convert::From<super::DeleteGraphResponse> for DeleteGraphResponse {
-            fn from(value: super::DeleteGraphResponse) -> Self {
-                Self {
-                    success: Ok(value.success),
-                }
-            }
-        }
-        #[derive(Clone, Debug)]
-        pub struct DeleteNodeResponse {
-            id: ::std::result::Result<
-                ::std::option::Option<::std::string::String>,
-                ::std::string::String,
-            >,
-            success: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
-        }
-        impl ::std::default::Default for DeleteNodeResponse {
-            fn default() -> Self {
-                Self {
-                    id: Ok(Default::default()),
-                    success: Ok(Default::default()),
-                }
-            }
-        }
-        impl DeleteNodeResponse {
-            pub fn id<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.id = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for id: {e}"));
-                self
-            }
-            pub fn success<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::option::Option<bool>>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.success = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for success: {e}"));
-                self
-            }
-        }
-        impl ::std::convert::TryFrom<DeleteNodeResponse> for super::DeleteNodeResponse {
-            type Error = super::error::ConversionError;
-            fn try_from(
-                value: DeleteNodeResponse,
-            ) -> ::std::result::Result<Self, super::error::ConversionError> {
-                Ok(Self {
-                    id: value.id?,
-                    success: value.success?,
-                })
-            }
-        }
-        impl ::std::convert::From<super::DeleteNodeResponse> for DeleteNodeResponse {
-            fn from(value: super::DeleteNodeResponse) -> Self {
-                Self {
-                    id: Ok(value.id),
-                    success: Ok(value.success),
-                }
-            }
-        }
-        #[derive(Clone, Debug)]
         pub struct DeleteRecordV2Response {
             id: ::std::result::Result<::std::string::String, ::std::string::String>,
             processing_time_us: ::std::result::Result<i64, ::std::string::String>,
@@ -17746,7 +20258,7 @@ pub mod types {
         pub struct EdgeInput {
             edge_type: ::std::result::Result<::std::string::String, ::std::string::String>,
             from_node_id: ::std::result::Result<::std::string::String, ::std::string::String>,
-            id: ::std::result::Result<super::EdgeInputId, ::std::string::String>,
+            id: ::std::result::Result<::std::string::String, ::std::string::String>,
             properties: ::std::result::Result<
                 ::serde_json::Map<::std::string::String, ::serde_json::Value>,
                 ::std::string::String,
@@ -17789,7 +20301,7 @@ pub mod types {
             }
             pub fn id<T>(mut self, value: T) -> Self
             where
-                T: ::std::convert::TryInto<super::EdgeInputId>,
+                T: ::std::convert::TryInto<::std::string::String>,
                 T::Error: ::std::fmt::Display,
             {
                 self.id = value
@@ -17854,208 +20366,6 @@ pub mod types {
                     properties: Ok(value.properties),
                     to_node_id: Ok(value.to_node_id),
                     weight: Ok(value.weight),
-                }
-            }
-        }
-        #[derive(Clone, Debug)]
-        pub struct EdgeResponse {
-            edge_type: ::std::result::Result<
-                ::std::option::Option<::std::string::String>,
-                ::std::string::String,
-            >,
-            from_node_id: ::std::result::Result<
-                ::std::option::Option<::std::string::String>,
-                ::std::string::String,
-            >,
-            id: ::std::result::Result<::std::string::String, ::std::string::String>,
-            properties: ::std::result::Result<
-                ::std::option::Option<
-                    ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-                >,
-                ::std::string::String,
-            >,
-            to_node_id: ::std::result::Result<
-                ::std::option::Option<::std::string::String>,
-                ::std::string::String,
-            >,
-            weight: ::std::result::Result<::std::option::Option<f64>, ::std::string::String>,
-        }
-        impl ::std::default::Default for EdgeResponse {
-            fn default() -> Self {
-                Self {
-                    edge_type: Ok(Default::default()),
-                    from_node_id: Ok(Default::default()),
-                    id: Err("no value supplied for id".to_string()),
-                    properties: Ok(Default::default()),
-                    to_node_id: Ok(Default::default()),
-                    weight: Ok(Default::default()),
-                }
-            }
-        }
-        impl EdgeResponse {
-            pub fn edge_type<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.edge_type = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for edge_type: {e}"));
-                self
-            }
-            pub fn from_node_id<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.from_node_id = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for from_node_id: {e}"));
-                self
-            }
-            pub fn id<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::string::String>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.id = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for id: {e}"));
-                self
-            }
-            pub fn properties<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<
-                        ::std::option::Option<
-                            ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-                        >,
-                    >,
-                T::Error: ::std::fmt::Display,
-            {
-                self.properties = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for properties: {e}"));
-                self
-            }
-            pub fn to_node_id<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.to_node_id = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for to_node_id: {e}"));
-                self
-            }
-            pub fn weight<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::option::Option<f64>>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.weight = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for weight: {e}"));
-                self
-            }
-        }
-        impl ::std::convert::TryFrom<EdgeResponse> for super::EdgeResponse {
-            type Error = super::error::ConversionError;
-            fn try_from(
-                value: EdgeResponse,
-            ) -> ::std::result::Result<Self, super::error::ConversionError> {
-                Ok(Self {
-                    edge_type: value.edge_type?,
-                    from_node_id: value.from_node_id?,
-                    id: value.id?,
-                    properties: value.properties?,
-                    to_node_id: value.to_node_id?,
-                    weight: value.weight?,
-                })
-            }
-        }
-        impl ::std::convert::From<super::EdgeResponse> for EdgeResponse {
-            fn from(value: super::EdgeResponse) -> Self {
-                Self {
-                    edge_type: Ok(value.edge_type),
-                    from_node_id: Ok(value.from_node_id),
-                    id: Ok(value.id),
-                    properties: Ok(value.properties),
-                    to_node_id: Ok(value.to_node_id),
-                    weight: Ok(value.weight),
-                }
-            }
-        }
-        #[derive(Clone, Debug)]
-        pub struct EmbeddingInput {
-            modality: ::std::result::Result<
-                ::std::option::Option<::std::string::String>,
-                ::std::string::String,
-            >,
-            model_id: ::std::result::Result<
-                ::std::option::Option<::std::string::String>,
-                ::std::string::String,
-            >,
-            vector: ::std::result::Result<::std::vec::Vec<f32>, ::std::string::String>,
-        }
-        impl ::std::default::Default for EmbeddingInput {
-            fn default() -> Self {
-                Self {
-                    modality: Ok(Default::default()),
-                    model_id: Ok(Default::default()),
-                    vector: Err("no value supplied for vector".to_string()),
-                }
-            }
-        }
-        impl EmbeddingInput {
-            pub fn modality<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.modality = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for modality: {e}"));
-                self
-            }
-            pub fn model_id<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.model_id = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for model_id: {e}"));
-                self
-            }
-            pub fn vector<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::vec::Vec<f32>>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.vector = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for vector: {e}"));
-                self
-            }
-        }
-        impl ::std::convert::TryFrom<EmbeddingInput> for super::EmbeddingInput {
-            type Error = super::error::ConversionError;
-            fn try_from(
-                value: EmbeddingInput,
-            ) -> ::std::result::Result<Self, super::error::ConversionError> {
-                Ok(Self {
-                    modality: value.modality?,
-                    model_id: value.model_id?,
-                    vector: value.vector?,
-                })
-            }
-        }
-        impl ::std::convert::From<super::EmbeddingInput> for EmbeddingInput {
-            fn from(value: super::EmbeddingInput) -> Self {
-                Self {
-                    modality: Ok(value.modality),
-                    model_id: Ok(value.model_id),
-                    vector: Ok(value.vector),
                 }
             }
         }
@@ -19190,82 +21500,349 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct GraphBatchEdgesResponse {
+            data: ::std::result::Result<
+                ::std::option::Option<super::GraphEdgeBatchResults>,
+                ::std::string::String,
+            >,
+            error: ::std::result::Result<
+                ::std::option::Option<super::GraphErrorBody>,
+                ::std::string::String,
+            >,
+            metadata: ::std::result::Result<
+                ::std::option::Option<super::GraphResponseMetadata>,
+                ::std::string::String,
+            >,
+            success: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphBatchEdgesResponse {
+            fn default() -> Self {
+                Self {
+                    data: Ok(Default::default()),
+                    error: Ok(Default::default()),
+                    metadata: Ok(Default::default()),
+                    success: Err("no value supplied for success".to_string()),
+                }
+            }
+        }
+        impl GraphBatchEdgesResponse {
+            pub fn data<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphEdgeBatchResults>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.data = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for data: {e}"));
+                self
+            }
+            pub fn error<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphErrorBody>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.error = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for error: {e}"));
+                self
+            }
+            pub fn metadata<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphResponseMetadata>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.metadata = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for metadata: {e}"));
+                self
+            }
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphBatchEdgesResponse> for super::GraphBatchEdgesResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphBatchEdgesResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    data: value.data?,
+                    error: value.error?,
+                    metadata: value.metadata?,
+                    success: value.success?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphBatchEdgesResponse> for GraphBatchEdgesResponse {
+            fn from(value: super::GraphBatchEdgesResponse) -> Self {
+                Self {
+                    data: Ok(value.data),
+                    error: Ok(value.error),
+                    metadata: Ok(value.metadata),
+                    success: Ok(value.success),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphBatchNodesResponse {
+            data: ::std::result::Result<
+                ::std::option::Option<super::GraphNodeBatchResults>,
+                ::std::string::String,
+            >,
+            error: ::std::result::Result<
+                ::std::option::Option<super::GraphErrorBody>,
+                ::std::string::String,
+            >,
+            metadata: ::std::result::Result<
+                ::std::option::Option<super::GraphResponseMetadata>,
+                ::std::string::String,
+            >,
+            success: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphBatchNodesResponse {
+            fn default() -> Self {
+                Self {
+                    data: Ok(Default::default()),
+                    error: Ok(Default::default()),
+                    metadata: Ok(Default::default()),
+                    success: Err("no value supplied for success".to_string()),
+                }
+            }
+        }
+        impl GraphBatchNodesResponse {
+            pub fn data<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphNodeBatchResults>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.data = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for data: {e}"));
+                self
+            }
+            pub fn error<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphErrorBody>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.error = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for error: {e}"));
+                self
+            }
+            pub fn metadata<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphResponseMetadata>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.metadata = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for metadata: {e}"));
+                self
+            }
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphBatchNodesResponse> for super::GraphBatchNodesResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphBatchNodesResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    data: value.data?,
+                    error: value.error?,
+                    metadata: value.metadata?,
+                    success: value.success?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphBatchNodesResponse> for GraphBatchNodesResponse {
+            fn from(value: super::GraphBatchNodesResponse) -> Self {
+                Self {
+                    data: Ok(value.data),
+                    error: Ok(value.error),
+                    metadata: Ok(value.metadata),
+                    success: Ok(value.success),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphCollectionListResponse {
+            data: ::std::result::Result<
+                ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+                ::std::string::String,
+            >,
+            error: ::std::result::Result<
+                ::std::option::Option<super::GraphErrorBody>,
+                ::std::string::String,
+            >,
+            metadata: ::std::result::Result<
+                ::std::option::Option<super::GraphResponseMetadata>,
+                ::std::string::String,
+            >,
+            success: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphCollectionListResponse {
+            fn default() -> Self {
+                Self {
+                    data: Ok(Default::default()),
+                    error: Ok(Default::default()),
+                    metadata: Ok(Default::default()),
+                    success: Err("no value supplied for success".to_string()),
+                }
+            }
+        }
+        impl GraphCollectionListResponse {
+            pub fn data<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::std::vec::Vec<
+                            ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                        >,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.data = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for data: {e}"));
+                self
+            }
+            pub fn error<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphErrorBody>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.error = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for error: {e}"));
+                self
+            }
+            pub fn metadata<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphResponseMetadata>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.metadata = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for metadata: {e}"));
+                self
+            }
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphCollectionListResponse> for super::GraphCollectionListResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphCollectionListResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    data: value.data?,
+                    error: value.error?,
+                    metadata: value.metadata?,
+                    success: value.success?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphCollectionListResponse> for GraphCollectionListResponse {
+            fn from(value: super::GraphCollectionListResponse) -> Self {
+                Self {
+                    data: Ok(value.data),
+                    error: Ok(value.error),
+                    metadata: Ok(value.metadata),
+                    success: Ok(value.success),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct GraphCollectionResponse {
-            description: ::std::result::Result<
-                ::std::option::Option<::std::string::String>,
+            data: ::std::result::Result<
+                ::serde_json::Map<::std::string::String, ::serde_json::Value>,
                 ::std::string::String,
             >,
-            edge_count: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
-            graph_id: ::std::result::Result<
-                ::std::option::Option<::std::string::String>,
+            error: ::std::result::Result<
+                ::std::option::Option<super::GraphErrorBody>,
                 ::std::string::String,
             >,
-            name: ::std::result::Result<
-                ::std::option::Option<::std::string::String>,
+            metadata: ::std::result::Result<
+                ::std::option::Option<super::GraphResponseMetadata>,
                 ::std::string::String,
             >,
-            node_count: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+            success: ::std::result::Result<bool, ::std::string::String>,
         }
         impl ::std::default::Default for GraphCollectionResponse {
             fn default() -> Self {
                 Self {
-                    description: Ok(Default::default()),
-                    edge_count: Ok(Default::default()),
-                    graph_id: Ok(Default::default()),
-                    name: Ok(Default::default()),
-                    node_count: Ok(Default::default()),
+                    data: Ok(Default::default()),
+                    error: Ok(Default::default()),
+                    metadata: Ok(Default::default()),
+                    success: Err("no value supplied for success".to_string()),
                 }
             }
         }
         impl GraphCollectionResponse {
-            pub fn description<T>(mut self, value: T) -> Self
+            pub fn data<T>(mut self, value: T) -> Self
             where
-                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T: ::std::convert::TryInto<
+                        ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                    >,
                 T::Error: ::std::fmt::Display,
             {
-                self.description = value
+                self.data = value
                     .try_into()
-                    .map_err(|e| format!("error converting supplied value for description: {e}"));
+                    .map_err(|e| format!("error converting supplied value for data: {e}"));
                 self
             }
-            pub fn edge_count<T>(mut self, value: T) -> Self
+            pub fn error<T>(mut self, value: T) -> Self
             where
-                T: ::std::convert::TryInto<::std::option::Option<i64>>,
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphErrorBody>>,
                 T::Error: ::std::fmt::Display,
             {
-                self.edge_count = value
+                self.error = value
                     .try_into()
-                    .map_err(|e| format!("error converting supplied value for edge_count: {e}"));
+                    .map_err(|e| format!("error converting supplied value for error: {e}"));
                 self
             }
-            pub fn graph_id<T>(mut self, value: T) -> Self
+            pub fn metadata<T>(mut self, value: T) -> Self
             where
-                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphResponseMetadata>>,
                 T::Error: ::std::fmt::Display,
             {
-                self.graph_id = value
+                self.metadata = value
                     .try_into()
-                    .map_err(|e| format!("error converting supplied value for graph_id: {e}"));
+                    .map_err(|e| format!("error converting supplied value for metadata: {e}"));
                 self
             }
-            pub fn name<T>(mut self, value: T) -> Self
+            pub fn success<T>(mut self, value: T) -> Self
             where
-                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T: ::std::convert::TryInto<bool>,
                 T::Error: ::std::fmt::Display,
             {
-                self.name = value
+                self.success = value
                     .try_into()
-                    .map_err(|e| format!("error converting supplied value for name: {e}"));
-                self
-            }
-            pub fn node_count<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::option::Option<i64>>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.node_count = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for node_count: {e}"));
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
                 self
             }
         }
@@ -19275,69 +21852,2293 @@ pub mod types {
                 value: GraphCollectionResponse,
             ) -> ::std::result::Result<Self, super::error::ConversionError> {
                 Ok(Self {
-                    description: value.description?,
-                    edge_count: value.edge_count?,
-                    graph_id: value.graph_id?,
-                    name: value.name?,
-                    node_count: value.node_count?,
+                    data: value.data?,
+                    error: value.error?,
+                    metadata: value.metadata?,
+                    success: value.success?,
                 })
             }
         }
         impl ::std::convert::From<super::GraphCollectionResponse> for GraphCollectionResponse {
             fn from(value: super::GraphCollectionResponse) -> Self {
                 Self {
-                    description: Ok(value.description),
-                    edge_count: Ok(value.edge_count),
-                    graph_id: Ok(value.graph_id),
-                    name: Ok(value.name),
-                    node_count: Ok(value.node_count),
+                    data: Ok(value.data),
+                    error: Ok(value.error),
+                    metadata: Ok(value.metadata),
+                    success: Ok(value.success),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphComponentsData {
+            components: ::std::result::Result<
+                ::std::vec::Vec<::std::vec::Vec<::std::string::String>>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for GraphComponentsData {
+            fn default() -> Self {
+                Self {
+                    components: Err("no value supplied for components".to_string()),
+                }
+            }
+        }
+        impl GraphComponentsData {
+            pub fn components<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::vec::Vec<::std::string::String>>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.components = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for components: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphComponentsData> for super::GraphComponentsData {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphComponentsData,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    components: value.components?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphComponentsData> for GraphComponentsData {
+            fn from(value: super::GraphComponentsData) -> Self {
+                Self {
+                    components: Ok(value.components),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphComponentsResponse {
+            data: ::std::result::Result<
+                ::std::option::Option<super::GraphComponentsData>,
+                ::std::string::String,
+            >,
+            error: ::std::result::Result<
+                ::std::option::Option<super::GraphErrorBody>,
+                ::std::string::String,
+            >,
+            metadata: ::std::result::Result<
+                ::std::option::Option<super::GraphResponseMetadata>,
+                ::std::string::String,
+            >,
+            success: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphComponentsResponse {
+            fn default() -> Self {
+                Self {
+                    data: Ok(Default::default()),
+                    error: Ok(Default::default()),
+                    metadata: Ok(Default::default()),
+                    success: Err("no value supplied for success".to_string()),
+                }
+            }
+        }
+        impl GraphComponentsResponse {
+            pub fn data<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphComponentsData>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.data = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for data: {e}"));
+                self
+            }
+            pub fn error<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphErrorBody>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.error = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for error: {e}"));
+                self
+            }
+            pub fn metadata<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphResponseMetadata>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.metadata = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for metadata: {e}"));
+                self
+            }
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphComponentsResponse> for super::GraphComponentsResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphComponentsResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    data: value.data?,
+                    error: value.error?,
+                    metadata: value.metadata?,
+                    success: value.success?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphComponentsResponse> for GraphComponentsResponse {
+            fn from(value: super::GraphComponentsResponse) -> Self {
+                Self {
+                    data: Ok(value.data),
+                    error: Ok(value.error),
+                    metadata: Ok(value.metadata),
+                    success: Ok(value.success),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphCyclesData {
+            has_cycle: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphCyclesData {
+            fn default() -> Self {
+                Self {
+                    has_cycle: Err("no value supplied for has_cycle".to_string()),
+                }
+            }
+        }
+        impl GraphCyclesData {
+            pub fn has_cycle<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.has_cycle = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for has_cycle: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphCyclesData> for super::GraphCyclesData {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphCyclesData,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    has_cycle: value.has_cycle?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphCyclesData> for GraphCyclesData {
+            fn from(value: super::GraphCyclesData) -> Self {
+                Self {
+                    has_cycle: Ok(value.has_cycle),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphCyclesResponse {
+            data: ::std::result::Result<
+                ::std::option::Option<super::GraphCyclesData>,
+                ::std::string::String,
+            >,
+            error: ::std::result::Result<
+                ::std::option::Option<super::GraphErrorBody>,
+                ::std::string::String,
+            >,
+            metadata: ::std::result::Result<
+                ::std::option::Option<super::GraphResponseMetadata>,
+                ::std::string::String,
+            >,
+            success: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphCyclesResponse {
+            fn default() -> Self {
+                Self {
+                    data: Ok(Default::default()),
+                    error: Ok(Default::default()),
+                    metadata: Ok(Default::default()),
+                    success: Err("no value supplied for success".to_string()),
+                }
+            }
+        }
+        impl GraphCyclesResponse {
+            pub fn data<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphCyclesData>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.data = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for data: {e}"));
+                self
+            }
+            pub fn error<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphErrorBody>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.error = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for error: {e}"));
+                self
+            }
+            pub fn metadata<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphResponseMetadata>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.metadata = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for metadata: {e}"));
+                self
+            }
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphCyclesResponse> for super::GraphCyclesResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphCyclesResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    data: value.data?,
+                    error: value.error?,
+                    metadata: value.metadata?,
+                    success: value.success?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphCyclesResponse> for GraphCyclesResponse {
+            fn from(value: super::GraphCyclesResponse) -> Self {
+                Self {
+                    data: Ok(value.data),
+                    error: Ok(value.error),
+                    metadata: Ok(value.metadata),
+                    success: Ok(value.success),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphDdlData {
+            success: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphDdlData {
+            fn default() -> Self {
+                Self {
+                    success: Err("no value supplied for success".to_string()),
+                }
+            }
+        }
+        impl GraphDdlData {
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphDdlData> for super::GraphDdlData {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphDdlData,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    success: value.success?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphDdlData> for GraphDdlData {
+            fn from(value: super::GraphDdlData) -> Self {
+                Self {
+                    success: Ok(value.success),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphDdlResponse {
+            data: ::std::result::Result<
+                ::std::option::Option<super::GraphDdlData>,
+                ::std::string::String,
+            >,
+            error: ::std::result::Result<
+                ::std::option::Option<super::GraphErrorBody>,
+                ::std::string::String,
+            >,
+            metadata: ::std::result::Result<
+                ::std::option::Option<super::GraphResponseMetadata>,
+                ::std::string::String,
+            >,
+            success: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphDdlResponse {
+            fn default() -> Self {
+                Self {
+                    data: Ok(Default::default()),
+                    error: Ok(Default::default()),
+                    metadata: Ok(Default::default()),
+                    success: Err("no value supplied for success".to_string()),
+                }
+            }
+        }
+        impl GraphDdlResponse {
+            pub fn data<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphDdlData>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.data = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for data: {e}"));
+                self
+            }
+            pub fn error<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphErrorBody>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.error = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for error: {e}"));
+                self
+            }
+            pub fn metadata<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphResponseMetadata>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.metadata = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for metadata: {e}"));
+                self
+            }
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphDdlResponse> for super::GraphDdlResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphDdlResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    data: value.data?,
+                    error: value.error?,
+                    metadata: value.metadata?,
+                    success: value.success?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphDdlResponse> for GraphDdlResponse {
+            fn from(value: super::GraphDdlResponse) -> Self {
+                Self {
+                    data: Ok(value.data),
+                    error: Ok(value.error),
+                    metadata: Ok(value.metadata),
+                    success: Ok(value.success),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphEdgeBatchResults {
+            created_count: ::std::result::Result<u64, ::std::string::String>,
+            errors:
+                ::std::result::Result<::std::vec::Vec<::serde_json::Value>, ::std::string::String>,
+            failed_count: ::std::result::Result<u64, ::std::string::String>,
+            results:
+                ::std::result::Result<::std::vec::Vec<super::CanonicalEdge>, ::std::string::String>,
+            updated_count: ::std::result::Result<u64, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphEdgeBatchResults {
+            fn default() -> Self {
+                Self {
+                    created_count: Err("no value supplied for created_count".to_string()),
+                    errors: Err("no value supplied for errors".to_string()),
+                    failed_count: Err("no value supplied for failed_count".to_string()),
+                    results: Err("no value supplied for results".to_string()),
+                    updated_count: Err("no value supplied for updated_count".to_string()),
+                }
+            }
+        }
+        impl GraphEdgeBatchResults {
+            pub fn created_count<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.created_count = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for created_count: {e}"));
+                self
+            }
+            pub fn errors<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::serde_json::Value>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.errors = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for errors: {e}"));
+                self
+            }
+            pub fn failed_count<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.failed_count = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for failed_count: {e}"));
+                self
+            }
+            pub fn results<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::CanonicalEdge>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.results = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for results: {e}"));
+                self
+            }
+            pub fn updated_count<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.updated_count = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for updated_count: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphEdgeBatchResults> for super::GraphEdgeBatchResults {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphEdgeBatchResults,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    created_count: value.created_count?,
+                    errors: value.errors?,
+                    failed_count: value.failed_count?,
+                    results: value.results?,
+                    updated_count: value.updated_count?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphEdgeBatchResults> for GraphEdgeBatchResults {
+            fn from(value: super::GraphEdgeBatchResults) -> Self {
+                Self {
+                    created_count: Ok(value.created_count),
+                    errors: Ok(value.errors),
+                    failed_count: Ok(value.failed_count),
+                    results: Ok(value.results),
+                    updated_count: Ok(value.updated_count),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphEdgeQuery {
+            continuation_token: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            edge_type: ::std::result::Result<::std::string::String, ::std::string::String>,
+            from_node_id: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            limit: ::std::result::Result<u32, ::std::string::String>,
+            offset: ::std::result::Result<::std::option::Option<u32>, ::std::string::String>,
+            properties: ::std::result::Result<
+                ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                ::std::string::String,
+            >,
+            to_node_id: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for GraphEdgeQuery {
+            fn default() -> Self {
+                Self {
+                    continuation_token: Ok(Default::default()),
+                    edge_type: Ok(Default::default()),
+                    from_node_id: Ok(Default::default()),
+                    limit: Ok(super::defaults::default_u64::<u32, 100>()),
+                    offset: Ok(Default::default()),
+                    properties: Ok(Default::default()),
+                    to_node_id: Ok(Default::default()),
+                }
+            }
+        }
+        impl GraphEdgeQuery {
+            pub fn continuation_token<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.continuation_token = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for continuation_token: {e}")
+                });
+                self
+            }
+            pub fn edge_type<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.edge_type = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for edge_type: {e}"));
+                self
+            }
+            pub fn from_node_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.from_node_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for from_node_id: {e}"));
+                self
+            }
+            pub fn limit<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.limit = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for limit: {e}"));
+                self
+            }
+            pub fn offset<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.offset = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for offset: {e}"));
+                self
+            }
+            pub fn properties<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.properties = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for properties: {e}"));
+                self
+            }
+            pub fn to_node_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.to_node_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for to_node_id: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphEdgeQuery> for super::GraphEdgeQuery {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphEdgeQuery,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    continuation_token: value.continuation_token?,
+                    edge_type: value.edge_type?,
+                    from_node_id: value.from_node_id?,
+                    limit: value.limit?,
+                    offset: value.offset?,
+                    properties: value.properties?,
+                    to_node_id: value.to_node_id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphEdgeQuery> for GraphEdgeQuery {
+            fn from(value: super::GraphEdgeQuery) -> Self {
+                Self {
+                    continuation_token: Ok(value.continuation_token),
+                    edge_type: Ok(value.edge_type),
+                    from_node_id: Ok(value.from_node_id),
+                    limit: Ok(value.limit),
+                    offset: Ok(value.offset),
+                    properties: Ok(value.properties),
+                    to_node_id: Ok(value.to_node_id),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphEdgeQueryResponse {
+            data: ::std::result::Result<
+                ::std::option::Option<super::GraphEdgeQueryResults>,
+                ::std::string::String,
+            >,
+            error: ::std::result::Result<
+                ::std::option::Option<super::GraphErrorBody>,
+                ::std::string::String,
+            >,
+            metadata: ::std::result::Result<
+                ::std::option::Option<super::GraphResponseMetadata>,
+                ::std::string::String,
+            >,
+            success: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphEdgeQueryResponse {
+            fn default() -> Self {
+                Self {
+                    data: Ok(Default::default()),
+                    error: Ok(Default::default()),
+                    metadata: Ok(Default::default()),
+                    success: Err("no value supplied for success".to_string()),
+                }
+            }
+        }
+        impl GraphEdgeQueryResponse {
+            pub fn data<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphEdgeQueryResults>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.data = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for data: {e}"));
+                self
+            }
+            pub fn error<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphErrorBody>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.error = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for error: {e}"));
+                self
+            }
+            pub fn metadata<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphResponseMetadata>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.metadata = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for metadata: {e}"));
+                self
+            }
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphEdgeQueryResponse> for super::GraphEdgeQueryResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphEdgeQueryResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    data: value.data?,
+                    error: value.error?,
+                    metadata: value.metadata?,
+                    success: value.success?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphEdgeQueryResponse> for GraphEdgeQueryResponse {
+            fn from(value: super::GraphEdgeQueryResponse) -> Self {
+                Self {
+                    data: Ok(value.data),
+                    error: Ok(value.error),
+                    metadata: Ok(value.metadata),
+                    success: Ok(value.success),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphEdgeQueryResults {
+            has_more: ::std::result::Result<bool, ::std::string::String>,
+            items:
+                ::std::result::Result<::std::vec::Vec<super::CanonicalEdge>, ::std::string::String>,
+            next_token: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            total_count: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphEdgeQueryResults {
+            fn default() -> Self {
+                Self {
+                    has_more: Err("no value supplied for has_more".to_string()),
+                    items: Err("no value supplied for items".to_string()),
+                    next_token: Ok(Default::default()),
+                    total_count: Ok(Default::default()),
+                }
+            }
+        }
+        impl GraphEdgeQueryResults {
+            pub fn has_more<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.has_more = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for has_more: {e}"));
+                self
+            }
+            pub fn items<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::CanonicalEdge>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.items = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for items: {e}"));
+                self
+            }
+            pub fn next_token<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.next_token = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for next_token: {e}"));
+                self
+            }
+            pub fn total_count<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.total_count = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for total_count: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphEdgeQueryResults> for super::GraphEdgeQueryResults {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphEdgeQueryResults,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    has_more: value.has_more?,
+                    items: value.items?,
+                    next_token: value.next_token?,
+                    total_count: value.total_count?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphEdgeQueryResults> for GraphEdgeQueryResults {
+            fn from(value: super::GraphEdgeQueryResults) -> Self {
+                Self {
+                    has_more: Ok(value.has_more),
+                    items: Ok(value.items),
+                    next_token: Ok(value.next_token),
+                    total_count: Ok(value.total_count),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphEdgeResponse {
+            data: ::std::result::Result<
+                ::std::option::Option<super::CanonicalEdge>,
+                ::std::string::String,
+            >,
+            error: ::std::result::Result<
+                ::std::option::Option<super::GraphErrorBody>,
+                ::std::string::String,
+            >,
+            metadata: ::std::result::Result<
+                ::std::option::Option<super::GraphResponseMetadata>,
+                ::std::string::String,
+            >,
+            success: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphEdgeResponse {
+            fn default() -> Self {
+                Self {
+                    data: Ok(Default::default()),
+                    error: Ok(Default::default()),
+                    metadata: Ok(Default::default()),
+                    success: Err("no value supplied for success".to_string()),
+                }
+            }
+        }
+        impl GraphEdgeResponse {
+            pub fn data<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::CanonicalEdge>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.data = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for data: {e}"));
+                self
+            }
+            pub fn error<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphErrorBody>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.error = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for error: {e}"));
+                self
+            }
+            pub fn metadata<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphResponseMetadata>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.metadata = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for metadata: {e}"));
+                self
+            }
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphEdgeResponse> for super::GraphEdgeResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphEdgeResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    data: value.data?,
+                    error: value.error?,
+                    metadata: value.metadata?,
+                    success: value.success?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphEdgeResponse> for GraphEdgeResponse {
+            fn from(value: super::GraphEdgeResponse) -> Self {
+                Self {
+                    data: Ok(value.data),
+                    error: Ok(value.error),
+                    metadata: Ok(value.metadata),
+                    success: Ok(value.success),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphEmbedding {
+            dimension: ::std::result::Result<u32, ::std::string::String>,
+            model_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            model_version: ::std::result::Result<::std::string::String, ::std::string::String>,
+            vector: ::std::result::Result<::std::vec::Vec<f64>, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphEmbedding {
+            fn default() -> Self {
+                Self {
+                    dimension: Err("no value supplied for dimension".to_string()),
+                    model_id: Err("no value supplied for model_id".to_string()),
+                    model_version: Err("no value supplied for model_version".to_string()),
+                    vector: Err("no value supplied for vector".to_string()),
+                }
+            }
+        }
+        impl GraphEmbedding {
+            pub fn dimension<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.dimension = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for dimension: {e}"));
+                self
+            }
+            pub fn model_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.model_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for model_id: {e}"));
+                self
+            }
+            pub fn model_version<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.model_version = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for model_version: {e}"));
+                self
+            }
+            pub fn vector<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<f64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.vector = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for vector: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphEmbedding> for super::GraphEmbedding {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphEmbedding,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    dimension: value.dimension?,
+                    model_id: value.model_id?,
+                    model_version: value.model_version?,
+                    vector: value.vector?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphEmbedding> for GraphEmbedding {
+            fn from(value: super::GraphEmbedding) -> Self {
+                Self {
+                    dimension: Ok(value.dimension),
+                    model_id: Ok(value.model_id),
+                    model_version: Ok(value.model_version),
+                    vector: Ok(value.vector),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphErrorBody {
+            code: ::std::result::Result<super::GraphErrorBodyCode, ::std::string::String>,
+            details: ::std::result::Result<
+                ::std::option::Option<::serde_json::Value>,
+                ::std::string::String,
+            >,
+            message: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphErrorBody {
+            fn default() -> Self {
+                Self {
+                    code: Err("no value supplied for code".to_string()),
+                    details: Ok(Default::default()),
+                    message: Err("no value supplied for message".to_string()),
+                }
+            }
+        }
+        impl GraphErrorBody {
+            pub fn code<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::GraphErrorBodyCode>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.code = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for code: {e}"));
+                self
+            }
+            pub fn details<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::serde_json::Value>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.details = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for details: {e}"));
+                self
+            }
+            pub fn message<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.message = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for message: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphErrorBody> for super::GraphErrorBody {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphErrorBody,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    code: value.code?,
+                    details: value.details?,
+                    message: value.message?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphErrorBody> for GraphErrorBody {
+            fn from(value: super::GraphErrorBody) -> Self {
+                Self {
+                    code: Ok(value.code),
+                    details: Ok(value.details),
+                    message: Ok(value.message),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphNodeBatchResults {
+            created_count: ::std::result::Result<u64, ::std::string::String>,
+            errors:
+                ::std::result::Result<::std::vec::Vec<::serde_json::Value>, ::std::string::String>,
+            failed_count: ::std::result::Result<u64, ::std::string::String>,
+            results:
+                ::std::result::Result<::std::vec::Vec<super::CanonicalNode>, ::std::string::String>,
+            updated_count: ::std::result::Result<u64, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphNodeBatchResults {
+            fn default() -> Self {
+                Self {
+                    created_count: Err("no value supplied for created_count".to_string()),
+                    errors: Err("no value supplied for errors".to_string()),
+                    failed_count: Err("no value supplied for failed_count".to_string()),
+                    results: Err("no value supplied for results".to_string()),
+                    updated_count: Err("no value supplied for updated_count".to_string()),
+                }
+            }
+        }
+        impl GraphNodeBatchResults {
+            pub fn created_count<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.created_count = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for created_count: {e}"));
+                self
+            }
+            pub fn errors<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::serde_json::Value>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.errors = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for errors: {e}"));
+                self
+            }
+            pub fn failed_count<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.failed_count = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for failed_count: {e}"));
+                self
+            }
+            pub fn results<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::CanonicalNode>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.results = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for results: {e}"));
+                self
+            }
+            pub fn updated_count<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.updated_count = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for updated_count: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphNodeBatchResults> for super::GraphNodeBatchResults {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphNodeBatchResults,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    created_count: value.created_count?,
+                    errors: value.errors?,
+                    failed_count: value.failed_count?,
+                    results: value.results?,
+                    updated_count: value.updated_count?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphNodeBatchResults> for GraphNodeBatchResults {
+            fn from(value: super::GraphNodeBatchResults) -> Self {
+                Self {
+                    created_count: Ok(value.created_count),
+                    errors: Ok(value.errors),
+                    failed_count: Ok(value.failed_count),
+                    results: Ok(value.results),
+                    updated_count: Ok(value.updated_count),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphNodeListResponse {
+            data:
+                ::std::result::Result<::std::vec::Vec<super::CanonicalNode>, ::std::string::String>,
+            error: ::std::result::Result<
+                ::std::option::Option<super::GraphErrorBody>,
+                ::std::string::String,
+            >,
+            metadata: ::std::result::Result<
+                ::std::option::Option<super::GraphResponseMetadata>,
+                ::std::string::String,
+            >,
+            success: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphNodeListResponse {
+            fn default() -> Self {
+                Self {
+                    data: Ok(Default::default()),
+                    error: Ok(Default::default()),
+                    metadata: Ok(Default::default()),
+                    success: Err("no value supplied for success".to_string()),
+                }
+            }
+        }
+        impl GraphNodeListResponse {
+            pub fn data<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::CanonicalNode>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.data = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for data: {e}"));
+                self
+            }
+            pub fn error<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphErrorBody>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.error = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for error: {e}"));
+                self
+            }
+            pub fn metadata<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphResponseMetadata>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.metadata = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for metadata: {e}"));
+                self
+            }
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphNodeListResponse> for super::GraphNodeListResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphNodeListResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    data: value.data?,
+                    error: value.error?,
+                    metadata: value.metadata?,
+                    success: value.success?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphNodeListResponse> for GraphNodeListResponse {
+            fn from(value: super::GraphNodeListResponse) -> Self {
+                Self {
+                    data: Ok(value.data),
+                    error: Ok(value.error),
+                    metadata: Ok(value.metadata),
+                    success: Ok(value.success),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphNodeQuery {
+            continuation_token: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            labels: ::std::result::Result<
+                ::std::vec::Vec<::std::string::String>,
+                ::std::string::String,
+            >,
+            limit: ::std::result::Result<u32, ::std::string::String>,
+            offset: ::std::result::Result<::std::option::Option<u32>, ::std::string::String>,
+            properties: ::std::result::Result<
+                ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for GraphNodeQuery {
+            fn default() -> Self {
+                Self {
+                    continuation_token: Ok(Default::default()),
+                    labels: Ok(Default::default()),
+                    limit: Ok(super::defaults::default_u64::<u32, 100>()),
+                    offset: Ok(Default::default()),
+                    properties: Ok(Default::default()),
+                }
+            }
+        }
+        impl GraphNodeQuery {
+            pub fn continuation_token<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.continuation_token = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for continuation_token: {e}")
+                });
+                self
+            }
+            pub fn labels<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.labels = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for labels: {e}"));
+                self
+            }
+            pub fn limit<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.limit = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for limit: {e}"));
+                self
+            }
+            pub fn offset<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.offset = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for offset: {e}"));
+                self
+            }
+            pub fn properties<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.properties = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for properties: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphNodeQuery> for super::GraphNodeQuery {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphNodeQuery,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    continuation_token: value.continuation_token?,
+                    labels: value.labels?,
+                    limit: value.limit?,
+                    offset: value.offset?,
+                    properties: value.properties?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphNodeQuery> for GraphNodeQuery {
+            fn from(value: super::GraphNodeQuery) -> Self {
+                Self {
+                    continuation_token: Ok(value.continuation_token),
+                    labels: Ok(value.labels),
+                    limit: Ok(value.limit),
+                    offset: Ok(value.offset),
+                    properties: Ok(value.properties),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphNodeQueryResponse {
+            data: ::std::result::Result<
+                ::std::option::Option<super::GraphNodeQueryResults>,
+                ::std::string::String,
+            >,
+            error: ::std::result::Result<
+                ::std::option::Option<super::GraphErrorBody>,
+                ::std::string::String,
+            >,
+            metadata: ::std::result::Result<
+                ::std::option::Option<super::GraphResponseMetadata>,
+                ::std::string::String,
+            >,
+            success: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphNodeQueryResponse {
+            fn default() -> Self {
+                Self {
+                    data: Ok(Default::default()),
+                    error: Ok(Default::default()),
+                    metadata: Ok(Default::default()),
+                    success: Err("no value supplied for success".to_string()),
+                }
+            }
+        }
+        impl GraphNodeQueryResponse {
+            pub fn data<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphNodeQueryResults>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.data = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for data: {e}"));
+                self
+            }
+            pub fn error<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphErrorBody>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.error = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for error: {e}"));
+                self
+            }
+            pub fn metadata<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphResponseMetadata>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.metadata = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for metadata: {e}"));
+                self
+            }
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphNodeQueryResponse> for super::GraphNodeQueryResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphNodeQueryResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    data: value.data?,
+                    error: value.error?,
+                    metadata: value.metadata?,
+                    success: value.success?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphNodeQueryResponse> for GraphNodeQueryResponse {
+            fn from(value: super::GraphNodeQueryResponse) -> Self {
+                Self {
+                    data: Ok(value.data),
+                    error: Ok(value.error),
+                    metadata: Ok(value.metadata),
+                    success: Ok(value.success),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphNodeQueryResults {
+            has_more: ::std::result::Result<bool, ::std::string::String>,
+            items:
+                ::std::result::Result<::std::vec::Vec<super::CanonicalNode>, ::std::string::String>,
+            next_token: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            total_count: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphNodeQueryResults {
+            fn default() -> Self {
+                Self {
+                    has_more: Err("no value supplied for has_more".to_string()),
+                    items: Err("no value supplied for items".to_string()),
+                    next_token: Ok(Default::default()),
+                    total_count: Ok(Default::default()),
+                }
+            }
+        }
+        impl GraphNodeQueryResults {
+            pub fn has_more<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.has_more = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for has_more: {e}"));
+                self
+            }
+            pub fn items<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::CanonicalNode>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.items = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for items: {e}"));
+                self
+            }
+            pub fn next_token<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.next_token = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for next_token: {e}"));
+                self
+            }
+            pub fn total_count<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.total_count = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for total_count: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphNodeQueryResults> for super::GraphNodeQueryResults {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphNodeQueryResults,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    has_more: value.has_more?,
+                    items: value.items?,
+                    next_token: value.next_token?,
+                    total_count: value.total_count?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphNodeQueryResults> for GraphNodeQueryResults {
+            fn from(value: super::GraphNodeQueryResults) -> Self {
+                Self {
+                    has_more: Ok(value.has_more),
+                    items: Ok(value.items),
+                    next_token: Ok(value.next_token),
+                    total_count: Ok(value.total_count),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphNodeResponse {
+            data: ::std::result::Result<
+                ::std::option::Option<super::CanonicalNode>,
+                ::std::string::String,
+            >,
+            error: ::std::result::Result<
+                ::std::option::Option<super::GraphErrorBody>,
+                ::std::string::String,
+            >,
+            metadata: ::std::result::Result<
+                ::std::option::Option<super::GraphResponseMetadata>,
+                ::std::string::String,
+            >,
+            success: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphNodeResponse {
+            fn default() -> Self {
+                Self {
+                    data: Ok(Default::default()),
+                    error: Ok(Default::default()),
+                    metadata: Ok(Default::default()),
+                    success: Err("no value supplied for success".to_string()),
+                }
+            }
+        }
+        impl GraphNodeResponse {
+            pub fn data<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::CanonicalNode>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.data = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for data: {e}"));
+                self
+            }
+            pub fn error<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphErrorBody>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.error = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for error: {e}"));
+                self
+            }
+            pub fn metadata<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphResponseMetadata>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.metadata = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for metadata: {e}"));
+                self
+            }
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphNodeResponse> for super::GraphNodeResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphNodeResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    data: value.data?,
+                    error: value.error?,
+                    metadata: value.metadata?,
+                    success: value.success?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphNodeResponse> for GraphNodeResponse {
+            fn from(value: super::GraphNodeResponse) -> Self {
+                Self {
+                    data: Ok(value.data),
+                    error: Ok(value.error),
+                    metadata: Ok(value.metadata),
+                    success: Ok(value.success),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphQueryData {
+            row_count: ::std::result::Result<u64, ::std::string::String>,
+            rows:
+                ::std::result::Result<::std::vec::Vec<::serde_json::Value>, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphQueryData {
+            fn default() -> Self {
+                Self {
+                    row_count: Err("no value supplied for row_count".to_string()),
+                    rows: Err("no value supplied for rows".to_string()),
+                }
+            }
+        }
+        impl GraphQueryData {
+            pub fn row_count<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.row_count = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for row_count: {e}"));
+                self
+            }
+            pub fn rows<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::serde_json::Value>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.rows = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for rows: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphQueryData> for super::GraphQueryData {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphQueryData,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    row_count: value.row_count?,
+                    rows: value.rows?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphQueryData> for GraphQueryData {
+            fn from(value: super::GraphQueryData) -> Self {
+                Self {
+                    row_count: Ok(value.row_count),
+                    rows: Ok(value.rows),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphQueryRequest {
+            language: ::std::result::Result<::std::string::String, ::std::string::String>,
+            query: ::std::result::Result<::std::string::String, ::std::string::String>,
+            timeout_ms: ::std::result::Result<::std::option::Option<u32>, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphQueryRequest {
+            fn default() -> Self {
+                Self {
+                    language: Ok(super::defaults::graph_query_request_language()),
+                    query: Err("no value supplied for query".to_string()),
+                    timeout_ms: Ok(Default::default()),
+                }
+            }
+        }
+        impl GraphQueryRequest {
+            pub fn language<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.language = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for language: {e}"));
+                self
+            }
+            pub fn query<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.query = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for query: {e}"));
+                self
+            }
+            pub fn timeout_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.timeout_ms = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for timeout_ms: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphQueryRequest> for super::GraphQueryRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphQueryRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    language: value.language?,
+                    query: value.query?,
+                    timeout_ms: value.timeout_ms?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphQueryRequest> for GraphQueryRequest {
+            fn from(value: super::GraphQueryRequest) -> Self {
+                Self {
+                    language: Ok(value.language),
+                    query: Ok(value.query),
+                    timeout_ms: Ok(value.timeout_ms),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphQueryResponse {
+            data: ::std::result::Result<
+                ::std::option::Option<super::GraphQueryData>,
+                ::std::string::String,
+            >,
+            error: ::std::result::Result<
+                ::std::option::Option<super::GraphErrorBody>,
+                ::std::string::String,
+            >,
+            metadata: ::std::result::Result<
+                ::std::option::Option<super::GraphResponseMetadata>,
+                ::std::string::String,
+            >,
+            success: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphQueryResponse {
+            fn default() -> Self {
+                Self {
+                    data: Ok(Default::default()),
+                    error: Ok(Default::default()),
+                    metadata: Ok(Default::default()),
+                    success: Err("no value supplied for success".to_string()),
+                }
+            }
+        }
+        impl GraphQueryResponse {
+            pub fn data<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphQueryData>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.data = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for data: {e}"));
+                self
+            }
+            pub fn error<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphErrorBody>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.error = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for error: {e}"));
+                self
+            }
+            pub fn metadata<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphResponseMetadata>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.metadata = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for metadata: {e}"));
+                self
+            }
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphQueryResponse> for super::GraphQueryResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphQueryResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    data: value.data?,
+                    error: value.error?,
+                    metadata: value.metadata?,
+                    success: value.success?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphQueryResponse> for GraphQueryResponse {
+            fn from(value: super::GraphQueryResponse) -> Self {
+                Self {
+                    data: Ok(value.data),
+                    error: Ok(value.error),
+                    metadata: Ok(value.metadata),
+                    success: Ok(value.success),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphResponseMetadata {
+            execution_time_ms:
+                ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            request_id: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for GraphResponseMetadata {
+            fn default() -> Self {
+                Self {
+                    execution_time_ms: Ok(Default::default()),
+                    request_id: Ok(Default::default()),
+                }
+            }
+        }
+        impl GraphResponseMetadata {
+            pub fn execution_time_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.execution_time_ms = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for execution_time_ms: {e}")
+                });
+                self
+            }
+            pub fn request_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.request_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for request_id: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphResponseMetadata> for super::GraphResponseMetadata {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphResponseMetadata,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    execution_time_ms: value.execution_time_ms?,
+                    request_id: value.request_id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphResponseMetadata> for GraphResponseMetadata {
+            fn from(value: super::GraphResponseMetadata) -> Self {
+                Self {
+                    execution_time_ms: Ok(value.execution_time_ms),
+                    request_id: Ok(value.request_id),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphShortestPathData {
+            found: ::std::result::Result<bool, ::std::string::String>,
+            path: ::std::result::Result<
+                ::std::vec::Vec<::std::string::String>,
+                ::std::string::String,
+            >,
+            total_weight: ::std::result::Result<::std::option::Option<f64>, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphShortestPathData {
+            fn default() -> Self {
+                Self {
+                    found: Err("no value supplied for found".to_string()),
+                    path: Err("no value supplied for path".to_string()),
+                    total_weight: Ok(Default::default()),
+                }
+            }
+        }
+        impl GraphShortestPathData {
+            pub fn found<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.found = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for found: {e}"));
+                self
+            }
+            pub fn path<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.path = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for path: {e}"));
+                self
+            }
+            pub fn total_weight<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<f64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.total_weight = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for total_weight: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphShortestPathData> for super::GraphShortestPathData {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphShortestPathData,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    found: value.found?,
+                    path: value.path?,
+                    total_weight: value.total_weight?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphShortestPathData> for GraphShortestPathData {
+            fn from(value: super::GraphShortestPathData) -> Self {
+                Self {
+                    found: Ok(value.found),
+                    path: Ok(value.path),
+                    total_weight: Ok(value.total_weight),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphShortestPathResponse {
+            data: ::std::result::Result<
+                ::std::option::Option<super::GraphShortestPathData>,
+                ::std::string::String,
+            >,
+            error: ::std::result::Result<
+                ::std::option::Option<super::GraphErrorBody>,
+                ::std::string::String,
+            >,
+            metadata: ::std::result::Result<
+                ::std::option::Option<super::GraphResponseMetadata>,
+                ::std::string::String,
+            >,
+            success: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphShortestPathResponse {
+            fn default() -> Self {
+                Self {
+                    data: Ok(Default::default()),
+                    error: Ok(Default::default()),
+                    metadata: Ok(Default::default()),
+                    success: Err("no value supplied for success".to_string()),
+                }
+            }
+        }
+        impl GraphShortestPathResponse {
+            pub fn data<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphShortestPathData>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.data = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for data: {e}"));
+                self
+            }
+            pub fn error<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphErrorBody>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.error = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for error: {e}"));
+                self
+            }
+            pub fn metadata<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphResponseMetadata>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.metadata = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for metadata: {e}"));
+                self
+            }
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphShortestPathResponse> for super::GraphShortestPathResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphShortestPathResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    data: value.data?,
+                    error: value.error?,
+                    metadata: value.metadata?,
+                    success: value.success?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphShortestPathResponse> for GraphShortestPathResponse {
+            fn from(value: super::GraphShortestPathResponse) -> Self {
+                Self {
+                    data: Ok(value.data),
+                    error: Ok(value.error),
+                    metadata: Ok(value.metadata),
+                    success: Ok(value.success),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphStats {
+            average_degree: ::std::result::Result<f64, ::std::string::String>,
+            connected_components: ::std::result::Result<u32, ::std::string::String>,
+            edge_type_stats:
+                ::std::result::Result<::std::vec::Vec<::serde_json::Value>, ::std::string::String>,
+            label_stats:
+                ::std::result::Result<::std::vec::Vec<::serde_json::Value>, ::std::string::String>,
+            max_degree: ::std::result::Result<u32, ::std::string::String>,
+            memory_usage_bytes: ::std::result::Result<u64, ::std::string::String>,
+            total_edges: ::std::result::Result<u64, ::std::string::String>,
+            total_nodes: ::std::result::Result<u64, ::std::string::String>,
+            total_properties: ::std::result::Result<u64, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphStats {
+            fn default() -> Self {
+                Self {
+                    average_degree: Err("no value supplied for average_degree".to_string()),
+                    connected_components: Err(
+                        "no value supplied for connected_components".to_string()
+                    ),
+                    edge_type_stats: Err("no value supplied for edge_type_stats".to_string()),
+                    label_stats: Err("no value supplied for label_stats".to_string()),
+                    max_degree: Err("no value supplied for max_degree".to_string()),
+                    memory_usage_bytes: Err("no value supplied for memory_usage_bytes".to_string()),
+                    total_edges: Err("no value supplied for total_edges".to_string()),
+                    total_nodes: Err("no value supplied for total_nodes".to_string()),
+                    total_properties: Err("no value supplied for total_properties".to_string()),
+                }
+            }
+        }
+        impl GraphStats {
+            pub fn average_degree<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<f64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.average_degree = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for average_degree: {e}")
+                });
+                self
+            }
+            pub fn connected_components<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.connected_components = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for connected_components: {e}")
+                });
+                self
+            }
+            pub fn edge_type_stats<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::serde_json::Value>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.edge_type_stats = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for edge_type_stats: {e}")
+                });
+                self
+            }
+            pub fn label_stats<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::serde_json::Value>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.label_stats = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for label_stats: {e}"));
+                self
+            }
+            pub fn max_degree<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.max_degree = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for max_degree: {e}"));
+                self
+            }
+            pub fn memory_usage_bytes<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.memory_usage_bytes = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for memory_usage_bytes: {e}")
+                });
+                self
+            }
+            pub fn total_edges<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.total_edges = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for total_edges: {e}"));
+                self
+            }
+            pub fn total_nodes<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.total_nodes = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for total_nodes: {e}"));
+                self
+            }
+            pub fn total_properties<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.total_properties = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for total_properties: {e}")
+                });
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphStats> for super::GraphStats {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphStats,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    average_degree: value.average_degree?,
+                    connected_components: value.connected_components?,
+                    edge_type_stats: value.edge_type_stats?,
+                    label_stats: value.label_stats?,
+                    max_degree: value.max_degree?,
+                    memory_usage_bytes: value.memory_usage_bytes?,
+                    total_edges: value.total_edges?,
+                    total_nodes: value.total_nodes?,
+                    total_properties: value.total_properties?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphStats> for GraphStats {
+            fn from(value: super::GraphStats) -> Self {
+                Self {
+                    average_degree: Ok(value.average_degree),
+                    connected_components: Ok(value.connected_components),
+                    edge_type_stats: Ok(value.edge_type_stats),
+                    label_stats: Ok(value.label_stats),
+                    max_degree: Ok(value.max_degree),
+                    memory_usage_bytes: Ok(value.memory_usage_bytes),
+                    total_edges: Ok(value.total_edges),
+                    total_nodes: Ok(value.total_nodes),
+                    total_properties: Ok(value.total_properties),
                 }
             }
         }
         #[derive(Clone, Debug)]
         pub struct GraphStatsResponse {
-            density: ::std::result::Result<::std::option::Option<f64>, ::std::string::String>,
-            edge_count: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
-            node_count: ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
+            data: ::std::result::Result<
+                ::std::option::Option<super::GraphStats>,
+                ::std::string::String,
+            >,
+            error: ::std::result::Result<
+                ::std::option::Option<super::GraphErrorBody>,
+                ::std::string::String,
+            >,
+            metadata: ::std::result::Result<
+                ::std::option::Option<super::GraphResponseMetadata>,
+                ::std::string::String,
+            >,
+            success: ::std::result::Result<bool, ::std::string::String>,
         }
         impl ::std::default::Default for GraphStatsResponse {
             fn default() -> Self {
                 Self {
-                    density: Ok(Default::default()),
-                    edge_count: Ok(Default::default()),
-                    node_count: Ok(Default::default()),
+                    data: Ok(Default::default()),
+                    error: Ok(Default::default()),
+                    metadata: Ok(Default::default()),
+                    success: Err("no value supplied for success".to_string()),
                 }
             }
         }
         impl GraphStatsResponse {
-            pub fn density<T>(mut self, value: T) -> Self
+            pub fn data<T>(mut self, value: T) -> Self
             where
-                T: ::std::convert::TryInto<::std::option::Option<f64>>,
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphStats>>,
                 T::Error: ::std::fmt::Display,
             {
-                self.density = value
+                self.data = value
                     .try_into()
-                    .map_err(|e| format!("error converting supplied value for density: {e}"));
+                    .map_err(|e| format!("error converting supplied value for data: {e}"));
                 self
             }
-            pub fn edge_count<T>(mut self, value: T) -> Self
+            pub fn error<T>(mut self, value: T) -> Self
             where
-                T: ::std::convert::TryInto<::std::option::Option<i64>>,
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphErrorBody>>,
                 T::Error: ::std::fmt::Display,
             {
-                self.edge_count = value
+                self.error = value
                     .try_into()
-                    .map_err(|e| format!("error converting supplied value for edge_count: {e}"));
+                    .map_err(|e| format!("error converting supplied value for error: {e}"));
                 self
             }
-            pub fn node_count<T>(mut self, value: T) -> Self
+            pub fn metadata<T>(mut self, value: T) -> Self
             where
-                T: ::std::convert::TryInto<::std::option::Option<i64>>,
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphResponseMetadata>>,
                 T::Error: ::std::fmt::Display,
             {
-                self.node_count = value
+                self.metadata = value
                     .try_into()
-                    .map_err(|e| format!("error converting supplied value for node_count: {e}"));
+                    .map_err(|e| format!("error converting supplied value for metadata: {e}"));
+                self
+            }
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
                 self
             }
         }
@@ -19347,18 +24148,284 @@ pub mod types {
                 value: GraphStatsResponse,
             ) -> ::std::result::Result<Self, super::error::ConversionError> {
                 Ok(Self {
-                    density: value.density?,
-                    edge_count: value.edge_count?,
-                    node_count: value.node_count?,
+                    data: value.data?,
+                    error: value.error?,
+                    metadata: value.metadata?,
+                    success: value.success?,
                 })
             }
         }
         impl ::std::convert::From<super::GraphStatsResponse> for GraphStatsResponse {
             fn from(value: super::GraphStatsResponse) -> Self {
                 Self {
-                    density: Ok(value.density),
-                    edge_count: Ok(value.edge_count),
-                    node_count: Ok(value.node_count),
+                    data: Ok(value.data),
+                    error: Ok(value.error),
+                    metadata: Ok(value.metadata),
+                    success: Ok(value.success),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphTraversalData {
+            edges:
+                ::std::result::Result<::std::vec::Vec<super::CanonicalEdge>, ::std::string::String>,
+            nodes:
+                ::std::result::Result<::std::vec::Vec<super::CanonicalNode>, ::std::string::String>,
+            paths: ::std::result::Result<
+                ::std::vec::Vec<::std::vec::Vec<::std::string::String>>,
+                ::std::string::String,
+            >,
+            stats: ::std::result::Result<
+                ::std::option::Option<super::GraphTraversalStats>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for GraphTraversalData {
+            fn default() -> Self {
+                Self {
+                    edges: Err("no value supplied for edges".to_string()),
+                    nodes: Err("no value supplied for nodes".to_string()),
+                    paths: Ok(Default::default()),
+                    stats: Ok(Default::default()),
+                }
+            }
+        }
+        impl GraphTraversalData {
+            pub fn edges<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::CanonicalEdge>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.edges = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for edges: {e}"));
+                self
+            }
+            pub fn nodes<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::CanonicalNode>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.nodes = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for nodes: {e}"));
+                self
+            }
+            pub fn paths<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::vec::Vec<::std::string::String>>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.paths = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for paths: {e}"));
+                self
+            }
+            pub fn stats<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphTraversalStats>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.stats = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for stats: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphTraversalData> for super::GraphTraversalData {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphTraversalData,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    edges: value.edges?,
+                    nodes: value.nodes?,
+                    paths: value.paths?,
+                    stats: value.stats?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphTraversalData> for GraphTraversalData {
+            fn from(value: super::GraphTraversalData) -> Self {
+                Self {
+                    edges: Ok(value.edges),
+                    nodes: Ok(value.nodes),
+                    paths: Ok(value.paths),
+                    stats: Ok(value.stats),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphTraversalResponse {
+            data: ::std::result::Result<
+                ::std::option::Option<super::GraphTraversalData>,
+                ::std::string::String,
+            >,
+            error: ::std::result::Result<
+                ::std::option::Option<super::GraphErrorBody>,
+                ::std::string::String,
+            >,
+            metadata: ::std::result::Result<
+                ::std::option::Option<super::GraphResponseMetadata>,
+                ::std::string::String,
+            >,
+            success: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphTraversalResponse {
+            fn default() -> Self {
+                Self {
+                    data: Ok(Default::default()),
+                    error: Ok(Default::default()),
+                    metadata: Ok(Default::default()),
+                    success: Err("no value supplied for success".to_string()),
+                }
+            }
+        }
+        impl GraphTraversalResponse {
+            pub fn data<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphTraversalData>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.data = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for data: {e}"));
+                self
+            }
+            pub fn error<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphErrorBody>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.error = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for error: {e}"));
+                self
+            }
+            pub fn metadata<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::GraphResponseMetadata>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.metadata = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for metadata: {e}"));
+                self
+            }
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphTraversalResponse> for super::GraphTraversalResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphTraversalResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    data: value.data?,
+                    error: value.error?,
+                    metadata: value.metadata?,
+                    success: value.success?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphTraversalResponse> for GraphTraversalResponse {
+            fn from(value: super::GraphTraversalResponse) -> Self {
+                Self {
+                    data: Ok(value.data),
+                    error: Ok(value.error),
+                    metadata: Ok(value.metadata),
+                    success: Ok(value.success),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct GraphTraversalStats {
+            edges_traversed: ::std::result::Result<u64, ::std::string::String>,
+            execution_time_ms:
+                ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            max_depth_reached: ::std::result::Result<u32, ::std::string::String>,
+            nodes_visited: ::std::result::Result<u64, ::std::string::String>,
+        }
+        impl ::std::default::Default for GraphTraversalStats {
+            fn default() -> Self {
+                Self {
+                    edges_traversed: Err("no value supplied for edges_traversed".to_string()),
+                    execution_time_ms: Ok(Default::default()),
+                    max_depth_reached: Err("no value supplied for max_depth_reached".to_string()),
+                    nodes_visited: Err("no value supplied for nodes_visited".to_string()),
+                }
+            }
+        }
+        impl GraphTraversalStats {
+            pub fn edges_traversed<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.edges_traversed = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for edges_traversed: {e}")
+                });
+                self
+            }
+            pub fn execution_time_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.execution_time_ms = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for execution_time_ms: {e}")
+                });
+                self
+            }
+            pub fn max_depth_reached<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.max_depth_reached = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for max_depth_reached: {e}")
+                });
+                self
+            }
+            pub fn nodes_visited<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.nodes_visited = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for nodes_visited: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<GraphTraversalStats> for super::GraphTraversalStats {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: GraphTraversalStats,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    edges_traversed: value.edges_traversed?,
+                    execution_time_ms: value.execution_time_ms?,
+                    max_depth_reached: value.max_depth_reached?,
+                    nodes_visited: value.nodes_visited?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::GraphTraversalStats> for GraphTraversalStats {
+            fn from(value: super::GraphTraversalStats) -> Self {
+                Self {
+                    edges_traversed: Ok(value.edges_traversed),
+                    execution_time_ms: Ok(value.execution_time_ms),
+                    max_depth_reached: Ok(value.max_depth_reached),
+                    nodes_visited: Ok(value.nodes_visited),
                 }
             }
         }
@@ -20903,63 +25970,6 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
-        pub struct ListGraphsResponse {
-            data: ::std::result::Result<
-                ::std::vec::Vec<super::GraphCollectionResponse>,
-                ::std::string::String,
-            >,
-            success: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
-        }
-        impl ::std::default::Default for ListGraphsResponse {
-            fn default() -> Self {
-                Self {
-                    data: Ok(Default::default()),
-                    success: Ok(Default::default()),
-                }
-            }
-        }
-        impl ListGraphsResponse {
-            pub fn data<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::vec::Vec<super::GraphCollectionResponse>>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.data = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for data: {e}"));
-                self
-            }
-            pub fn success<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::option::Option<bool>>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.success = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for success: {e}"));
-                self
-            }
-        }
-        impl ::std::convert::TryFrom<ListGraphsResponse> for super::ListGraphsResponse {
-            type Error = super::error::ConversionError;
-            fn try_from(
-                value: ListGraphsResponse,
-            ) -> ::std::result::Result<Self, super::error::ConversionError> {
-                Ok(Self {
-                    data: value.data?,
-                    success: value.success?,
-                })
-            }
-        }
-        impl ::std::convert::From<super::ListGraphsResponse> for ListGraphsResponse {
-            fn from(value: super::ListGraphsResponse) -> Self {
-                Self {
-                    data: Ok(value.data),
-                    success: Ok(value.success),
-                }
-            }
-        }
-        #[derive(Clone, Debug)]
         pub struct ListModelRegistriesResponse {
             registries: ::std::result::Result<
                 ::std::vec::Vec<super::ModelRegistryRecordResponse>,
@@ -21701,10 +26711,10 @@ pub mod types {
         #[derive(Clone, Debug)]
         pub struct NodeInput {
             embedding: ::std::result::Result<
-                ::std::option::Option<super::EmbeddingInput>,
+                ::std::option::Option<super::NodeInputEmbedding>,
                 ::std::string::String,
             >,
-            id: ::std::result::Result<super::NodeInputId, ::std::string::String>,
+            id: ::std::result::Result<::std::string::String, ::std::string::String>,
             labels: ::std::result::Result<
                 ::std::vec::Vec<::std::string::String>,
                 ::std::string::String,
@@ -21727,7 +26737,7 @@ pub mod types {
         impl NodeInput {
             pub fn embedding<T>(mut self, value: T) -> Self
             where
-                T: ::std::convert::TryInto<::std::option::Option<super::EmbeddingInput>>,
+                T: ::std::convert::TryInto<::std::option::Option<super::NodeInputEmbedding>>,
                 T::Error: ::std::fmt::Display,
             {
                 self.embedding = value
@@ -21737,7 +26747,7 @@ pub mod types {
             }
             pub fn id<T>(mut self, value: T) -> Self
             where
-                T: ::std::convert::TryInto<super::NodeInputId>,
+                T: ::std::convert::TryInto<::std::string::String>,
                 T::Error: ::std::fmt::Display,
             {
                 self.id = value
@@ -21792,84 +26802,76 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
-        pub struct NodeResponse {
-            id: ::std::result::Result<::std::string::String, ::std::string::String>,
-            labels: ::std::result::Result<
-                ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+        pub struct NodeInputEmbedding {
+            model_id: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
                 ::std::string::String,
             >,
-            properties: ::std::result::Result<
-                ::std::option::Option<
-                    ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-                >,
+            vector: ::std::result::Result<::std::vec::Vec<f64>, ::std::string::String>,
+            version: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
                 ::std::string::String,
             >,
         }
-        impl ::std::default::Default for NodeResponse {
+        impl ::std::default::Default for NodeInputEmbedding {
             fn default() -> Self {
                 Self {
-                    id: Err("no value supplied for id".to_string()),
-                    labels: Ok(Default::default()),
-                    properties: Ok(Default::default()),
+                    model_id: Ok(Default::default()),
+                    vector: Err("no value supplied for vector".to_string()),
+                    version: Ok(Default::default()),
                 }
             }
         }
-        impl NodeResponse {
-            pub fn id<T>(mut self, value: T) -> Self
+        impl NodeInputEmbedding {
+            pub fn model_id<T>(mut self, value: T) -> Self
             where
-                T: ::std::convert::TryInto<::std::string::String>,
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
                 T::Error: ::std::fmt::Display,
             {
-                self.id = value
+                self.model_id = value
                     .try_into()
-                    .map_err(|e| format!("error converting supplied value for id: {e}"));
+                    .map_err(|e| format!("error converting supplied value for model_id: {e}"));
                 self
             }
-            pub fn labels<T>(mut self, value: T) -> Self
+            pub fn vector<T>(mut self, value: T) -> Self
             where
-                T: ::std::convert::TryInto<
-                        ::std::option::Option<::std::vec::Vec<::std::string::String>>,
-                    >,
+                T: ::std::convert::TryInto<::std::vec::Vec<f64>>,
                 T::Error: ::std::fmt::Display,
             {
-                self.labels = value
+                self.vector = value
                     .try_into()
-                    .map_err(|e| format!("error converting supplied value for labels: {e}"));
+                    .map_err(|e| format!("error converting supplied value for vector: {e}"));
                 self
             }
-            pub fn properties<T>(mut self, value: T) -> Self
+            pub fn version<T>(mut self, value: T) -> Self
             where
-                T: ::std::convert::TryInto<
-                        ::std::option::Option<
-                            ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-                        >,
-                    >,
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
                 T::Error: ::std::fmt::Display,
             {
-                self.properties = value
+                self.version = value
                     .try_into()
-                    .map_err(|e| format!("error converting supplied value for properties: {e}"));
+                    .map_err(|e| format!("error converting supplied value for version: {e}"));
                 self
             }
         }
-        impl ::std::convert::TryFrom<NodeResponse> for super::NodeResponse {
+        impl ::std::convert::TryFrom<NodeInputEmbedding> for super::NodeInputEmbedding {
             type Error = super::error::ConversionError;
             fn try_from(
-                value: NodeResponse,
+                value: NodeInputEmbedding,
             ) -> ::std::result::Result<Self, super::error::ConversionError> {
                 Ok(Self {
-                    id: value.id?,
-                    labels: value.labels?,
-                    properties: value.properties?,
+                    model_id: value.model_id?,
+                    vector: value.vector?,
+                    version: value.version?,
                 })
             }
         }
-        impl ::std::convert::From<super::NodeResponse> for NodeResponse {
-            fn from(value: super::NodeResponse) -> Self {
+        impl ::std::convert::From<super::NodeInputEmbedding> for NodeInputEmbedding {
+            fn from(value: super::NodeInputEmbedding) -> Self {
                 Self {
-                    id: Ok(value.id),
-                    labels: Ok(value.labels),
-                    properties: Ok(value.properties),
+                    model_id: Ok(value.model_id),
+                    vector: Ok(value.vector),
+                    version: Ok(value.version),
                 }
             }
         }
@@ -24709,6 +29711,122 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct ShortestPathRequest {
+            algorithm: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            edge_types: ::std::result::Result<
+                ::std::vec::Vec<::std::string::String>,
+                ::std::string::String,
+            >,
+            k: ::std::result::Result<::std::option::Option<u32>, ::std::string::String>,
+            max_depth: ::std::result::Result<::std::option::Option<u32>, ::std::string::String>,
+            start_node_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            target_node_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for ShortestPathRequest {
+            fn default() -> Self {
+                Self {
+                    algorithm: Ok(Default::default()),
+                    edge_types: Ok(Default::default()),
+                    k: Ok(Default::default()),
+                    max_depth: Ok(Default::default()),
+                    start_node_id: Err("no value supplied for start_node_id".to_string()),
+                    target_node_id: Err("no value supplied for target_node_id".to_string()),
+                }
+            }
+        }
+        impl ShortestPathRequest {
+            pub fn algorithm<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.algorithm = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for algorithm: {e}"));
+                self
+            }
+            pub fn edge_types<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.edge_types = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for edge_types: {e}"));
+                self
+            }
+            pub fn k<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.k = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for k: {e}"));
+                self
+            }
+            pub fn max_depth<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.max_depth = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for max_depth: {e}"));
+                self
+            }
+            pub fn start_node_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.start_node_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for start_node_id: {e}"));
+                self
+            }
+            pub fn target_node_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.target_node_id = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for target_node_id: {e}")
+                });
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<ShortestPathRequest> for super::ShortestPathRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: ShortestPathRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    algorithm: value.algorithm?,
+                    edge_types: value.edge_types?,
+                    k: value.k?,
+                    max_depth: value.max_depth?,
+                    start_node_id: value.start_node_id?,
+                    target_node_id: value.target_node_id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::ShortestPathRequest> for ShortestPathRequest {
+            fn from(value: super::ShortestPathRequest) -> Self {
+                Self {
+                    algorithm: Ok(value.algorithm),
+                    edge_types: Ok(value.edge_types),
+                    k: Ok(value.k),
+                    max_depth: Ok(value.max_depth),
+                    start_node_id: Ok(value.start_node_id),
+                    target_node_id: Ok(value.target_node_id),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct SqlRequest {
             collection: ::std::result::Result<
                 ::std::option::Option<::std::string::String>,
@@ -26693,19 +31811,13 @@ pub mod types {
         }
         #[derive(Clone, Debug)]
         pub struct TraverseRequest {
-            algorithm: ::std::result::Result<
-                ::std::option::Option<::std::string::String>,
-                ::std::string::String,
-            >,
+            algorithm: ::std::result::Result<::std::string::String, ::std::string::String>,
             edge_types: ::std::result::Result<
                 ::std::vec::Vec<::std::string::String>,
                 ::std::string::String,
             >,
-            limit: ::std::result::Result<
-                ::std::option::Option<::std::num::NonZeroU64>,
-                ::std::string::String,
-            >,
-            max_depth: ::std::result::Result<::std::num::NonZeroU64, ::std::string::String>,
+            limit: ::std::result::Result<::std::option::Option<u32>, ::std::string::String>,
+            max_depth: ::std::result::Result<u32, ::std::string::String>,
             node_labels: ::std::result::Result<
                 ::std::vec::Vec<::std::string::String>,
                 ::std::string::String,
@@ -26715,10 +31827,10 @@ pub mod types {
         impl ::std::default::Default for TraverseRequest {
             fn default() -> Self {
                 Self {
-                    algorithm: Ok(Default::default()),
+                    algorithm: Ok(super::defaults::traverse_request_algorithm()),
                     edge_types: Ok(Default::default()),
                     limit: Ok(Default::default()),
-                    max_depth: Ok(super::defaults::default_nzu64::<::std::num::NonZeroU64, 3>()),
+                    max_depth: Ok(super::defaults::default_u64::<u32, 5>()),
                     node_labels: Ok(Default::default()),
                     start_node_id: Err("no value supplied for start_node_id".to_string()),
                 }
@@ -26727,7 +31839,7 @@ pub mod types {
         impl TraverseRequest {
             pub fn algorithm<T>(mut self, value: T) -> Self
             where
-                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T: ::std::convert::TryInto<::std::string::String>,
                 T::Error: ::std::fmt::Display,
             {
                 self.algorithm = value
@@ -26747,7 +31859,7 @@ pub mod types {
             }
             pub fn limit<T>(mut self, value: T) -> Self
             where
-                T: ::std::convert::TryInto<::std::option::Option<::std::num::NonZeroU64>>,
+                T: ::std::convert::TryInto<::std::option::Option<u32>>,
                 T::Error: ::std::fmt::Display,
             {
                 self.limit = value
@@ -26757,7 +31869,7 @@ pub mod types {
             }
             pub fn max_depth<T>(mut self, value: T) -> Self
             where
-                T: ::std::convert::TryInto<::std::num::NonZeroU64>,
+                T: ::std::convert::TryInto<u32>,
                 T::Error: ::std::fmt::Display,
             {
                 self.max_depth = value
@@ -26810,79 +31922,6 @@ pub mod types {
                     max_depth: Ok(value.max_depth),
                     node_labels: Ok(value.node_labels),
                     start_node_id: Ok(value.start_node_id),
-                }
-            }
-        }
-        #[derive(Clone, Debug)]
-        pub struct TraverseResponse {
-            edges:
-                ::std::result::Result<::std::vec::Vec<super::EdgeResponse>, ::std::string::String>,
-            nodes:
-                ::std::result::Result<::std::vec::Vec<super::NodeResponse>, ::std::string::String>,
-            paths: ::std::result::Result<
-                ::std::vec::Vec<::std::vec::Vec<::std::string::String>>,
-                ::std::string::String,
-            >,
-        }
-        impl ::std::default::Default for TraverseResponse {
-            fn default() -> Self {
-                Self {
-                    edges: Ok(Default::default()),
-                    nodes: Ok(Default::default()),
-                    paths: Ok(Default::default()),
-                }
-            }
-        }
-        impl TraverseResponse {
-            pub fn edges<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::vec::Vec<super::EdgeResponse>>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.edges = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for edges: {e}"));
-                self
-            }
-            pub fn nodes<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::vec::Vec<super::NodeResponse>>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.nodes = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for nodes: {e}"));
-                self
-            }
-            pub fn paths<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<::std::vec::Vec<::std::vec::Vec<::std::string::String>>>,
-                T::Error: ::std::fmt::Display,
-            {
-                self.paths = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for paths: {e}"));
-                self
-            }
-        }
-        impl ::std::convert::TryFrom<TraverseResponse> for super::TraverseResponse {
-            type Error = super::error::ConversionError;
-            fn try_from(
-                value: TraverseResponse,
-            ) -> ::std::result::Result<Self, super::error::ConversionError> {
-                Ok(Self {
-                    edges: value.edges?,
-                    nodes: value.nodes?,
-                    paths: value.paths?,
-                })
-            }
-        }
-        impl ::std::convert::From<super::TraverseResponse> for TraverseResponse {
-            fn from(value: super::TraverseResponse) -> Self {
-                Self {
-                    edges: Ok(value.edges),
-                    nodes: Ok(value.nodes),
-                    paths: Ok(value.paths),
                 }
             }
         }
@@ -27333,6 +32372,105 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct UniqueConstraintRequest {
+            label: ::std::result::Result<::std::string::String, ::std::string::String>,
+            property: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for UniqueConstraintRequest {
+            fn default() -> Self {
+                Self {
+                    label: Err("no value supplied for label".to_string()),
+                    property: Err("no value supplied for property".to_string()),
+                }
+            }
+        }
+        impl UniqueConstraintRequest {
+            pub fn label<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.label = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for label: {e}"));
+                self
+            }
+            pub fn property<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.property = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for property: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<UniqueConstraintRequest> for super::UniqueConstraintRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: UniqueConstraintRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    label: value.label?,
+                    property: value.property?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::UniqueConstraintRequest> for UniqueConstraintRequest {
+            fn from(value: super::UniqueConstraintRequest) -> Self {
+                Self {
+                    label: Ok(value.label),
+                    property: Ok(value.property),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct UpdateGraphSchemaRequest {
+            schema: ::std::result::Result<
+                ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for UpdateGraphSchemaRequest {
+            fn default() -> Self {
+                Self {
+                    schema: Err("no value supplied for schema".to_string()),
+                }
+            }
+        }
+        impl UpdateGraphSchemaRequest {
+            pub fn schema<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.schema = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for schema: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<UpdateGraphSchemaRequest> for super::UpdateGraphSchemaRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: UpdateGraphSchemaRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    schema: value.schema?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::UpdateGraphSchemaRequest> for UpdateGraphSchemaRequest {
+            fn from(value: super::UpdateGraphSchemaRequest) -> Self {
+                Self {
+                    schema: Ok(value.schema),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct UpdateSchemaRequest {
             allow_additional_fields:
                 ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
@@ -27716,6 +32854,145 @@ pub mod types {
                 }
             }
         }
+        #[derive(Clone, Debug)]
+        pub struct WalkRequest {
+            limit: ::std::result::Result<u32, ::std::string::String>,
+            max_depth: ::std::result::Result<u32, ::std::string::String>,
+            start_node_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for WalkRequest {
+            fn default() -> Self {
+                Self {
+                    limit: Ok(super::defaults::default_u64::<u32, 100>()),
+                    max_depth: Ok(super::defaults::default_u64::<u32, 2>()),
+                    start_node_id: Err("no value supplied for start_node_id".to_string()),
+                }
+            }
+        }
+        impl WalkRequest {
+            pub fn limit<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.limit = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for limit: {e}"));
+                self
+            }
+            pub fn max_depth<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.max_depth = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for max_depth: {e}"));
+                self
+            }
+            pub fn start_node_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.start_node_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for start_node_id: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<WalkRequest> for super::WalkRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: WalkRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    limit: value.limit?,
+                    max_depth: value.max_depth?,
+                    start_node_id: value.start_node_id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::WalkRequest> for WalkRequest {
+            fn from(value: super::WalkRequest) -> Self {
+                Self {
+                    limit: Ok(value.limit),
+                    max_depth: Ok(value.max_depth),
+                    start_node_id: Ok(value.start_node_id),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct WalkStepRequest {
+            edge_type: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            limit: ::std::result::Result<u32, ::std::string::String>,
+            node_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for WalkStepRequest {
+            fn default() -> Self {
+                Self {
+                    edge_type: Ok(Default::default()),
+                    limit: Ok(super::defaults::default_u64::<u32, 50>()),
+                    node_id: Err("no value supplied for node_id".to_string()),
+                }
+            }
+        }
+        impl WalkStepRequest {
+            pub fn edge_type<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.edge_type = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for edge_type: {e}"));
+                self
+            }
+            pub fn limit<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.limit = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for limit: {e}"));
+                self
+            }
+            pub fn node_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.node_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for node_id: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<WalkStepRequest> for super::WalkStepRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: WalkStepRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    edge_type: value.edge_type?,
+                    limit: value.limit?,
+                    node_id: value.node_id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::WalkStepRequest> for WalkStepRequest {
+            fn from(value: super::WalkStepRequest) -> Self {
+                Self {
+                    edge_type: Ok(value.edge_type),
+                    limit: Ok(value.limit),
+                    node_id: Ok(value.node_id),
+                }
+            }
+        }
     }
     /// Generation of default values for serde.
     pub mod defaults {
@@ -27726,18 +33003,17 @@ pub mod types {
         {
             T::try_from(V).unwrap()
         }
-        pub(super) fn default_nzu64<T, const V: u64>() -> T
-        where
-            T: ::std::convert::TryFrom<::std::num::NonZeroU64>,
-            <T as ::std::convert::TryFrom<::std::num::NonZeroU64>>::Error: ::std::fmt::Debug,
-        {
-            T::try_from(::std::num::NonZeroU64::try_from(V).unwrap()).unwrap()
+        pub(super) fn graph_query_request_language() -> ::std::string::String {
+            "native".to_string()
         }
         pub(super) fn log_entry_input_severity() -> ::std::string::String {
             "info".to_string()
         }
         pub(super) fn metric_aggregation_input_aggregation() -> ::std::string::String {
             "avg".to_string()
+        }
+        pub(super) fn traverse_request_algorithm() -> ::std::string::String {
+            "bfs".to_string()
         }
     }
 }
@@ -28934,6 +34210,10 @@ impl Client {
     }
     /// Delete a graph collection
     ///
+    /// 204 on success (the handler's success body is not transmitted on
+    /// a 204). Not-found maps to 404 with the envelope error.
+    ///
+    ///
     /// Sends a `DELETE` request to `/api/v2/graphs/{graph_id}`
     ///
     /// Arguments:
@@ -28948,6 +34228,78 @@ impl Client {
     /// ```
     pub fn delete_graph(&self) -> builder::DeleteGraph<'_> {
         builder::DeleteGraph::new(self)
+    }
+    /// Get the graph's connected components
+    ///
+    /// Sends a `GET` request to `/api/v2/graphs/{graph_id}/components`
+    ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.get_connected_components()
+    /// .graph_id(graph_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn get_connected_components(&self) -> builder::GetConnectedComponents<'_> {
+        builder::GetConnectedComponents::new(self)
+    }
+    /// Add a unique constraint on (label, property)
+    ///
+    /// Sends a `POST` request to `/api/v2/graphs/{graph_id}/constraints/unique`
+    ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.add_unique_constraint()
+    /// .graph_id(graph_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn add_unique_constraint(&self) -> builder::AddUniqueConstraint<'_> {
+        builder::AddUniqueConstraint::new(self)
+    }
+    /// Remove a unique constraint on (label, property)
+    ///
+    /// Sends a `DELETE` request to `/api/v2/graphs/{graph_id}/constraints/unique`
+    ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.remove_unique_constraint()
+    /// .graph_id(graph_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn remove_unique_constraint(&self) -> builder::RemoveUniqueConstraint<'_> {
+        builder::RemoveUniqueConstraint::new(self)
+    }
+    /// Check whether the graph contains a cycle
+    ///
+    /// Sends a `GET` request to `/api/v2/graphs/{graph_id}/cycles`
+    ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.check_cycles()
+    /// .graph_id(graph_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn check_cycles(&self) -> builder::CheckCycles<'_> {
+        builder::CheckCycles::new(self)
     }
     /// Create an edge in a graph
     ///
@@ -28970,7 +34322,8 @@ impl Client {
     }
     /// Create multiple edges in a single call
     ///
-    /// Batch counterpart to `createEdge`.
+    /// Per-item rejections ride `failed_count`/`errors[]` while
+    /// `results[]` carries what landed; the HTTP status stays 200.
     ///
     ///
     /// Sends a `POST` request to `/api/v2/graphs/{graph_id}/edges/batch`
@@ -28989,6 +34342,69 @@ impl Client {
     /// ```
     pub fn batch_create_edges(&self) -> builder::BatchCreateEdges<'_> {
         builder::BatchCreateEdges::new(self)
+    }
+    /// Get an edge by id
+    ///
+    /// Sends a `GET` request to `/api/v2/graphs/{graph_id}/edges/{edge_id}`
+    ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `edge_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.get_edge()
+    /// .graph_id(graph_id)
+    /// .edge_id(edge_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn get_edge(&self) -> builder::GetEdge<'_> {
+        builder::GetEdge::new(self)
+    }
+    /// Replace an edge
+    ///
+    /// Full replacement: the body is the complete edge input (its `id`
+    /// is overwritten by the path's `edge_id`).
+    ///
+    ///
+    /// Sends a `PUT` request to `/api/v2/graphs/{graph_id}/edges/{edge_id}`
+    ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `edge_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.update_edge()
+    /// .graph_id(graph_id)
+    /// .edge_id(edge_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn update_edge(&self) -> builder::UpdateEdge<'_> {
+        builder::UpdateEdge::new(self)
+    }
+    /// Delete an edge by id
+    ///
+    /// Sends a `DELETE` request to `/api/v2/graphs/{graph_id}/edges/{edge_id}`
+    ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `edge_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.delete_edge()
+    /// .graph_id(graph_id)
+    /// .edge_id(edge_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn delete_edge(&self) -> builder::DeleteEdge<'_> {
+        builder::DeleteEdge::new(self)
     }
     /// `POST /api/v2/graphs/{graph_id}/fusion-search` — vector seed → graph expand → calibrated fuse-by-oid
     ///
@@ -29050,8 +34466,8 @@ impl Client {
     }
     /// Create multiple nodes in a single call
     ///
-    /// Batch counterpart to `createNode`. Use this on bulk-ingest paths
-    /// where individual round-trips would dominate latency.
+    /// Per-item rejections ride `failed_count`/`errors[]` while
+    /// `results[]` carries what landed; the HTTP status stays 200.
     ///
     ///
     /// Sends a `POST` request to `/api/v2/graphs/{graph_id}/nodes/batch`
@@ -29090,6 +34506,31 @@ impl Client {
     pub fn get_node(&self) -> builder::GetNode<'_> {
         builder::GetNode::new(self)
     }
+    /// Replace a node
+    ///
+    /// Full replacement: the body is the complete node input (its `id`
+    /// is overwritten by the path's `node_id`).
+    ///
+    ///
+    /// Sends a `PUT` request to `/api/v2/graphs/{graph_id}/nodes/{node_id}`
+    ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `node_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.update_node()
+    /// .graph_id(graph_id)
+    /// .node_id(node_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn update_node(&self) -> builder::UpdateNode<'_> {
+        builder::UpdateNode::new(self)
+    }
     /// Delete a node by id
     ///
     /// Sends a `DELETE` request to `/api/v2/graphs/{graph_id}/nodes/{node_id}`
@@ -29109,6 +34550,140 @@ impl Client {
     pub fn delete_node(&self) -> builder::DeleteNode<'_> {
         builder::DeleteNode::new(self)
     }
+    /// Get a node's neighbors
+    ///
+    /// Sends a `GET` request to `/api/v2/graphs/{graph_id}/nodes/{node_id}/neighbors`
+    ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `node_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.get_node_neighbors()
+    /// .graph_id(graph_id)
+    /// .node_id(node_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn get_node_neighbors(&self) -> builder::GetNodeNeighbors<'_> {
+        builder::GetNodeNeighbors::new(self)
+    }
+    /// Execute a graph query
+    ///
+    /// Executes the query text through the port's JSON query path.
+    /// `language` (default `native`) and `timeout_ms` are accepted but
+    /// currently unused server-side.
+    ///
+    ///
+    /// Sends a `POST` request to `/api/v2/graphs/{graph_id}/query`
+    ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.execute_graph_query()
+    /// .graph_id(graph_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn execute_graph_query(&self) -> builder::ExecuteGraphQuery<'_> {
+        builder::ExecuteGraphQuery::new(self)
+    }
+    /// Query edges by type/endpoints/properties
+    ///
+    /// Paginated: `limit` (default 100) + `offset`, or a
+    /// `continuation_token` of the form `offset:<n>`. `edge_type`
+    /// defaults to the empty string (matches untyped edges).
+    ///
+    ///
+    /// Sends a `POST` request to `/api/v2/graphs/{graph_id}/query/edges`
+    ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.query_edges()
+    /// .graph_id(graph_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn query_edges(&self) -> builder::QueryEdges<'_> {
+        builder::QueryEdges::new(self)
+    }
+    /// Query nodes by labels/properties
+    ///
+    /// Paginated: `limit` (default 100) + `offset`, or a
+    /// `continuation_token` of the form `offset:<n>`.
+    ///
+    ///
+    /// Sends a `POST` request to `/api/v2/graphs/{graph_id}/query/nodes`
+    ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.query_nodes()
+    /// .graph_id(graph_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn query_nodes(&self) -> builder::QueryNodes<'_> {
+        builder::QueryNodes::new(self)
+    }
+    /// Update a graph collection's schema
+    ///
+    /// The body carries the schema as free-form JSON (the handler
+    /// deserializes it into the port's GraphSchema). 200 returns the
+    /// updated collection (envelope; data = serialized collection);
+    /// invalid schema JSON maps to 400.
+    ///
+    ///
+    /// Sends a `PUT` request to `/api/v2/graphs/{graph_id}/schema`
+    ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.update_graph_schema()
+    /// .graph_id(graph_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn update_graph_schema(&self) -> builder::UpdateGraphSchema<'_> {
+        builder::UpdateGraphSchema::new(self)
+    }
+    /// Shortest path between two nodes
+    ///
+    /// Sends a `POST` request to `/api/v2/graphs/{graph_id}/shortest-path`
+    ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.shortest_path()
+    /// .graph_id(graph_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn shortest_path(&self) -> builder::ShortestPath<'_> {
+        builder::ShortestPath::new(self)
+    }
     /// Get graph statistics
     ///
     /// Sends a `GET` request to `/api/v2/graphs/{graph_id}/stats`
@@ -29125,6 +34700,29 @@ impl Client {
     /// ```
     pub fn get_graph_stats(&self) -> builder::GetGraphStats<'_> {
         builder::GetGraphStats::new(self)
+    }
+    /// Single-step navigation (neighbors of one node)
+    ///
+    /// Returns the neighbors of `node_id` (optionally restricted to one
+    /// `edge_type`) in the traversal result shape.
+    ///
+    ///
+    /// Sends a `POST` request to `/api/v2/graphs/{graph_id}/step`
+    ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.step_graph()
+    /// .graph_id(graph_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn step_graph(&self) -> builder::StepGraph<'_> {
+        builder::StepGraph::new(self)
     }
     /// Traverse a graph from a start node
     ///
@@ -29144,6 +34742,29 @@ impl Client {
     /// ```
     pub fn traverse_graph(&self) -> builder::TraverseGraph<'_> {
         builder::TraverseGraph::new(self)
+    }
+    /// BFS walk from a start node
+    ///
+    /// A traverse with the algorithm pinned to BFS (defaults:
+    /// max_depth 2, limit 100).
+    ///
+    ///
+    /// Sends a `POST` request to `/api/v2/graphs/{graph_id}/walk`
+    ///
+    /// Arguments:
+    /// - `graph_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.walk_graph()
+    /// .graph_id(graph_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn walk_graph(&self) -> builder::WalkGraph<'_> {
+        builder::WalkGraph::new(self)
     }
     /// Index documents for BM25 full-text search
     ///
@@ -33967,7 +39588,10 @@ pub mod builder {
             self
         }
         ///Sends a `GET` request to `/api/v2/graphs`
-        pub async fn send(self) -> Result<ResponseValue<types::ListGraphsResponse>, Error<()>> {
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::GraphCollectionListResponse>, Error<types::GraphErrorBody>>
+        {
             let Self {
                 client,
                 x_tenant_id,
@@ -34001,6 +39625,9 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 _ => Err(Error::UnexpectedResponse(response)),
             }
         }
@@ -34054,7 +39681,7 @@ pub mod builder {
         ///Sends a `POST` request to `/api/v2/graphs`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphCollectionResponse>, Error<types::ErrorResponse>>
+        ) -> Result<ResponseValue<types::GraphCollectionResponse>, Error<types::GraphErrorBody>>
         {
             let Self {
                 client,
@@ -34093,8 +39720,11 @@ pub mod builder {
             client.post(&result, &info).await?;
             let response = result?;
             match response.status().as_u16() {
-                200u16 => ResponseValue::from_response(response).await,
+                201u16 => ResponseValue::from_response(response).await,
                 400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 _ => Err(Error::UnexpectedResponse(response)),
@@ -34139,7 +39769,7 @@ pub mod builder {
         ///Sends a `GET` request to `/api/v2/graphs/{graph_id}`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::GraphCollectionResponse>, Error<types::ErrorResponse>>
+        ) -> Result<ResponseValue<types::GraphCollectionResponse>, Error<types::GraphErrorBody>>
         {
             let Self {
                 client,
@@ -34183,6 +39813,9 @@ pub mod builder {
                 404u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 _ => Err(Error::UnexpectedResponse(response)),
             }
         }
@@ -34223,10 +39856,7 @@ pub mod builder {
             self
         }
         ///Sends a `DELETE` request to `/api/v2/graphs/{graph_id}`
-        pub async fn send(
-            self,
-        ) -> Result<ResponseValue<types::DeleteGraphResponse>, Error<types::ErrorResponse>>
-        {
+        pub async fn send(self) -> Result<ResponseValue<()>, Error<types::GraphErrorBody>> {
             let Self {
                 client,
                 graph_id,
@@ -34265,8 +39895,421 @@ pub mod builder {
             client.post(&result, &info).await?;
             let response = result?;
             match response.status().as_u16() {
-                200u16 => ResponseValue::from_response(response).await,
+                204u16 => Ok(ResponseValue::empty(response)),
                 404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::get_connected_components`]
+    ///
+    /// [`Client::get_connected_components`]: super::Client::get_connected_components
+    #[derive(Debug, Clone)]
+    pub struct GetConnectedComponents<'a> {
+        client: &'a super::Client,
+        graph_id: Result<types::GetConnectedComponentsGraphId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> GetConnectedComponents<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                graph_id: Err("graph_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn graph_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::GetConnectedComponentsGraphId>,
+        {
+            self.graph_id = value.try_into().map_err(|_| {
+                "conversion to `GetConnectedComponentsGraphId` for graph_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `GET` request to `/api/v2/graphs/{graph_id}/components`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::GraphComponentsResponse>, Error<types::GraphErrorBody>>
+        {
+            let Self {
+                client,
+                graph_id,
+                x_tenant_id,
+            } = self;
+            let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/graphs/{}/components",
+                client.baseurl,
+                encode_path(&graph_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .get(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "get_connected_components",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::add_unique_constraint`]
+    ///
+    /// [`Client::add_unique_constraint`]: super::Client::add_unique_constraint
+    #[derive(Debug, Clone)]
+    pub struct AddUniqueConstraint<'a> {
+        client: &'a super::Client,
+        graph_id: Result<types::AddUniqueConstraintGraphId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::UniqueConstraintRequest, String>,
+    }
+    impl<'a> AddUniqueConstraint<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                graph_id: Err("graph_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn graph_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::AddUniqueConstraintGraphId>,
+        {
+            self.graph_id = value.try_into().map_err(|_| {
+                "conversion to `AddUniqueConstraintGraphId` for graph_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::UniqueConstraintRequest>,
+            <V as std::convert::TryInto<types::UniqueConstraintRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `UniqueConstraintRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::UniqueConstraintRequest,
+                ) -> types::builder::UniqueConstraintRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/constraints/unique`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::GraphDdlResponse>, Error<types::GraphErrorBody>> {
+            let Self {
+                client,
+                graph_id,
+                x_tenant_id,
+                body,
+            } = self;
+            let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| {
+                    types::UniqueConstraintRequest::try_from(v).map_err(|e| e.to_string())
+                })
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/graphs/{}/constraints/unique",
+                client.baseurl,
+                encode_path(&graph_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "add_unique_constraint",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::remove_unique_constraint`]
+    ///
+    /// [`Client::remove_unique_constraint`]: super::Client::remove_unique_constraint
+    #[derive(Debug, Clone)]
+    pub struct RemoveUniqueConstraint<'a> {
+        client: &'a super::Client,
+        graph_id: Result<types::RemoveUniqueConstraintGraphId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::UniqueConstraintRequest, String>,
+    }
+    impl<'a> RemoveUniqueConstraint<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                graph_id: Err("graph_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn graph_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::RemoveUniqueConstraintGraphId>,
+        {
+            self.graph_id = value.try_into().map_err(|_| {
+                "conversion to `RemoveUniqueConstraintGraphId` for graph_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::UniqueConstraintRequest>,
+            <V as std::convert::TryInto<types::UniqueConstraintRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `UniqueConstraintRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::UniqueConstraintRequest,
+                ) -> types::builder::UniqueConstraintRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `DELETE` request to `/api/v2/graphs/{graph_id}/constraints/unique`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::GraphDdlResponse>, Error<types::GraphErrorBody>> {
+            let Self {
+                client,
+                graph_id,
+                x_tenant_id,
+                body,
+            } = self;
+            let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| {
+                    types::UniqueConstraintRequest::try_from(v).map_err(|e| e.to_string())
+                })
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/graphs/{}/constraints/unique",
+                client.baseurl,
+                encode_path(&graph_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .delete(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "remove_unique_constraint",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::check_cycles`]
+    ///
+    /// [`Client::check_cycles`]: super::Client::check_cycles
+    #[derive(Debug, Clone)]
+    pub struct CheckCycles<'a> {
+        client: &'a super::Client,
+        graph_id: Result<types::CheckCyclesGraphId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> CheckCycles<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                graph_id: Err("graph_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn graph_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::CheckCyclesGraphId>,
+        {
+            self.graph_id = value
+                .try_into()
+                .map_err(|_| "conversion to `CheckCyclesGraphId` for graph_id failed".to_string());
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `GET` request to `/api/v2/graphs/{graph_id}/cycles`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::GraphCyclesResponse>, Error<types::GraphErrorBody>>
+        {
+            let Self {
+                client,
+                graph_id,
+                x_tenant_id,
+            } = self;
+            let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/graphs/{}/cycles",
+                client.baseurl,
+                encode_path(&graph_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .get(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "check_cycles",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 _ => Err(Error::UnexpectedResponse(response)),
@@ -34333,7 +40376,7 @@ pub mod builder {
         ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/edges`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::EdgeResponse>, Error<types::ErrorResponse>> {
+        ) -> Result<ResponseValue<types::GraphEdgeResponse>, Error<types::GraphErrorBody>> {
             let Self {
                 client,
                 graph_id,
@@ -34377,11 +40420,14 @@ pub mod builder {
             client.post(&result, &info).await?;
             let response = result?;
             match response.status().as_u16() {
-                200u16 => ResponseValue::from_response(response).await,
+                201u16 => ResponseValue::from_response(response).await,
                 400u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 _ => Err(Error::UnexpectedResponse(response)),
@@ -34450,7 +40496,8 @@ pub mod builder {
         ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/edges/batch`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::BatchEdgesResponse>, Error<types::ErrorResponse>> {
+        ) -> Result<ResponseValue<types::GraphBatchEdgesResponse>, Error<types::GraphErrorBody>>
+        {
             let Self {
                 client,
                 graph_id,
@@ -34500,7 +40547,341 @@ pub mod builder {
                 400u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::get_edge`]
+    ///
+    /// [`Client::get_edge`]: super::Client::get_edge
+    #[derive(Debug, Clone)]
+    pub struct GetEdge<'a> {
+        client: &'a super::Client,
+        graph_id: Result<types::GetEdgeGraphId, String>,
+        edge_id: Result<types::GetEdgeEdgeId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> GetEdge<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                graph_id: Err("graph_id was not initialized".to_string()),
+                edge_id: Err("edge_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn graph_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::GetEdgeGraphId>,
+        {
+            self.graph_id = value
+                .try_into()
+                .map_err(|_| "conversion to `GetEdgeGraphId` for graph_id failed".to_string());
+            self
+        }
+        pub fn edge_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::GetEdgeEdgeId>,
+        {
+            self.edge_id = value
+                .try_into()
+                .map_err(|_| "conversion to `GetEdgeEdgeId` for edge_id failed".to_string());
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `GET` request to `/api/v2/graphs/{graph_id}/edges/{edge_id}`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::GraphEdgeResponse>, Error<types::GraphErrorBody>> {
+            let Self {
+                client,
+                graph_id,
+                edge_id,
+                x_tenant_id,
+            } = self;
+            let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let edge_id = edge_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/graphs/{}/edges/{}",
+                client.baseurl,
+                encode_path(&graph_id.to_string()),
+                encode_path(&edge_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .get(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "get_edge",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
                 404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::update_edge`]
+    ///
+    /// [`Client::update_edge`]: super::Client::update_edge
+    #[derive(Debug, Clone)]
+    pub struct UpdateEdge<'a> {
+        client: &'a super::Client,
+        graph_id: Result<types::UpdateEdgeGraphId, String>,
+        edge_id: Result<types::UpdateEdgeEdgeId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::EdgeInput, String>,
+    }
+    impl<'a> UpdateEdge<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                graph_id: Err("graph_id was not initialized".to_string()),
+                edge_id: Err("edge_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn graph_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::UpdateEdgeGraphId>,
+        {
+            self.graph_id = value
+                .try_into()
+                .map_err(|_| "conversion to `UpdateEdgeGraphId` for graph_id failed".to_string());
+            self
+        }
+        pub fn edge_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::UpdateEdgeEdgeId>,
+        {
+            self.edge_id = value
+                .try_into()
+                .map_err(|_| "conversion to `UpdateEdgeEdgeId` for edge_id failed".to_string());
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::EdgeInput>,
+            <V as std::convert::TryInto<types::EdgeInput>>::Error: std::fmt::Display,
+        {
+            self.body = value
+                .try_into()
+                .map(From::from)
+                .map_err(|s| format!("conversion to `EdgeInput` for body failed: {}", s));
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(types::builder::EdgeInput) -> types::builder::EdgeInput,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `PUT` request to `/api/v2/graphs/{graph_id}/edges/{edge_id}`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::GraphEdgeResponse>, Error<types::GraphErrorBody>> {
+            let Self {
+                client,
+                graph_id,
+                edge_id,
+                x_tenant_id,
+                body,
+            } = self;
+            let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let edge_id = edge_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::EdgeInput::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/graphs/{}/edges/{}",
+                client.baseurl,
+                encode_path(&graph_id.to_string()),
+                encode_path(&edge_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .put(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "update_edge",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::delete_edge`]
+    ///
+    /// [`Client::delete_edge`]: super::Client::delete_edge
+    #[derive(Debug, Clone)]
+    pub struct DeleteEdge<'a> {
+        client: &'a super::Client,
+        graph_id: Result<types::DeleteEdgeGraphId, String>,
+        edge_id: Result<types::DeleteEdgeEdgeId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> DeleteEdge<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                graph_id: Err("graph_id was not initialized".to_string()),
+                edge_id: Err("edge_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn graph_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::DeleteEdgeGraphId>,
+        {
+            self.graph_id = value
+                .try_into()
+                .map_err(|_| "conversion to `DeleteEdgeGraphId` for graph_id failed".to_string());
+            self
+        }
+        pub fn edge_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::DeleteEdgeEdgeId>,
+        {
+            self.edge_id = value
+                .try_into()
+                .map_err(|_| "conversion to `DeleteEdgeEdgeId` for edge_id failed".to_string());
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `DELETE` request to `/api/v2/graphs/{graph_id}/edges/{edge_id}`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::GraphEdgeResponse>, Error<types::GraphErrorBody>> {
+            let Self {
+                client,
+                graph_id,
+                edge_id,
+                x_tenant_id,
+            } = self;
+            let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let edge_id = edge_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/graphs/{}/edges/{}",
+                client.baseurl,
+                encode_path(&graph_id.to_string()),
+                encode_path(&edge_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .delete(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "delete_edge",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 _ => Err(Error::UnexpectedResponse(response)),
@@ -34801,7 +41182,7 @@ pub mod builder {
         ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/nodes`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::NodeResponse>, Error<types::ErrorResponse>> {
+        ) -> Result<ResponseValue<types::GraphNodeResponse>, Error<types::GraphErrorBody>> {
             let Self {
                 client,
                 graph_id,
@@ -34845,11 +41226,14 @@ pub mod builder {
             client.post(&result, &info).await?;
             let response = result?;
             match response.status().as_u16() {
-                200u16 => ResponseValue::from_response(response).await,
+                201u16 => ResponseValue::from_response(response).await,
                 400u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 _ => Err(Error::UnexpectedResponse(response)),
@@ -34918,7 +41302,8 @@ pub mod builder {
         ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/nodes/batch`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::BatchNodesResponse>, Error<types::ErrorResponse>> {
+        ) -> Result<ResponseValue<types::GraphBatchNodesResponse>, Error<types::GraphErrorBody>>
+        {
             let Self {
                 client,
                 graph_id,
@@ -34968,7 +41353,7 @@ pub mod builder {
                 400u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
-                404u16 => Err(Error::ErrorResponse(
+                500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 _ => Err(Error::UnexpectedResponse(response)),
@@ -35024,7 +41409,7 @@ pub mod builder {
         ///Sends a `GET` request to `/api/v2/graphs/{graph_id}/nodes/{node_id}`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::NodeResponse>, Error<types::ErrorResponse>> {
+        ) -> Result<ResponseValue<types::GraphNodeResponse>, Error<types::GraphErrorBody>> {
             let Self {
                 client,
                 graph_id,
@@ -35068,6 +41453,139 @@ pub mod builder {
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
                 404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::update_node`]
+    ///
+    /// [`Client::update_node`]: super::Client::update_node
+    #[derive(Debug, Clone)]
+    pub struct UpdateNode<'a> {
+        client: &'a super::Client,
+        graph_id: Result<types::UpdateNodeGraphId, String>,
+        node_id: Result<types::UpdateNodeNodeId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::NodeInput, String>,
+    }
+    impl<'a> UpdateNode<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                graph_id: Err("graph_id was not initialized".to_string()),
+                node_id: Err("node_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn graph_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::UpdateNodeGraphId>,
+        {
+            self.graph_id = value
+                .try_into()
+                .map_err(|_| "conversion to `UpdateNodeGraphId` for graph_id failed".to_string());
+            self
+        }
+        pub fn node_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::UpdateNodeNodeId>,
+        {
+            self.node_id = value
+                .try_into()
+                .map_err(|_| "conversion to `UpdateNodeNodeId` for node_id failed".to_string());
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::NodeInput>,
+            <V as std::convert::TryInto<types::NodeInput>>::Error: std::fmt::Display,
+        {
+            self.body = value
+                .try_into()
+                .map(From::from)
+                .map_err(|s| format!("conversion to `NodeInput` for body failed: {}", s));
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(types::builder::NodeInput) -> types::builder::NodeInput,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `PUT` request to `/api/v2/graphs/{graph_id}/nodes/{node_id}`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::GraphNodeResponse>, Error<types::GraphErrorBody>> {
+            let Self {
+                client,
+                graph_id,
+                node_id,
+                x_tenant_id,
+                body,
+            } = self;
+            let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let node_id = node_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::NodeInput::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/graphs/{}/nodes/{}",
+                client.baseurl,
+                encode_path(&graph_id.to_string()),
+                encode_path(&node_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .put(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "update_node",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 _ => Err(Error::UnexpectedResponse(response)),
@@ -35123,7 +41641,7 @@ pub mod builder {
         ///Sends a `DELETE` request to `/api/v2/graphs/{graph_id}/nodes/{node_id}`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::DeleteNodeResponse>, Error<types::ErrorResponse>> {
+        ) -> Result<ResponseValue<types::GraphNodeResponse>, Error<types::GraphErrorBody>> {
             let Self {
                 client,
                 graph_id,
@@ -35169,6 +41687,698 @@ pub mod builder {
                 404u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::get_node_neighbors`]
+    ///
+    /// [`Client::get_node_neighbors`]: super::Client::get_node_neighbors
+    #[derive(Debug, Clone)]
+    pub struct GetNodeNeighbors<'a> {
+        client: &'a super::Client,
+        graph_id: Result<types::GetNodeNeighborsGraphId, String>,
+        node_id: Result<types::GetNodeNeighborsNodeId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> GetNodeNeighbors<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                graph_id: Err("graph_id was not initialized".to_string()),
+                node_id: Err("node_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn graph_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::GetNodeNeighborsGraphId>,
+        {
+            self.graph_id = value.try_into().map_err(|_| {
+                "conversion to `GetNodeNeighborsGraphId` for graph_id failed".to_string()
+            });
+            self
+        }
+        pub fn node_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::GetNodeNeighborsNodeId>,
+        {
+            self.node_id = value.try_into().map_err(|_| {
+                "conversion to `GetNodeNeighborsNodeId` for node_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `GET` request to `/api/v2/graphs/{graph_id}/nodes/{node_id}/neighbors`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::GraphNodeListResponse>, Error<types::GraphErrorBody>>
+        {
+            let Self {
+                client,
+                graph_id,
+                node_id,
+                x_tenant_id,
+            } = self;
+            let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let node_id = node_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/graphs/{}/nodes/{}/neighbors",
+                client.baseurl,
+                encode_path(&graph_id.to_string()),
+                encode_path(&node_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .get(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "get_node_neighbors",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::execute_graph_query`]
+    ///
+    /// [`Client::execute_graph_query`]: super::Client::execute_graph_query
+    #[derive(Debug, Clone)]
+    pub struct ExecuteGraphQuery<'a> {
+        client: &'a super::Client,
+        graph_id: Result<types::ExecuteGraphQueryGraphId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::GraphQueryRequest, String>,
+    }
+    impl<'a> ExecuteGraphQuery<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                graph_id: Err("graph_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn graph_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::ExecuteGraphQueryGraphId>,
+        {
+            self.graph_id = value.try_into().map_err(|_| {
+                "conversion to `ExecuteGraphQueryGraphId` for graph_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::GraphQueryRequest>,
+            <V as std::convert::TryInto<types::GraphQueryRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value
+                .try_into()
+                .map(From::from)
+                .map_err(|s| format!("conversion to `GraphQueryRequest` for body failed: {}", s));
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::GraphQueryRequest,
+                ) -> types::builder::GraphQueryRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/query`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::GraphQueryResponse>, Error<types::GraphErrorBody>>
+        {
+            let Self {
+                client,
+                graph_id,
+                x_tenant_id,
+                body,
+            } = self;
+            let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::GraphQueryRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/graphs/{}/query",
+                client.baseurl,
+                encode_path(&graph_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "execute_graph_query",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::query_edges`]
+    ///
+    /// [`Client::query_edges`]: super::Client::query_edges
+    #[derive(Debug, Clone)]
+    pub struct QueryEdges<'a> {
+        client: &'a super::Client,
+        graph_id: Result<types::QueryEdgesGraphId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::GraphEdgeQuery, String>,
+    }
+    impl<'a> QueryEdges<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                graph_id: Err("graph_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn graph_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::QueryEdgesGraphId>,
+        {
+            self.graph_id = value
+                .try_into()
+                .map_err(|_| "conversion to `QueryEdgesGraphId` for graph_id failed".to_string());
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::GraphEdgeQuery>,
+            <V as std::convert::TryInto<types::GraphEdgeQuery>>::Error: std::fmt::Display,
+        {
+            self.body = value
+                .try_into()
+                .map(From::from)
+                .map_err(|s| format!("conversion to `GraphEdgeQuery` for body failed: {}", s));
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(types::builder::GraphEdgeQuery) -> types::builder::GraphEdgeQuery,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/query/edges`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::GraphEdgeQueryResponse>, Error<types::GraphErrorBody>>
+        {
+            let Self {
+                client,
+                graph_id,
+                x_tenant_id,
+                body,
+            } = self;
+            let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::GraphEdgeQuery::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/graphs/{}/query/edges",
+                client.baseurl,
+                encode_path(&graph_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "query_edges",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::query_nodes`]
+    ///
+    /// [`Client::query_nodes`]: super::Client::query_nodes
+    #[derive(Debug, Clone)]
+    pub struct QueryNodes<'a> {
+        client: &'a super::Client,
+        graph_id: Result<types::QueryNodesGraphId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::GraphNodeQuery, String>,
+    }
+    impl<'a> QueryNodes<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                graph_id: Err("graph_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn graph_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::QueryNodesGraphId>,
+        {
+            self.graph_id = value
+                .try_into()
+                .map_err(|_| "conversion to `QueryNodesGraphId` for graph_id failed".to_string());
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::GraphNodeQuery>,
+            <V as std::convert::TryInto<types::GraphNodeQuery>>::Error: std::fmt::Display,
+        {
+            self.body = value
+                .try_into()
+                .map(From::from)
+                .map_err(|s| format!("conversion to `GraphNodeQuery` for body failed: {}", s));
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(types::builder::GraphNodeQuery) -> types::builder::GraphNodeQuery,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/query/nodes`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::GraphNodeQueryResponse>, Error<types::GraphErrorBody>>
+        {
+            let Self {
+                client,
+                graph_id,
+                x_tenant_id,
+                body,
+            } = self;
+            let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::GraphNodeQuery::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/graphs/{}/query/nodes",
+                client.baseurl,
+                encode_path(&graph_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "query_nodes",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::update_graph_schema`]
+    ///
+    /// [`Client::update_graph_schema`]: super::Client::update_graph_schema
+    #[derive(Debug, Clone)]
+    pub struct UpdateGraphSchema<'a> {
+        client: &'a super::Client,
+        graph_id: Result<types::UpdateGraphSchemaGraphId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::UpdateGraphSchemaRequest, String>,
+    }
+    impl<'a> UpdateGraphSchema<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                graph_id: Err("graph_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn graph_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::UpdateGraphSchemaGraphId>,
+        {
+            self.graph_id = value.try_into().map_err(|_| {
+                "conversion to `UpdateGraphSchemaGraphId` for graph_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::UpdateGraphSchemaRequest>,
+            <V as std::convert::TryInto<types::UpdateGraphSchemaRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `UpdateGraphSchemaRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::UpdateGraphSchemaRequest,
+                ) -> types::builder::UpdateGraphSchemaRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `PUT` request to `/api/v2/graphs/{graph_id}/schema`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::GraphCollectionResponse>, Error<types::GraphErrorBody>>
+        {
+            let Self {
+                client,
+                graph_id,
+                x_tenant_id,
+                body,
+            } = self;
+            let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| {
+                    types::UpdateGraphSchemaRequest::try_from(v).map_err(|e| e.to_string())
+                })
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/graphs/{}/schema",
+                client.baseurl,
+                encode_path(&graph_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .put(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "update_graph_schema",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::shortest_path`]
+    ///
+    /// [`Client::shortest_path`]: super::Client::shortest_path
+    #[derive(Debug, Clone)]
+    pub struct ShortestPath<'a> {
+        client: &'a super::Client,
+        graph_id: Result<types::ShortestPathGraphId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::ShortestPathRequest, String>,
+    }
+    impl<'a> ShortestPath<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                graph_id: Err("graph_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn graph_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::ShortestPathGraphId>,
+        {
+            self.graph_id = value
+                .try_into()
+                .map_err(|_| "conversion to `ShortestPathGraphId` for graph_id failed".to_string());
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::ShortestPathRequest>,
+            <V as std::convert::TryInto<types::ShortestPathRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value
+                .try_into()
+                .map(From::from)
+                .map_err(|s| format!("conversion to `ShortestPathRequest` for body failed: {}", s));
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::ShortestPathRequest,
+                ) -> types::builder::ShortestPathRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/shortest-path`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::GraphShortestPathResponse>, Error<types::GraphErrorBody>>
+        {
+            let Self {
+                client,
+                graph_id,
+                x_tenant_id,
+                body,
+            } = self;
+            let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::ShortestPathRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/graphs/{}/shortest-path",
+                client.baseurl,
+                encode_path(&graph_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "shortest_path",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 _ => Err(Error::UnexpectedResponse(response)),
             }
         }
@@ -35209,7 +42419,10 @@ pub mod builder {
             self
         }
         ///Sends a `GET` request to `/api/v2/graphs/{graph_id}/stats`
-        pub async fn send(self) -> Result<ResponseValue<types::GraphStatsResponse>, Error<()>> {
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::GraphStatsResponse>, Error<types::GraphErrorBody>>
+        {
             let Self {
                 client,
                 graph_id,
@@ -35249,6 +42462,126 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::step_graph`]
+    ///
+    /// [`Client::step_graph`]: super::Client::step_graph
+    #[derive(Debug, Clone)]
+    pub struct StepGraph<'a> {
+        client: &'a super::Client,
+        graph_id: Result<types::StepGraphGraphId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::WalkStepRequest, String>,
+    }
+    impl<'a> StepGraph<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                graph_id: Err("graph_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn graph_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::StepGraphGraphId>,
+        {
+            self.graph_id = value
+                .try_into()
+                .map_err(|_| "conversion to `StepGraphGraphId` for graph_id failed".to_string());
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::WalkStepRequest>,
+            <V as std::convert::TryInto<types::WalkStepRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value
+                .try_into()
+                .map(From::from)
+                .map_err(|s| format!("conversion to `WalkStepRequest` for body failed: {}", s));
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(types::builder::WalkStepRequest) -> types::builder::WalkStepRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/step`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::GraphTraversalResponse>, Error<types::GraphErrorBody>>
+        {
+            let Self {
+                client,
+                graph_id,
+                x_tenant_id,
+                body,
+            } = self;
+            let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::WalkStepRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/graphs/{}/step",
+                client.baseurl,
+                encode_path(&graph_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "step_graph",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 _ => Err(Error::UnexpectedResponse(response)),
             }
         }
@@ -35311,7 +42644,8 @@ pub mod builder {
         ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/traverse`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::TraverseResponse>, Error<types::ErrorResponse>> {
+        ) -> Result<ResponseValue<types::GraphTraversalResponse>, Error<types::GraphErrorBody>>
+        {
             let Self {
                 client,
                 graph_id,
@@ -35357,6 +42691,129 @@ pub mod builder {
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
                 400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::walk_graph`]
+    ///
+    /// [`Client::walk_graph`]: super::Client::walk_graph
+    #[derive(Debug, Clone)]
+    pub struct WalkGraph<'a> {
+        client: &'a super::Client,
+        graph_id: Result<types::WalkGraphGraphId, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::WalkRequest, String>,
+    }
+    impl<'a> WalkGraph<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                graph_id: Err("graph_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn graph_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::WalkGraphGraphId>,
+        {
+            self.graph_id = value
+                .try_into()
+                .map_err(|_| "conversion to `WalkGraphGraphId` for graph_id failed".to_string());
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::WalkRequest>,
+            <V as std::convert::TryInto<types::WalkRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value
+                .try_into()
+                .map(From::from)
+                .map_err(|s| format!("conversion to `WalkRequest` for body failed: {}", s));
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(types::builder::WalkRequest) -> types::builder::WalkRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/walk`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::GraphTraversalResponse>, Error<types::GraphErrorBody>>
+        {
+            let Self {
+                client,
+                graph_id,
+                x_tenant_id,
+                body,
+            } = self;
+            let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::WalkRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/graphs/{}/walk",
+                client.baseurl,
+                encode_path(&graph_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "walk_graph",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 _ => Err(Error::UnexpectedResponse(response)),
