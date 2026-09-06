@@ -21,15 +21,24 @@ pub enum ExperimentStage {
     Deleted,
 }
 
-/// MLflow run lifecycle. `Running -> Finished` is one-way; finished runs
+/// MLflow run lifecycle stage — orthogonal to [`RunStatus`] exactly as
+/// MLflow models it (`lifecycle_stage` x `status`): deleting a finished run
+/// and restoring it must yield a finished run again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunLifecycle {
+    Active,
+    Deleted,
+}
+
+/// MLflow run status. `Running -> Finished` is one-way; finished runs
 /// reject further param/metric writes (params are immutable even while
 /// running).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum RunStage {
+pub enum RunStatus {
     Running,
     Finished,
-    Deleted,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -49,7 +58,8 @@ pub struct RunRecord {
     pub experiment_id: u64,
     pub run_name: Option<String>,
     pub user_id: Option<String>,
-    pub status: RunStage,
+    pub lifecycle: RunLifecycle,
+    pub status: RunStatus,
     pub start_time_ms: i64,
     pub end_time_ms: Option<i64>,
     /// Immutable after first write for a key (MLflow param semantics).
@@ -91,6 +101,8 @@ pub enum RunStoreError {
     ParamImmutable { key: String, run_id: String },
     #[error("run '{run_id}' is finished; metric/param writes are rejected")]
     RunFinished { run_id: String },
+    #[error("experiment {experiment_id} is deleted; run creation is rejected")]
+    ExperimentDeleted { experiment_id: u64 },
     #[error("names and ids must be non-empty")]
     Empty { field: &'static str },
     #[error("tracking store internal error: {message}")]
@@ -107,8 +119,8 @@ pub struct MetricAppend {
 /// Tenant-scoped experiment/run tracking port. Implementations MUST enforce
 /// tenant isolation structurally (the caller threads tenant identity into the
 /// store's construction or per-call context — never inside record payloads).
-#[allow(async_fn_in_trait)]
-pub trait RunStore {
+#[async_trait::async_trait]
+pub trait RunStore: Send + Sync {
     /// Create an experiment with a caller-chosen unique name.
     async fn create_experiment(
         &self,
@@ -206,7 +218,7 @@ pub mod conformance_tests {
     pub struct InMemoryRunStore {
         experiments: std::sync::Mutex<Vec<ExperimentRecord>>,
         runs: std::sync::Mutex<Vec<RunRecord>>,
-        history: std::sync::Mutex<Vec<MetricPoint>>,
+        history: std::sync::Mutex<Vec<(String, MetricPoint)>>,
         datasets: std::sync::Mutex<Vec<(String, RunDatasetInput)>>,
     }
 
@@ -221,6 +233,7 @@ pub mod conformance_tests {
         }
     }
 
+    #[async_trait::async_trait]
     impl RunStore for InMemoryRunStore {
         async fn create_experiment(
             &self,
@@ -319,12 +332,23 @@ pub mod conformance_tests {
                     });
                 }
             }
+            {
+                let experiments = self.experiments.lock().unwrap();
+                let stage = experiments
+                    .iter()
+                    .find(|e| e.experiment_id == experiment_id)
+                    .map(|e| e.stage);
+                if stage == Some(ExperimentStage::Deleted) {
+                    return Err(RunStoreError::ExperimentDeleted { experiment_id });
+                }
+            }
             let record = RunRecord {
                 run_id: run_id.to_string(),
                 experiment_id,
                 run_name: run_name.map(str::to_string),
                 user_id: user_id.map(str::to_string),
-                status: RunStage::Running,
+                lifecycle: RunLifecycle::Active,
+                status: RunStatus::Running,
                 start_time_ms,
                 end_time_ms: None,
                 params: BTreeMap::new(),
@@ -360,7 +384,7 @@ pub mod conformance_tests {
                 .iter()
                 .filter(|r| {
                     r.experiment_id == experiment_id
-                        && (include_deleted || r.status != RunStage::Deleted)
+                        && (include_deleted || r.lifecycle != RunLifecycle::Deleted)
                 })
                 .cloned()
                 .collect())
@@ -374,7 +398,7 @@ pub mod conformance_tests {
                 .ok_or_else(|| RunStoreError::UnknownRun {
                     run_id: run_id.to_string(),
                 })?;
-            run.status = RunStage::Finished;
+            run.status = RunStatus::Finished;
             run.end_time_ms = Some(end_time_ms);
             Ok(())
         }
@@ -387,7 +411,7 @@ pub mod conformance_tests {
                 .ok_or_else(|| RunStoreError::UnknownRun {
                     run_id: run_id.to_string(),
                 })?;
-            run.status = RunStage::Deleted;
+            run.lifecycle = RunLifecycle::Deleted;
             Ok(())
         }
 
@@ -399,7 +423,7 @@ pub mod conformance_tests {
                 .ok_or_else(|| RunStoreError::UnknownRun {
                     run_id: run_id.to_string(),
                 })?;
-            run.status = RunStage::Running;
+            run.lifecycle = RunLifecycle::Active;
             Ok(())
         }
 
@@ -410,6 +434,18 @@ pub mod conformance_tests {
             value: &str,
         ) -> Result<(), RunStoreError> {
             let mut runs = self.runs.lock().unwrap();
+            {
+                let run = runs.iter().find(|r| r.run_id == run_id).ok_or_else(|| {
+                    RunStoreError::UnknownRun {
+                        run_id: run_id.to_string(),
+                    }
+                })?;
+                if run.status == RunStatus::Finished {
+                    return Err(RunStoreError::RunFinished {
+                        run_id: run_id.to_string(),
+                    });
+                }
+            }
             let run = runs
                 .iter_mut()
                 .find(|r| r.run_id == run_id)
@@ -441,7 +477,7 @@ pub mod conformance_tests {
                         run_id: run_id.to_string(),
                     }
                 })?;
-                if run.status == RunStage::Finished {
+                if run.status == RunStatus::Finished {
                     return Err(RunStoreError::RunFinished {
                         run_id: run_id.to_string(),
                     });
@@ -449,7 +485,7 @@ pub mod conformance_tests {
             }
             {
                 let mut history = self.history.lock().unwrap();
-                history.push(point.clone());
+                history.push((run_id.to_string(), point.clone()));
             }
             let history_len;
             {
@@ -466,7 +502,7 @@ pub mod conformance_tests {
                     .lock()
                     .unwrap()
                     .iter()
-                    .filter(|p| p.key == point.key)
+                    .filter(|(id, p)| id == run_id && p.key == point.key)
                     .count() as u64;
             }
             Ok(MetricAppend { history_len })
@@ -483,8 +519,8 @@ pub mod conformance_tests {
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|p| p.key == key)
-                .cloned()
+                .filter(|(id, p)| id == run_id && p.key == key)
+                .map(|(_, p)| p.clone())
                 .collect())
         }
 
@@ -587,7 +623,7 @@ pub mod conformance_tests {
             )
             .await
             .expect("create run");
-        assert_eq!(run.status, RunStage::Running);
+        assert_eq!(run.status, RunStatus::Running);
 
         let unknown_exp = store
             .create_run(999, "run-x", None, None, BTreeMap::new(), 0)
@@ -680,16 +716,22 @@ pub mod conformance_tests {
             .unwrap();
         assert_eq!(store.dataset_inputs("run-0001").await.unwrap(), vec![ds]);
 
-        // Finish is one-way and freezes metric/param writes.
+        // Finish is one-way and freezes param writes too (port contract).
         store.finish_run("run-0001", 9_000).await.unwrap();
         assert_eq!(
-            store.get_run("run-0001").await.unwrap().status,
-            RunStage::Finished
+            store.log_param("run-0001", "late", "1").await.unwrap_err(),
+            RunStoreError::RunFinished {
+                run_id: "run-0001".to_string()
+            }
         );
-        assert_eq!(
-            store.get_run("run-0001").await.unwrap().end_time_ms,
-            Some(9_000)
-        );
+
+        // Delete -> restore must PRESERVE the finished status (MLflow
+        // separates lifecycle_stage from status).
+        store.delete_run("run-0001").await.unwrap();
+        store.restore_run("run-0001").await.unwrap();
+        let restored = store.get_run("run-0001").await.unwrap();
+        assert_eq!(restored.lifecycle, RunLifecycle::Active);
+        assert_eq!(restored.status, RunStatus::Finished);
         assert_eq!(
             store
                 .log_metric(
@@ -708,15 +750,86 @@ pub mod conformance_tests {
             }
         );
 
-        // Run soft delete hides from listing; direct get still resolves.
+        // Cross-run metric isolation: a second run logging the same key has
+        // its own history; the first run's is untouched.
+        store
+            .create_run(
+                exp.experiment_id,
+                "run-0002",
+                None,
+                None,
+                BTreeMap::new(),
+                2_000,
+            )
+            .await
+            .unwrap();
+        store
+            .log_metric(
+                "run-0002",
+                MetricPoint {
+                    key: "rmse".to_string(),
+                    value: 0.5,
+                    timestamp_ms: 2_500,
+                    step: 0,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .metric_history("run-0001", "rmse")
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            store
+                .metric_history("run-0002", "rmse")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // Run creation in a deleted experiment is rejected.
+        store.delete_experiment(exp.experiment_id).await.unwrap();
+        assert_eq!(
+            store
+                .create_run(
+                    exp.experiment_id,
+                    "run-0003",
+                    None,
+                    None,
+                    BTreeMap::new(),
+                    0
+                )
+                .await
+                .unwrap_err(),
+            RunStoreError::ExperimentDeleted {
+                experiment_id: exp.experiment_id
+            }
+        );
+        store.restore_experiment(exp.experiment_id).await.unwrap();
         store.delete_run("run-0001").await.unwrap();
+        assert_eq!(
+            store.get_run("run-0001").await.unwrap().status,
+            RunStatus::Finished
+        );
+        assert_eq!(
+            store.get_run("run-0001").await.unwrap().end_time_ms,
+            Some(9_000)
+        );
+
+        // Listing after the delete above: run-0001 hidden (lifecycle=deleted),
+        // run-0002 active; include_deleted shows both.
         assert_eq!(
             store
                 .list_runs(exp.experiment_id, false)
                 .await
                 .unwrap()
                 .len(),
-            0
+            1
         );
         assert_eq!(
             store
@@ -724,16 +837,7 @@ pub mod conformance_tests {
                 .await
                 .unwrap()
                 .len(),
-            1
-        );
-        store.restore_run("run-0001").await.unwrap();
-        assert_eq!(
-            store
-                .list_runs(exp.experiment_id, false)
-                .await
-                .unwrap()
-                .len(),
-            1
+            2
         );
     }
 }

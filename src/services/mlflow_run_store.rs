@@ -26,8 +26,8 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use proximadb_catalog::run_store::{
-    ExperimentRecord, ExperimentStage, MetricAppend, MetricPoint, RunDatasetInput, RunRecord,
-    RunStage, RunStore, RunStoreError,
+    ExperimentRecord, ExperimentStage, MetricAppend, MetricPoint, RunDatasetInput, RunLifecycle,
+    RunRecord, RunStatus, RunStore, RunStoreError,
 };
 use proximadb_data_model::ProximaValue;
 use proximadb_records::{ProximaTree, ProximaTreeNode};
@@ -36,23 +36,40 @@ use tokio::sync::Mutex;
 use crate::storage::document::service::scoped_document_collection;
 use crate::storage::document::{DocumentRecord, DocumentService};
 
-const COLLECTION: &str = "mlflow_tracking";
+const COLLECTION: &str = "_mlflow_tracking";
+
+/// Process-global mutation locks keyed by collection: two `for_tenant`
+/// instances over the same (service, tenant) must serialize their RMW
+/// cycles against EACH OTHER, not just themselves.
+fn mutation_lock_for(collection: &str) -> Arc<Mutex<()>> {
+    static LOCKS: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, Arc<Mutex<()>>>>,
+    > = std::sync::OnceLock::new();
+    let registry = LOCKS.get_or_init(Default::default);
+    let mut guard = registry.lock().unwrap();
+    guard
+        .entry(collection.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
 
 pub struct SubstrateRunStore {
     document: Arc<DocumentService>,
     collection: String,
-    mutation_lock: Mutex<()>,
+    mutation_lock: Arc<Mutex<()>>,
 }
 
 impl SubstrateRunStore {
     /// Tenant-scoped construction: the collection key embeds the tenant once,
     /// structurally — mirrors `GraphOperationsService::for_tenant`.
     pub fn for_tenant(document: Arc<DocumentService>, tenant: &str) -> Result<Self> {
+        let collection = scoped_document_collection(tenant, COLLECTION)
+            .context("scope mlflow tracking collection to tenant")?;
+        let mutation_lock = mutation_lock_for(&collection);
         Ok(Self {
-            collection: scoped_document_collection(tenant, COLLECTION)
-                .context("scope mlflow tracking collection to tenant")?,
+            collection,
             document,
-            mutation_lock: Mutex::new(()),
+            mutation_lock,
         })
     }
 
@@ -75,9 +92,26 @@ impl SubstrateRunStore {
         index_fields: &[(&str, ProximaValue)],
         payload: &impl serde::Serialize,
     ) -> Result<()> {
+        self.put_payload_fields(
+            id,
+            index_fields
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect(),
+            payload,
+        )
+        .await
+    }
+
+    async fn put_payload_fields(
+        &self,
+        id: &str,
+        fields: Vec<(String, ProximaValue)>,
+        payload: &impl serde::Serialize,
+    ) -> Result<()> {
         let mut tree: ProximaTree = HashMap::new();
-        for (key, value) in index_fields {
-            tree.insert((*key).to_string(), ProximaTreeNode::Value(value.clone()));
+        for (key, value) in fields {
+            tree.insert(key, ProximaTreeNode::Value(value));
         }
         tree.insert(
             "payload".to_string(),
@@ -88,7 +122,7 @@ impl SubstrateRunStore {
             tree,
             self.collection.clone(),
             None,
-            Some("mlflow_tracking".to_string()),
+            Some("_mlflow_tracking".to_string()),
         );
         self.document
             .insert_document_record(&self.collection, record)
@@ -135,9 +169,9 @@ impl SubstrateRunStore {
             if let Some(ProximaTreeNode::Value(ProximaValue::String(json))) =
                 doc.props.get("payload")
             {
-                if let Ok(record) = serde_json::from_str::<ExperimentRecord>(json) {
-                    records.push(record);
-                }
+                let record: ExperimentRecord = serde_json::from_str(json)
+                    .with_context(|| format!("corrupt experiment doc '{}'", doc.id))?;
+                records.push(record);
             }
         }
         records.sort_by_key(|r| r.experiment_id);
@@ -170,9 +204,9 @@ impl SubstrateRunStore {
             if let Some(ProximaTreeNode::Value(ProximaValue::String(json))) =
                 doc.props.get("payload")
             {
-                if let Ok(record) = serde_json::from_str::<RunRecord>(json) {
-                    records.push(record);
-                }
+                let record: RunRecord = serde_json::from_str(json)
+                    .with_context(|| format!("corrupt run doc '{}'", doc.id))?;
+                records.push(record);
             }
         }
         records.sort_by_key(|r| r.start_time_ms);
@@ -204,6 +238,7 @@ fn filter_of(
     }
 }
 
+#[async_trait::async_trait]
 impl RunStore for SubstrateRunStore {
     async fn create_experiment(
         &self,
@@ -338,7 +373,10 @@ impl RunStore for SubstrateRunStore {
         self.ensure()
             .await
             .map_err(|e| Self::err(e.context("ensure collection")))?;
-        self.get_experiment(experiment_id).await?;
+        let experiment = self.get_experiment(experiment_id).await?;
+        if experiment.stage == ExperimentStage::Deleted {
+            return Err(RunStoreError::ExperimentDeleted { experiment_id });
+        }
         if self
             .get_payload::<RunRecord>(&format!("run-{run_id}"))
             .await
@@ -354,14 +392,17 @@ impl RunStore for SubstrateRunStore {
             experiment_id,
             run_name: run_name.map(str::to_string),
             user_id: user_id.map(str::to_string),
-            status: RunStage::Running,
+            lifecycle: RunLifecycle::Active,
+            status: RunStatus::Running,
             start_time_ms,
             end_time_ms: None,
             params: BTreeMap::new(),
             latest_metrics: BTreeMap::new(),
             tags,
         };
-        self.put_run(&record).await.map_err(Self::err)?;
+        self.put_run(&record, &BTreeMap::new())
+            .await
+            .map_err(Self::err)?;
         Ok(record)
     }
 
@@ -388,35 +429,40 @@ impl RunStore for SubstrateRunStore {
             .await
             .map_err(Self::err)?
             .into_iter()
-            .filter(|r| include_deleted || r.status != RunStage::Deleted)
+            .filter(|r| include_deleted || r.lifecycle != RunLifecycle::Deleted)
             .collect())
     }
 
     async fn finish_run(&self, run_id: &str, end_time_ms: i64) -> Result<(), RunStoreError> {
         let _guard = self.mutation_lock.lock().await;
-        let mut run = self.get_run(run_id).await?;
-        run.status = RunStage::Finished;
+        let (mut run, counters) = self.run_with_counters(run_id).await.map_err(Self::err)?;
+        run.status = RunStatus::Finished;
         run.end_time_ms = Some(end_time_ms);
-        self.put_run(&run).await.map_err(Self::err)
+        self.put_run(&run, &counters).await.map_err(Self::err)
     }
 
     async fn delete_run(&self, run_id: &str) -> Result<(), RunStoreError> {
         let _guard = self.mutation_lock.lock().await;
-        let mut run = self.get_run(run_id).await?;
-        run.status = RunStage::Deleted;
-        self.put_run(&run).await.map_err(Self::err)
+        let (mut run, counters) = self.run_with_counters(run_id).await.map_err(Self::err)?;
+        run.lifecycle = RunLifecycle::Deleted;
+        self.put_run(&run, &counters).await.map_err(Self::err)
     }
 
     async fn restore_run(&self, run_id: &str) -> Result<(), RunStoreError> {
         let _guard = self.mutation_lock.lock().await;
-        let mut run = self.get_run(run_id).await?;
-        run.status = RunStage::Running;
-        self.put_run(&run).await.map_err(Self::err)
+        let (mut run, counters) = self.run_with_counters(run_id).await.map_err(Self::err)?;
+        run.lifecycle = RunLifecycle::Active;
+        self.put_run(&run, &counters).await.map_err(Self::err)
     }
 
     async fn log_param(&self, run_id: &str, key: &str, value: &str) -> Result<(), RunStoreError> {
         let _guard = self.mutation_lock.lock().await;
-        let mut run = self.get_run(run_id).await?;
+        let (mut run, counters) = self.run_with_counters(run_id).await.map_err(Self::err)?;
+        if run.status == RunStatus::Finished {
+            return Err(RunStoreError::RunFinished {
+                run_id: run_id.to_string(),
+            });
+        }
         match run.params.get(key) {
             Some(existing) if existing == value => Ok(()),
             Some(_) => Err(RunStoreError::ParamImmutable {
@@ -425,7 +471,7 @@ impl RunStore for SubstrateRunStore {
             }),
             None => {
                 run.params.insert(key.to_string(), value.to_string());
-                self.put_run(&run).await.map_err(Self::err)
+                self.put_run(&run, &counters).await.map_err(Self::err)
             }
         }
     }
@@ -436,25 +482,19 @@ impl RunStore for SubstrateRunStore {
         point: MetricPoint,
     ) -> Result<MetricAppend, RunStoreError> {
         let _guard = self.mutation_lock.lock().await;
-        let mut run = self.get_run(run_id).await?;
-        if run.status == RunStage::Finished {
+        let (mut run, mut counters) = self.run_with_counters(run_id).await.map_err(Self::err)?;
+        if run.status == RunStatus::Finished {
             return Err(RunStoreError::RunFinished {
                 run_id: run_id.to_string(),
             });
         }
-        // seq + latest live on the run document; history in its own doc.
-        let seq_field = format!("seq_{}", sanitize(&point.key));
-        let seq = run
-            .tags
-            .get(&seq_field)
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(0);
-        let next_seq = seq + 1;
-        // Counters ride the tags map (stringly) so the record schema stays
-        // wire-stable for the MLflow adapter; keys are namespaced `seq_`.
-        run.tags.insert(seq_field, next_seq.to_string());
+        // seq lives in the run DOC's ctr_* fields (never the tags map); the
+        // history point is its own append-only doc.
+        let counter_key = sanitize(&point.key);
+        let next_seq = counters.get(&counter_key).copied().unwrap_or(0) + 1;
+        counters.insert(counter_key, next_seq);
         run.latest_metrics.insert(point.key.clone(), point.clone());
-        self.put_run(&run).await.map_err(Self::err)?;
+        self.put_run(&run, &counters).await.map_err(Self::err)?;
         self.put_payload(
             &format!("mtr-{run_id}-{next_seq}"),
             &[
@@ -515,16 +555,16 @@ impl RunStore for SubstrateRunStore {
 
     async fn set_tag(&self, run_id: &str, key: &str, value: &str) -> Result<(), RunStoreError> {
         let _guard = self.mutation_lock.lock().await;
-        let mut run = self.get_run(run_id).await?;
+        let (mut run, counters) = self.run_with_counters(run_id).await.map_err(Self::err)?;
         run.tags.insert(key.to_string(), value.to_string());
-        self.put_run(&run).await.map_err(Self::err)
+        self.put_run(&run, &counters).await.map_err(Self::err)
     }
 
     async fn delete_tag(&self, run_id: &str, key: &str) -> Result<(), RunStoreError> {
         let _guard = self.mutation_lock.lock().await;
-        let mut run = self.get_run(run_id).await?;
+        let (mut run, counters) = self.run_with_counters(run_id).await.map_err(Self::err)?;
         run.tags.remove(key);
-        self.put_run(&run).await.map_err(Self::err)
+        self.put_run(&run, &counters).await.map_err(Self::err)
     }
 
     async fn log_dataset_input(
@@ -533,15 +573,10 @@ impl RunStore for SubstrateRunStore {
         input: RunDatasetInput,
     ) -> Result<(), RunStoreError> {
         let _guard = self.mutation_lock.lock().await;
-        let mut run = self.get_run(run_id).await?;
-        let n = run
-            .tags
-            .get("ds_seq")
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(0)
-            + 1;
-        run.tags.insert("ds_seq".to_string(), n.to_string());
-        self.put_run(&run).await.map_err(Self::err)?;
+        let (mut run, mut counters) = self.run_with_counters(run_id).await.map_err(Self::err)?;
+        let n = counters.get("ds").copied().unwrap_or(0) + 1;
+        counters.insert("ds".to_string(), n);
+        self.put_run(&run, &counters).await.map_err(Self::err)?;
         self.put_payload(
             &format!("ds-{run_id}-{n}"),
             &[
@@ -584,23 +619,56 @@ impl RunStore for SubstrateRunStore {
 }
 
 impl SubstrateRunStore {
-    async fn put_run(&self, run: &RunRecord) -> Result<()> {
-        self.put_payload(
-            &format!("run-{}", run.run_id),
-            &[
-                ("kind", ProximaValue::String("run".to_string())),
-                (
-                    "experiment_id",
-                    ProximaValue::Int64(run.experiment_id as i64),
-                ),
-                (
-                    "stage",
-                    ProximaValue::String(serde_json::to_string(&run.status).unwrap_or_default()),
-                ),
-            ],
-            run,
-        )
-        .await
+    /// Persist a run plus its append counters as SEPARATE document fields
+    /// (`ctr_<name>`). Counters must never ride the user-writable tags map:
+    /// a client `delete_tag`/`set_tag` on a counter-looking key must not be
+    /// able to rewind a counter and silently overwrite history points
+    /// (review round 1, MAJOR).
+    async fn put_run(&self, run: &RunRecord, counters: &BTreeMap<String, u64>) -> Result<()> {
+        let mut fields: Vec<(String, ProximaValue)> = vec![
+            ("kind".to_string(), ProximaValue::String("run".to_string())),
+            (
+                "experiment_id".to_string(),
+                ProximaValue::Int64(run.experiment_id as i64),
+            ),
+            (
+                "lifecycle".to_string(),
+                ProximaValue::String(serde_json::to_string(&run.lifecycle).unwrap_or_default()),
+            ),
+        ];
+        fields.extend(
+            counters
+                .iter()
+                .map(|(name, value)| (format!("ctr_{name}"), ProximaValue::Int64(*value as i64))),
+        );
+        self.put_payload_fields(&format!("run-{}", run.run_id), fields, run)
+            .await
+    }
+
+    /// Read the run record TOGETHER with its durable counters.
+    async fn run_with_counters(&self, run_id: &str) -> Result<(RunRecord, BTreeMap<String, u64>)> {
+        let Some(record) = self
+            .document
+            .get_document(&self.collection, &format!("run-{run_id}"), None)
+            .await?
+        else {
+            anyhow::bail!("run '{run_id}' not found");
+        };
+        let Some(ProximaTreeNode::Value(ProximaValue::String(json))) = record.props.get("payload")
+        else {
+            anyhow::bail!("run document has no payload");
+        };
+        let run: RunRecord = serde_json::from_str(json)
+            .with_context(|| format!("corrupt run doc '{}'", record.id))?;
+        let mut counters = BTreeMap::new();
+        for (key, node) in &record.props {
+            if let (Some(name), ProximaTreeNode::Value(ProximaValue::Int64(v))) =
+                (key.strip_prefix("ctr_"), node)
+            {
+                counters.insert(name.to_string(), *v as u64);
+            }
+        }
+        Ok((run, counters))
     }
 }
 
