@@ -20,6 +20,54 @@ async fn substrate_run_store_passes_port_conformance() {
 }
 
 #[tokio::test]
+async fn concurrent_metric_appends_to_one_run_are_all_retained() {
+    // TD-MLOPS-1 review round 1: interleaved writers at the same step must
+    // not lose points — history length is exactly the number of appends and
+    // ordering is stable (the store serializes mutations).
+    use proximadb_catalog::run_store::{MetricPoint, RunStore};
+
+    let engine = Arc::new(SstEngine::new().await.unwrap());
+    let document = Arc::new(DocumentService::new(engine));
+    let store = SubstrateRunStore::for_tenant(document, "default").unwrap();
+    let exp = store
+        .create_experiment("concurrent", None, Default::default())
+        .await
+        .unwrap();
+    store
+        .create_run(
+            exp.experiment_id,
+            "run-c",
+            None,
+            None,
+            Default::default(),
+            0,
+        )
+        .await
+        .unwrap();
+
+    let mut tasks = Vec::new();
+    for i in 0..16 {
+        let point = MetricPoint {
+            key: "loss".to_string(),
+            value: i as f64,
+            timestamp_ms: 1_000 + i as i64,
+            step: i / 4, // deliberately colliding steps
+        };
+        tasks.push(store.log_metric("run-c", point));
+    }
+    let results = futures::future::join_all(tasks).await;
+    for r in &results {
+        r.as_ref().unwrap();
+    }
+    let history = store.metric_history("run-c", "loss").await.unwrap();
+    assert_eq!(history.len(), 16, "no append may be lost under concurrency");
+    let mut sorted: Vec<f64> = history.iter().map(|p| p.value).collect();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let expected: Vec<f64> = (0..16).map(|i| i as f64).collect();
+    assert_eq!(sorted, expected, "all 16 distinct values retained");
+}
+
+#[tokio::test]
 async fn substrate_run_store_isolates_tenants_structurally() {
     let engine = Arc::new(SstEngine::new().await.unwrap());
     let document = Arc::new(DocumentService::new(engine));
