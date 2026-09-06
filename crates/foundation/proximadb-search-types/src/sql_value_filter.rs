@@ -133,9 +133,12 @@ pub fn evaluate_filter(expr: &FilterExpression, metadata: &HashMap<String, SqlVa
     })
 }
 
-/// Walk dotted path segments through a JSON document by reference — the
-/// single walker shared by the SqlValue and ProximaTree dot-traversals
-/// (round 8: it was maintained twice in this file).
+/// Walk dotted path segments through JSON objects by reference.
+///
+/// This object-only behavior is shared by query filtering and OIDC claim
+/// resolution. Array indexes are deliberately not interpreted as path
+/// segments; changing that contract requires review of the authorization
+/// callers as well as the query callers.
 pub fn json_get_path<'a, 'p>(
     root: &'a serde_json::Value,
     segments: impl Iterator<Item = &'p str>,

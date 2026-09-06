@@ -641,21 +641,22 @@ resolution). Identical semantics (object-only segments; non-objects
 dead-end — serde_json's `Value::get` behaves as the explicit match), so
 delegation is behavior-preserving; the walker's lifetime signature split
 (root `<'a>` vs segments `<'p>`) so callers with borrowed path strings
-compile without contortions. Future traversal rules (array-index segments,
-escape handling) now land in ONE place across filter/auth/plan resolution —
-with two enumerated exceptions (round-20 review): `proximadb-query
+compile without contortions. Object-only traversal is pinned at both the
+query and OIDC boundaries: array indexes remain unsupported, and any future
+semantic expansion requires an authorization review rather than inheriting a
+query-side convenience silently. Two enumerated exceptions remain:
+`proximadb-query
 joins.rs extract_nested_json` (join-key resolution — same walker plus
 leaf stringification, still hand-rolled; delegation needs a
 `&[&str] -> Option<String>` shim) and `cdc/outbound/router.rs` (CDC
 routing — hand-rolled WITH array-index support, deliberately not
-consolidated: adding index segments to `json_get_path` later must
-consciously decide whether CDC folds in).
+consolidated).
 * Tracked: JSON string-document spelling divergence between the v2
   entity seam (unwrapped inner text) and adjacency/graph_schema
   (quoted canonical text); the extraction twin blocks (helix/swift,
   parity-edited three times); canonical_json_string's clone-per-write
-  (in-place sort_keys pending); the two unconsolidated dot-walkers
-  (auth oidc claim_at_path, plan_executor field_value).
+  (in-place sort_keys pending); the two enumerated walker exceptions
+  (`joins.rs extract_nested_json`, `cdc/outbound/router.rs`).
 * Tracked: evaluate_filter_proxima_strict decides IS NULL on the raw
   ProximaValue (Jsonb(Null) answers false there, true elsewhere —
   pre-existing; needs null normalization at the records boundary);
