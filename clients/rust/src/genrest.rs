@@ -37443,6 +37443,9 @@ impl Client {
     /// is the POST-embedding vector (the caller computed it).
     /// The optional `X-Tenant-ID` header is not consulted by this
     /// handler beyond the standard tenant middleware context.
+    /// Extractor rejections (malformed JSON, missing required field,
+    /// wrong content-type) are axum plain-text 400/415/422 — not the
+    /// JSON envelope.
     ///
     ///
     /// Sends a `POST` request to `/api/v2/rank/search`

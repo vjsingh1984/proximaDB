@@ -102,6 +102,9 @@ def sync_detailed(
     is the POST-embedding vector (the caller computed it).
     The optional `X-Tenant-ID` header is not consulted by this
     handler beyond the standard tenant middleware context.
+    Extractor rejections (malformed JSON, missing required field,
+    wrong content-type) are axum plain-text 400/415/422 — not the
+    JSON envelope.
 
     Args:
         x_tenant_id (str | Unset):
@@ -145,6 +148,9 @@ def sync(
     is the POST-embedding vector (the caller computed it).
     The optional `X-Tenant-ID` header is not consulted by this
     handler beyond the standard tenant middleware context.
+    Extractor rejections (malformed JSON, missing required field,
+    wrong content-type) are axum plain-text 400/415/422 — not the
+    JSON envelope.
 
     Args:
         x_tenant_id (str | Unset):
@@ -183,6 +189,9 @@ async def asyncio_detailed(
     is the POST-embedding vector (the caller computed it).
     The optional `X-Tenant-ID` header is not consulted by this
     handler beyond the standard tenant middleware context.
+    Extractor rejections (malformed JSON, missing required field,
+    wrong content-type) are axum plain-text 400/415/422 — not the
+    JSON envelope.
 
     Args:
         x_tenant_id (str | Unset):
@@ -224,6 +233,9 @@ async def asyncio(
     is the POST-embedding vector (the caller computed it).
     The optional `X-Tenant-ID` header is not consulted by this
     handler beyond the standard tenant middleware context.
+    Extractor rejections (malformed JSON, missing required field,
+    wrong content-type) are axum plain-text 400/415/422 — not the
+    JSON envelope.
 
     Args:
         x_tenant_id (str | Unset):

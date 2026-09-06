@@ -828,10 +828,12 @@ paths:
   # TD-SPECRAT-1 wave 8 — rank search + program census resolution.
   # POST /api/v2/rank/search: the multi-phase ranking pipeline (R-7c.1),
   # mounted unconditionally in handlers.rs; no per-route permission gate.
-  # 501 = RankServices not injected at startup (default deployments);
-  # 404 = named rank profile not found; 400 = invalid profile; 500 =
-  # pipeline failure. Responses carry per-hit score vectors only when a
-  # rank profile was attached (retrieval-only mode omits them).
+  # The DEFAULT server wires RankServices (the pipeline serves 200s);
+  # 501 fires only in non-default constructions (embedded/test AppState
+  # without RankServices). 404 = named rank profile not found; 400 =
+  # invalid profile; 500 = pipeline failure. Responses carry per-hit
+  # score vectors only when a rank profile was attached (retrieval-only
+  # mode omits them).
   /api/v2/rank/search:
     post:
       tags: [Rank]
@@ -848,6 +850,9 @@ paths:
         is the POST-embedding vector (the caller computed it).
         The optional `X-Tenant-ID` header is not consulted by this
         handler beyond the standard tenant middleware context.
+        Extractor rejections (malformed JSON, missing required field,
+        wrong content-type) are axum plain-text 400/415/422 — not the
+        JSON envelope.
       requestBody:
         required: true
         content:
@@ -866,8 +871,9 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "501":
           description: |
-            RankServices not injected at startup (default deployments
-            do not wire the rank pipeline).
+            The server was constructed without RankServices — NOT the
+            default deployment (the default server wires the pipeline
+            and returns 200s); reachable in embedded/test constructions.
           content:
             application/json:
               schema:

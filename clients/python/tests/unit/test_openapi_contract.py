@@ -674,6 +674,20 @@ def test_rank_surface_and_program_census(openapi_spec):
         ), f"{schema_name} drifted: missing={exp - actual} extra={actual - exp}"
     assert schemas["RankSearchRequest"]["required"] == ["collection"]
     assert schemas["RankSearchResponse"]["required"] == ["hits", "phase_truncated"]
+    assert schemas["RankScoredHit"]["required"] == ["id", "score"]
+    assert schemas["RankScoreVector"]["required"] == ["primary", "phase"]
+    assert schemas["ScoreComponent"]["required"] == [
+        "name",
+        "value",
+        "weight",
+        "contribution",
+    ]
+
+    # Census dispositions (d)/(e) pinned: model-registries present in the
+    # generated core, hybrid search/index present in the supplement.
+    all_paths = openapi_spec["paths"]
+    assert sum(1 for p in all_paths if p.startswith("/api/v2/model-registries")) == 4
+    assert "/api/v2/hybrid/search" in all_paths and "/api/v2/hybrid/index" in all_paths
 
     # Census resolutions pinned (wave 8): WS streaming and the all-501
     # unified surface are deliberately ABSENT from the spec.

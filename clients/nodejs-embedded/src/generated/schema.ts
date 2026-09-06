@@ -1170,6 +1170,9 @@ export interface paths {
          *     is the POST-embedding vector (the caller computed it).
          *     The optional `X-Tenant-ID` header is not consulted by this
          *     handler beyond the standard tenant middleware context.
+         *     Extractor rejections (malformed JSON, missing required field,
+         *     wrong content-type) are axum plain-text 400/415/422 — not the
+         *     JSON envelope.
          */
         post: operations["rankSearch"];
         delete?: never;
@@ -7003,8 +7006,9 @@ export interface operations {
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
             /**
-             * @description RankServices not injected at startup (default deployments
-             *     do not wire the rank pipeline).
+             * @description The server was constructed without RankServices — NOT the
+             *     default deployment (the default server wires the pipeline
+             *     and returns 200s); reachable in embedded/test constructions.
              */
             501: {
                 headers: {

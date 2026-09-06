@@ -6737,6 +6737,9 @@ type ClientInterface interface {
 	// is the POST-embedding vector (the caller computed it).
 	// The optional `X-Tenant-ID` header is not consulted by this
 	// handler beyond the standard tenant middleware context.
+	// Extractor rejections (malformed JSON, missing required field,
+	// wrong content-type) are axum plain-text 400/415/422 — not the
+	// JSON envelope.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -6755,6 +6758,9 @@ type ClientInterface interface {
 	// is the POST-embedding vector (the caller computed it).
 	// The optional `X-Tenant-ID` header is not consulted by this
 	// handler beyond the standard tenant middleware context.
+	// Extractor rejections (malformed JSON, missing required field,
+	// wrong content-type) are axum plain-text 400/415/422 — not the
+	// JSON envelope.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -9936,6 +9942,9 @@ func (c *Client) ExplainQuery(ctx context.Context, params *ExplainQueryParams, b
 // is the POST-embedding vector (the caller computed it).
 // The optional `X-Tenant-ID` header is not consulted by this
 // handler beyond the standard tenant middleware context.
+// Extractor rejections (malformed JSON, missing required field,
+// wrong content-type) are axum plain-text 400/415/422 — not the
+// JSON envelope.
 //
 // Takes any type of body and a specified content type.
 //
@@ -9964,6 +9973,9 @@ func (c *Client) RankSearchWithBody(ctx context.Context, params *RankSearchParam
 // is the POST-embedding vector (the caller computed it).
 // The optional `X-Tenant-ID` header is not consulted by this
 // handler beyond the standard tenant middleware context.
+// Extractor rejections (malformed JSON, missing required field,
+// wrong content-type) are axum plain-text 400/415/422 — not the
+// JSON envelope.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -17900,6 +17912,9 @@ type ClientWithResponsesInterface interface {
 	// is the POST-embedding vector (the caller computed it).
 	// The optional `X-Tenant-ID` header is not consulted by this
 	// handler beyond the standard tenant middleware context.
+	// Extractor rejections (malformed JSON, missing required field,
+	// wrong content-type) are axum plain-text 400/415/422 — not the
+	// JSON envelope.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -17918,6 +17933,9 @@ type ClientWithResponsesInterface interface {
 	// is the POST-embedding vector (the caller computed it).
 	// The optional `X-Tenant-ID` header is not consulted by this
 	// handler beyond the standard tenant middleware context.
+	// Extractor rejections (malformed JSON, missing required field,
+	// wrong content-type) are axum plain-text 400/415/422 — not the
+	// JSON envelope.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -26352,6 +26370,9 @@ func (c *ClientWithResponses) ExplainQueryWithResponse(ctx context.Context, para
 // is the POST-embedding vector (the caller computed it).
 // The optional `X-Tenant-ID` header is not consulted by this
 // handler beyond the standard tenant middleware context.
+// Extractor rejections (malformed JSON, missing required field,
+// wrong content-type) are axum plain-text 400/415/422 — not the
+// JSON envelope.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -26376,6 +26397,9 @@ func (c *ClientWithResponses) RankSearchWithBodyWithResponse(ctx context.Context
 // is the POST-embedding vector (the caller computed it).
 // The optional `X-Tenant-ID` header is not consulted by this
 // handler beyond the standard tenant middleware context.
+// Extractor rejections (malformed JSON, missing required field,
+// wrong content-type) are axum plain-text 400/415/422 — not the
+// JSON envelope.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

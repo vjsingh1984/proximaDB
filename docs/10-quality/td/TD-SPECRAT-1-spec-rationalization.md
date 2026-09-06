@@ -307,7 +307,6 @@ embeddings, and return `created_count` for batches. Contract tests pin the real
 list, get, node, traversal, and partial-batch envelopes so flat fake responses
 cannot mask these boundaries again.
 
-== Wave 7: time-series surface (this PR)
 == Wave 7: time-series surface (landed)
 
 **Exposed (5 paths / 6 operations; spec 74 → 79):** the complete
@@ -361,7 +360,7 @@ become eval-eligible when they ship.
   four codegen pipelines would generate broken REST methods. NOT
   spec-exposable; SDKs need hand-written WS transports (a separate
   workstream, not this program).
-* **prepared-SQL / unified query** — `/api/v2/unified/*` (10 routes:
+* **prepared-SQL / unified query** — `/api/v2/unified/*` (9 routes:
   execute, multi-model, federated, distributed, explain, prepare,
   execute/{id}, prepared/{id} DELETE, prepared/stats) ALL return honest
   501s today (root-crate port returns Not Implemented until Phase
@@ -377,5 +376,32 @@ become eval-eligible when they ship.
 * **progressive/rank** — hybrid search/index already exposed (wave-1
   supplement); rank/search exposed by this wave.
 
-After wave 8, the program's remaining surface is exactly one item:
-the enterprise external-catalog wave, pending a product decision.
+**Round-1 adversarial review PROVED the closure claim false** — a
+full router sweep (this review) found ~27 MORE mounted unexposed
+paths beyond the original 15-area census list. The closure is
+corrected to: *wave 8 closes the ORIGINAL census list only*. The
+additional areas now enumerated for waves 9+ (each needs
+expose/defer/never disposition):
+
+* Document CRUD — api-crate `document.rs`: `/{collection}`
+  GET/DELETE, `/{collection}/documents/{id}` GET/PATCH/DELETE,
+  `documents/batch`, `documents/aggregate`, `/{collection}/indexes`
+  POST/GET (5 paths / 10 ops; only the 2 free-form passthrough paths
+  are spec'd).
+* AQL — `/api/v2/aql/execute` + `/audit/{query_id}` (real, RUBICON).
+* Agent memory — `/api/v2/memory/ingest`, `/consolidation/{session_id}`
+  (TD-100/101).
+* Analytics — `/api/v2/analytics/entanglement` (TD-043).
+* Progressive — `/api/v2/progressive/search/{collection_id}` (the
+  wave-8 bullet below cited hybrid, not progressive — corrected).
+* CDC — v2 router `/changes`.
+* Discovery-jobs — v2 router ×3; **external-collections v2** — v2
+  router ×5 paths (Phase 8 F5 — DISTINCT from the enterprise
+  `/api/v2/catalogs/*` surface).
+* Diagnostics — `_diagnostics` ×4; compute suspend/resume ×2
+  (same-class as rank: mounted always, 501 only when service
+  unwired).
+* Carried deferrals — graph `/rag` (501) + branch-merge.
+
+The enterprise external-catalog wave remains additionally, pending a
+product decision.
