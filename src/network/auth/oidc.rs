@@ -635,11 +635,10 @@ impl OidcTokenVerifier {
 /// if any segment is missing or not an object. A path with no dots is a
 /// simple top-level lookup (unchanged behavior).
 pub fn claim_at_path<'a>(root: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
-    let mut current = root;
-    for segment in path.split('.') {
-        current = current.get(segment)?;
-    }
-    Some(current)
+    // TD-PROTO-2 follow-up: delegate to the shared dot-path walker —
+    // identical semantics (object-only segments; non-objects dead-end), one
+    // home for future traversal rules (array indices, escapes).
+    proximadb_search_types::sql_value_filter::json_get_path(root, path.split('.'))
 }
 
 /// Flatten the roles claim's raw value to strings (array of strings, or a
