@@ -33,6 +33,15 @@ names MLflow compatibility as the next adapter slice. Without it:
 
 == Non-negotiable adapter laws (from the design authority)
 
+0. **Scope note (review round 1):** the design authority's MLflow rows
+   cover the REGISTRY only; extending the adapter to TRACKING (experiments/
+   runs) is this TD's extension and requires an amendment note in the
+   XCATALOG doc when slice 2 ships. To keep run identity ONE-HOME
+   (mandate-19 twin risk): the RunStore document is the durable record of
+   a run; when a model version registered from that run cites "source run
+   identity" (the design's retained field), it MUST reference the
+   RunStore's run_id verbatim — the catalog stores the reference, never a
+   second copy of run state.
 1. **Lower to xCatalog commands — never own another metadata database.**
    Registry operations lower to `CatalogModelRegistryService` commands
    (`RegisterVersion`, `SetAlias`, `AppendEvidence`, `RecordDecision`,
@@ -59,18 +68,23 @@ names MLflow compatibility as the next adapter slice. Without it:
 | MLflow concept | Native mapping | Consequence
 | Experiment | Tenant-scoped experiment record (RunStore) | Stable `experiment_id`; delete = soft (lifecycle marker), matching MLflow semantics.
 | Run | Producer execution + typed lineage entry | Run identity retained on model versions (design: "source run identity is retained").
-| Param / Metric / Tag | Substrate documents/columns | Metrics queryable (relational); params immutable per MLflow semantics; tags mutable.
+| Param / Metric / Tag | Substrate documents/columns | Metrics queryable (relational); params reject a DIFFERING second value but are idempotent on the same value (log-batch retries must succeed); tags mutable.
 | Metric history | Append-only points `(step, value, timestamp)` | Time-ordered retrieval; no in-place edits.
 | Artifact | OCI descriptor (URI, SHA-256, media type, size) | Content-addressed under DrPathBuilder paths; relocation-stable identity.
 | Registered model / version | `CatalogEmbeddingModelRegistry` + immutable version | Duplicate versions fail; digest identity.
 | Alias | Catalog alias transaction | No data-plane record stores an unresolved alias.
 | Tag (registry) | Annotation outside versions | Mutable, never affects contracts.
-| Stage transition | REJECTED with alias pointer | No built-in staging/production state machine (design); MLflow ≥2.5 aliases are the native path.
+| Stage transition | REJECTED with alias pointer | No built-in staging/production state machine (design); MLflow ≥2.5 aliases are the native path. NOTE: stage calls still function in current 2.x/3.x clients and `models:/name/Production` URIs will hard-fail — the slice-3 real-client workflow deliberately avoids stage calls, and the rejection message points at aliases.
 | Dataset (run input) | Name + content digest in lineage | Reproducibility never depends on a mutable path.
 | Signature | Typed input/output contract | Embedding semantics beyond tensor schemas.
 |===
 
 == Slices (TDD; each ships tests + docs; wire slices ship behind the gate)
+
+// Slice 0 note (review round 1): the design's rollout item 3 (typed
+// collection binding, data-plane) is INDEPENDENT of slices 1-4 — they need
+// only the already-implemented lifecycle service — so this wave may drive
+// in parallel with it.
 
 === Slice 1 — Tracking core (RunStore port + substrate impl) — no wire
 
@@ -81,7 +95,9 @@ names MLflow compatibility as the next adapter slice. Without it:
   document substrate; keys under `data/{tenant}/{ns}/…` via `DrPathBuilder`
   only.
 * Tests: red→green port conformance (round-trip, tenant isolation, metric
-  ordering, param immutability, soft-delete visibility), positive shapes.
+  ordering, param differing-value rejection + same-value idempotency,
+  soft-delete visibility, CONCURRENT metric appends to one run from
+  interleaved writers at the same step), positive shapes.
 
 === Slice 2 — MLflow tracking wire (gate OFF)
 
@@ -92,10 +108,22 @@ names MLflow compatibility as the next adapter slice. Without it:
 * MLflow-native error envelope (`{error_code, message}`) and REST shapes —
   MLflow's spec is the external contract (pgwire-class compatibility, not
   our OpenAPI); document this in ENV_GATE_REGISTRY + the surface docs.
+* Search endpoints implement MLflow's filter language for the subset the
+  canonical workflow exercises (`params.x = 'y'`, `metrics.k < v`,
+  `tags.t = 'v'`, `LIKE`), plus `run_view_type` (ACTIVE_ONLY vs ALL —
+  interacting with soft-deletes), `order_by`, and pagination. NEGATIVE
+  CONTROLS REQUIRED: a non-matching filter returns empty (a ratchet that
+  counts passing steps passes happily with an ignored filter).
 * **Conformance ratchet:** a test lane drives the REAL `mlflow` Python
-  client (REST tracking URI against a spawned server) through the canonical
-  workflow (create experiment → run → params/metrics/batch → search →
-  artifacts listing). The lane counts passing workflow steps (only up).
+  client (`mlflow-skinny`, version PINNED in the lane's pip install —
+  unpinned latest makes a counts-only-up ratchet drift with upstream)
+  through the canonical workflow (create experiment → run →
+  params/metrics/batch → search → artifacts). The lane counts passing
+  workflow steps (only up). Lane + path-filter wiring named at slice-2
+  time (the repeated repo failure: new test files matching no lane glob).
+* **Cross-tenant wire negative:** foreign experiment_id/run_id returns a
+  uniform MLflow-native `RESOURCE_DOES_NOT_EXIST` — never a distinguishing
+  403 that confirms id existence; search silently excludes foreign tenants.
 * Fail-closed: gate off ⇒ 404 on every route (negative control test).
 
 === Slice 3 — MLflow registry wire (gate OFF)
@@ -110,6 +138,14 @@ names MLflow compatibility as the next adapter slice. Without it:
 
 === Slice 4 — Artifacts + datasets
 
+* Real MLflow clients do NOT fetch artifacts via `/api/2.0/mlflow/*`:
+  the tracking server returns `artifact_location` (e.g.
+  `mlflow-artifacts:/<exp>`) in experiment/run payloads and the client
+  resolves it against the tracking host's *proxy* routes under
+  `/api/2.0/mlflow-artifacts/*`. Slice 4 therefore mounts that route
+  family too and populates `artifact_location`/`artifact_uri` in every
+  experiment/run response — without it the slice-2 conformance step
+  "artifacts listing" 404s by construction.
 * `log-artifact` / list-download as OCI descriptors under DrPathBuilder;
   run dataset inputs recorded as name+digest lineage entries.
 * Conformance: artifact round-trip digest-stable across relocation.
