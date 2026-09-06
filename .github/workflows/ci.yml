@@ -1925,7 +1925,7 @@ jobs:
       - name: Run Storage Integration Tests
         run: |
           # Run only explicitly named storage test files (avoids compiling all tests)
-          for test_file in tests/*sst*.rs tests/*storage*.rs tests/*wal*.rs tests/embedded_tenant_context.rs tests/td112_postflush_recall_e2e.rs; do
+          for test_file in tests/*sst*.rs tests/*storage*.rs tests/*wal*.rs tests/embedded_tenant_context.rs tests/td112_postflush_recall_e2e.rs tests/mlflow_run_store_test.rs; do
             if [ -f "$test_file" ]; then
               test_name=$(basename "$test_file" .rs)
               echo "Running $test_name..."
