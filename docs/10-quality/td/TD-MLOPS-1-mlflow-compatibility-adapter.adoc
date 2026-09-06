@@ -7,7 +7,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Open — slice plan filed; slice 1 (tracking core) in progress
+| Status | In Progress — slice 1 (tracking core) implemented: RunStore port + substrate store, port conformance + tenant isolation + concurrent-append tests green
 | Severity | Medium — platform gap: the AI-native data platform cannot be driven by the ML tooling ecosystem (MLflow clients) without this adapter
 | Component | `src/network/rest/mlflow/` (new), `crates/control/proximadb-catalog` (registry lowering), RunStore port (new)
 | Design authority | `docs/12-design/XCATALOG_MLOPS_MODEL_REGISTRY_2026_08_12.adoc` ("one authority, several adapters")
@@ -168,7 +168,20 @@ pre-GA rules).
 MLflow UI proxying; MLflow file-store emulation; model serving; training
 execution; MLflow auth pass-through (tenant identity stays ours).
 
+== Implementation log
+
+* **Slice 1 (2026-09-06)**: `RunStore` port + in-memory reference +
+  `port_conformance` battery (`crates/control/proximadb-catalog/src/run_store.rs`);
+  `SubstrateRunStore` over the document substrate
+  (`src/services/mlflow_run_store.rs`) — one tenant-scoped collection, indexed
+  fields + JSON payload docs, process-mutex serialization for mutations,
+  per-run seq counters for metric ordering. Tests: substrate passes the port
+  conformance battery; structural tenant isolation pinned; concurrent
+  metric appends all retained (`tests/mlflow_run_store_test.rs`, wired into
+  the storage integration lane's explicit list).
+
 == Next action
 
-Slice 1 in a worktree off `origin/develop`: `RunStore` port + substrate
-implementation, red tests first.
+Slice 2: the MLflow tracking wire adapter (`/api/2.0/mlflow/*` behind
+`PROXIMADB_MLFLOW_COMPAT_ENABLE`) + env-gate registry row + real-client
+conformance lane.
