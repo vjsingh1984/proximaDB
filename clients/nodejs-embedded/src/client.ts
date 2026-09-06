@@ -26,7 +26,11 @@ import {
   TraversalResult,
   JsonValue,
 } from "./types";
-import { CollectionBuilder, CollectionHandle, CollectionHttpClient } from "./collection";
+import {
+  CollectionBuilder,
+  CollectionHandle,
+  CollectionHttpClient,
+} from "./collection";
 import { GraphBuilder, GraphHandle, GraphHttpClient } from "./graph";
 import { createTransport, GeneratedClient } from "./transport";
 
@@ -101,14 +105,38 @@ function objectFromWire(value: unknown): Record<string, unknown> {
     : {};
 }
 
+/**
+ * Wave-6 envelope truth: a 2xx graph body carries the canonical
+ * `{success, data}` envelope. A 200 whose `data` member is absent is a
+ * server-contract violation — a pre-wave-6 flat body or a `{success:false}`
+ * body that slipped through as 200. Lowering such a body would fabricate an
+ * empty node / traversal / list out of a real failure (the repo's
+ * silent-Ok(failure) anti-pattern), so throw instead.
+ */
+function requireEnvelopeData(body: unknown, operation: string): unknown {
+  const data = objectFromWire(body).data;
+  if (data === undefined) {
+    throw new ProximaDBError(
+      `${operation}: 2xx response is missing the canonical {success, data} envelope` +
+        " (server version mismatch or success:false body)",
+      ErrorCode.ServerError,
+    );
+  }
+  return data;
+}
+
 function graphNodeFromWire(value: unknown): GraphNode {
   const node = objectFromWire(value);
   const labels = Array.isArray(node.labels) ? node.labels : [];
   const embedding = objectFromWire(node.embedding);
   const vector = Array.isArray(embedding.vector)
-    ? embedding.vector.filter((entry): entry is number => typeof entry === "number")
+    ? embedding.vector.filter(
+        (entry): entry is number => typeof entry === "number",
+      )
     : undefined;
-  const label = labels.find((entry): entry is string => typeof entry === "string");
+  const label = labels.find(
+    (entry): entry is string => typeof entry === "string",
+  );
 
   return {
     id: typeof node.id === "string" ? node.id : "",
@@ -135,12 +163,17 @@ function traversalResultFromWire(value: unknown): TraversalResult {
   const paths = Array.isArray(result.paths)
     ? result.paths.filter(
         (path): path is string[] =>
-          Array.isArray(path) && path.every((entry) => typeof entry === "string"),
+          Array.isArray(path) &&
+          path.every((entry) => typeof entry === "string"),
       )
     : [];
   return {
-    nodes: (Array.isArray(result.nodes) ? result.nodes : []).map(graphNodeFromWire),
-    edges: (Array.isArray(result.edges) ? result.edges : []).map(graphEdgeFromWire),
+    nodes: (Array.isArray(result.nodes) ? result.nodes : []).map(
+      graphNodeFromWire,
+    ),
+    edges: (Array.isArray(result.edges) ? result.edges : []).map(
+      graphEdgeFromWire,
+    ),
     paths,
   };
 }
@@ -159,8 +192,8 @@ function getFetch(): FetchFunction {
   }
   throw new Error(
     "No fetch implementation available. " +
-    "Node.js 18+ includes fetch natively. " +
-    "For older versions, install node-fetch."
+      "Node.js 18+ includes fetch natively. " +
+      "For older versions, install node-fetch.",
   );
 }
 
@@ -205,7 +238,7 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
     } catch {
       throw new ProximaDBError(
         "Invalid URL: " + this.config.url,
-        ErrorCode.InvalidConfig
+        ErrorCode.InvalidConfig,
       );
     }
 
@@ -213,7 +246,9 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
     // issues is funneled through `transportFetch`, the facade's own fetch that
     // applies bearer auth, retries, and error mapping — exactly as the legacy
     // generic `request<T>` path does.
-    this.gen = createTransport(this.config.url, (req) => this.transportFetch(req));
+    this.gen = createTransport(this.config.url, (req) =>
+      this.transportFetch(req),
+    );
   }
 
   /**
@@ -296,7 +331,7 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
   private async request<T>(
     method: string,
     requestUrl: string,
-    body?: unknown
+    body?: unknown,
   ): Promise<T> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -339,7 +374,11 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
 
         // Don't retry on client errors (4xx)
         if (lastError instanceof ProximaDBError) {
-          if (lastError.statusCode && lastError.statusCode >= 400 && lastError.statusCode < 500) {
+          if (
+            lastError.statusCode &&
+            lastError.statusCode >= 400 &&
+            lastError.statusCode < 500
+          ) {
             throw lastError;
           }
         }
@@ -368,7 +407,7 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
         throw new ProximaDBError(
           "Failed to parse response JSON",
           ErrorCode.ServerError,
-          response.status
+          response.status,
         );
       }
     }
@@ -384,13 +423,29 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
 
     switch (statusCode) {
       case 401:
-        throw new ProximaDBError(message, ErrorCode.AuthenticationFailed, statusCode);
+        throw new ProximaDBError(
+          message,
+          ErrorCode.AuthenticationFailed,
+          statusCode,
+        );
       case 403:
-        throw new ProximaDBError(message, ErrorCode.AuthorizationDenied, statusCode);
+        throw new ProximaDBError(
+          message,
+          ErrorCode.AuthorizationDenied,
+          statusCode,
+        );
       case 404:
-        throw new ProximaDBError(message, ErrorCode.CollectionNotFound, statusCode);
+        throw new ProximaDBError(
+          message,
+          ErrorCode.CollectionNotFound,
+          statusCode,
+        );
       case 409:
-        throw new ProximaDBError(message, ErrorCode.CollectionExists, statusCode);
+        throw new ProximaDBError(
+          message,
+          ErrorCode.CollectionExists,
+          statusCode,
+        );
       case 429:
         throw new ProximaDBError(message, ErrorCode.RateLimited, statusCode);
       default:
@@ -438,7 +493,7 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
    */
   async listCollections(): Promise<CollectionInfo[]> {
     const { data } = await this.gen.GET("/api/v2/collections", {});
-    return ((data?.collections ?? []) as unknown[]) as CollectionInfo[];
+    return (data?.collections ?? []) as unknown[] as CollectionInfo[];
   }
 
   /**
@@ -465,7 +520,7 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
    */
   async updateCollectionSchema(
     collectionId: string,
-    schema: UpdateSchemaRequest
+    schema: UpdateSchemaRequest,
   ): Promise<UpdateSchemaResponse> {
     const { data } = await this.gen.PUT(
       "/api/v2/collections/{collection_id}/schema",
@@ -519,7 +574,9 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
    * Create a collection.
    * Wire endpoint: POST /api/v2/collections (createCollection)
    */
-  async createCollectionRequest(body: Record<string, unknown>): Promise<unknown> {
+  async createCollectionRequest(
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
     const { data } = await this.gen.POST("/api/v2/collections", {
       body: body as never,
     });
@@ -581,7 +638,10 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
    * Delete a single record by ID.
    * Wire endpoint: DELETE /api/v2/collections/{collection_id}/records/{record_id} (deleteRecord)
    */
-  async deleteRecordRequest(collectionId: string, recordId: string): Promise<void> {
+  async deleteRecordRequest(
+    collectionId: string,
+    recordId: string,
+  ): Promise<void> {
     await this.gen.DELETE(
       "/api/v2/collections/{collection_id}/records/{record_id}",
       {
@@ -654,10 +714,13 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
    */
   async listGraphs(): Promise<GraphInfo[]> {
     const { data } = await this.gen.GET("/api/v2/graphs", {});
-    // Wave-6 envelope truth: the wire body is {success, data?} — the
+    // Wave-6 envelope truth: the wire body is {success, data} — the
     // collection array rides `data.data` (the old flat `.graphs` field
-    // never existed on the wire).
-    return ((data?.data ?? []) as unknown[]).map(graphInfoFromWire);
+    // never existed on the wire). A body without the envelope throws
+    // rather than fabricating an empty list.
+    return (requireEnvelopeData(data, "listGraphs") as unknown[]).map(
+      graphInfoFromWire,
+    );
   }
 
   // =========================================================================
@@ -688,7 +751,7 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
     const { data } = await this.gen.GET("/api/v2/graphs/{graph_id}", {
       params: { path: { graph_id: graphId } },
     });
-    return graphInfoFromWire(data?.data);
+    return graphInfoFromWire(requireEnvelopeData(data, "getGraph"));
   }
 
   /**
@@ -746,7 +809,7 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
         params: { path: { graph_id: graphId, node_id: nodeId } },
       },
     );
-    return graphNodeFromWire(data?.data);
+    return graphNodeFromWire(requireEnvelopeData(data, "getNode"));
   }
 
   /**
@@ -800,14 +863,11 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
     graphId: string,
     body: Record<string, unknown>,
   ): Promise<TraversalResult> {
-    const { data } = await this.gen.POST(
-      "/api/v2/graphs/{graph_id}/traverse",
-      {
-        params: { path: { graph_id: graphId } },
-        body: body as never,
-      },
-    );
-    return traversalResultFromWire(data?.data);
+    const { data } = await this.gen.POST("/api/v2/graphs/{graph_id}/traverse", {
+      params: { path: { graph_id: graphId } },
+      body: body as never,
+    });
+    return traversalResultFromWire(requireEnvelopeData(data, "traverseGraph"));
   }
 
   // =========================================================================
@@ -943,13 +1003,17 @@ export class ClientBuilder {
 /**
  * Create a ProximaDB client connected to the given URL
  */
-export function connect(url: string = "http://localhost:5678"): ProximaDBClient {
+export function connect(
+  url: string = "http://localhost:5678",
+): ProximaDBClient {
   return ProximaDBClient.connect(url);
 }
 
 /**
  * Create a ProximaDB client with REST protocol
  */
-export function connectRest(url: string = "http://localhost:5678"): ProximaDBClient {
+export function connectRest(
+  url: string = "http://localhost:5678",
+): ProximaDBClient {
   return ProximaDBClient.connect(url);
 }

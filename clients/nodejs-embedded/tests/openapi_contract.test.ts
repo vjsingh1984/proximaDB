@@ -482,11 +482,7 @@ describe("OpenAPI contract gate", () => {
       .property("name", "Alice")
       .execute();
 
-    const op = operationFor(
-      SPEC,
-      "/api/v2/graphs/{graph_id}/nodes",
-      "post",
-    );
+    const op = operationFor(SPEC, "/api/v2/graphs/{graph_id}/nodes", "post");
     expect(op.operationId).toBe("createNode");
     expect(captured.method).toBe("POST");
     expect(captured.url).toBe("http://contract.test/api/v2/graphs/g1/nodes");
@@ -524,9 +520,7 @@ describe("OpenAPI contract gate", () => {
     );
     expect(op.operationId).toBe("getNode");
     expect(captured.method).toBe("GET");
-    expect(captured.url).toBe(
-      "http://contract.test/api/v2/graphs/g1/nodes/n1",
-    );
+    expect(captured.url).toBe("http://contract.test/api/v2/graphs/g1/nodes/n1");
     expect(captured.body).toBeNull();
     expect(node).toEqual({
       id: "n1",
@@ -536,12 +530,55 @@ describe("OpenAPI contract gate", () => {
     });
   });
 
+  // Envelope negative controls: a 2xx body without the canonical
+  // {success, data} envelope is a server-contract violation — the SDK must
+  // throw, never fabricate an empty node / traversal / list out of a real
+  // failure (the silent-Ok(failure) anti-pattern).
+  it("getNode() throws on a 200 flat body without the envelope", async () => {
+    // Pre-wave-6 flat body: node fields at the top level, no `data` member.
+    installFetchStub({ id: "n1", labels: ["Person"], properties: {} });
+    const client = makeClient();
+
+    await expect(client.graph("g1").getNode("n1")).rejects.toThrow(
+      /missing the canonical \{success, data\} envelope/,
+    );
+  });
+
+  it("getNode() throws on a 200 success:false body", async () => {
+    installFetchStub({
+      success: false,
+      error: { code: "INTERNAL", message: "boom" },
+    });
+    const client = makeClient();
+
+    await expect(client.graph("g1").getNode("n1")).rejects.toThrow(
+      /missing the canonical \{success, data\} envelope/,
+    );
+  });
+
+  it("traverse() throws on a 200 body without the envelope", async () => {
+    installFetchStub({ nodes: [], edges: [] });
+    const client = makeClient();
+
+    await expect(
+      client.graph("g1").traverse().start("n1").maxDepth(2).execute(),
+    ).rejects.toThrow(/missing the canonical \{success, data\} envelope/);
+  });
+
+  it("listGraphs() throws on a 200 body without the envelope", async () => {
+    installFetchStub({ graphs: [] });
+    const client = makeClient();
+
+    await expect(client.listGraphs()).rejects.toThrow(
+      /missing the canonical \{success, data\} envelope/,
+    );
+  });
+
   it("deleteNode(id) matches DELETE /api/v2/graphs/{graph_id}/nodes/{node_id} (deleteNode)", async () => {
     const captured = installFetchStub({ deleted: true, id: "n1" });
     const client = makeClient();
 
     await client.graph("g1").deleteNode("n1");
-
     const op = operationFor(
       SPEC,
       "/api/v2/graphs/{graph_id}/nodes/{node_id}",
@@ -549,9 +586,7 @@ describe("OpenAPI contract gate", () => {
     );
     expect(op.operationId).toBe("deleteNode");
     expect(captured.method).toBe("DELETE");
-    expect(captured.url).toBe(
-      "http://contract.test/api/v2/graphs/g1/nodes/n1",
-    );
+    expect(captured.url).toBe("http://contract.test/api/v2/graphs/g1/nodes/n1");
     expect(captured.body).toBeNull();
   });
 
@@ -571,11 +606,7 @@ describe("OpenAPI contract gate", () => {
       .relationship("KNOWS")
       .execute();
 
-    const op = operationFor(
-      SPEC,
-      "/api/v2/graphs/{graph_id}/edges",
-      "post",
-    );
+    const op = operationFor(SPEC, "/api/v2/graphs/{graph_id}/edges", "post");
     expect(op.operationId).toBe("createEdge");
     expect(captured.method).toBe("POST");
     expect(captured.url).toBe("http://contract.test/api/v2/graphs/g1/edges");
@@ -640,16 +671,10 @@ describe("OpenAPI contract gate", () => {
       .maxDepth(2)
       .execute();
 
-    const op = operationFor(
-      SPEC,
-      "/api/v2/graphs/{graph_id}/traverse",
-      "post",
-    );
+    const op = operationFor(SPEC, "/api/v2/graphs/{graph_id}/traverse", "post");
     expect(op.operationId).toBe("traverseGraph");
     expect(captured.method).toBe("POST");
-    expect(captured.url).toBe(
-      "http://contract.test/api/v2/graphs/g1/traverse",
-    );
+    expect(captured.url).toBe("http://contract.test/api/v2/graphs/g1/traverse");
 
     const reqSchema = requestBodySchema(SPEC, op);
     expect(reqSchema).not.toBeNull();
@@ -666,9 +691,7 @@ describe("OpenAPI contract gate", () => {
     expect(captured.body).not.toHaveProperty("start_node");
     expect(captured.body).not.toHaveProperty("direction");
     expect(result).toEqual({
-      nodes: [
-        { id: "n1", label: "Person", properties: { active: true } },
-      ],
+      nodes: [{ id: "n1", label: "Person", properties: { active: true } }],
       edges: [
         {
           source: "n1",
