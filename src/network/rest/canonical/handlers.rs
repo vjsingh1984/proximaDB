@@ -8,7 +8,7 @@
 use axum::{
     extract::{Extension, Json, Path, Query, State},
     http::StatusCode,
-    response::Json as JsonResponse,
+    response::{IntoResponse, Json as JsonResponse, Response},
 };
 use proximadb_api::rest::deprecation::add_rest_v1_deprecation_headers;
 use proximadb_graph_query::service::GraphExecutionService;
@@ -1494,6 +1494,25 @@ pub type FullTextIndexMap = Arc<
 /// deprecation-header layers as every other route (no behaviour change vs. the
 /// prior inline registration). Keeping them in one named builder is the
 /// "single source of truth" for which `/api/v2` routes are non-SDK.
+fn rank_json_rejection_response(status: StatusCode, message: String) -> Response {
+    let error_type = match status {
+        StatusCode::UNSUPPORTED_MEDIA_TYPE => "unsupported_media_type",
+        StatusCode::UNPROCESSABLE_ENTITY => "invalid_request_body",
+        _ => "invalid_json",
+    };
+    (
+        status,
+        JsonResponse(serde_json::json!({
+            "error": {
+                "type": error_type,
+                "message": message,
+                "code": status.as_u16()
+            }
+        })),
+    )
+        .into_response()
+}
+
 fn operator_and_control_v2_routes() -> axum::Router<AppState> {
     use axum::routing::{get, post};
 
@@ -1521,16 +1540,35 @@ fn operator_and_control_v2_routes() -> axum::Router<AppState> {
         // runtime, blocked previously by `bumpalo::Bump` being `!Sync`.
         // The route returns:
         //   200 — successful rank pipeline result
+        //   400/415/422 — canonical JSON errors for request extraction
         //   404 — named profile not found
         //   501 — RankServices not injected at startup
         //   500 — pipeline failure (model load, expression compile, …)
         .route(
             "/api/v2/rank/search",
-            post(|State(state): State<AppState>, Json(req): Json<crate::network::rest::canonical::rank::RankSearchRequest>| async move {
-                crate::network::rest::canonical::rank::rank_search_dispatch(state, req)
-                    .await
-                    .map(Json)
-            }),
+            post(
+                |State(state): State<AppState>,
+                 payload: Result<
+                    Json<crate::network::rest::canonical::rank::RankSearchRequest>,
+                    axum::extract::rejection::JsonRejection,
+                >| async move {
+                    match payload {
+                        Ok(Json(req)) => {
+                            match crate::network::rest::canonical::rank::rank_search_dispatch(
+                                state, req,
+                            )
+                            .await
+                            {
+                                Ok(response) => Json(response).into_response(),
+                                Err(error) => error.into_response(),
+                            }
+                        }
+                        Err(rejection) => {
+                            rank_json_rejection_response(rejection.status(), rejection.body_text())
+                        }
+                    }
+                },
+            ),
         )
         // Phase 6: per-collection pinning control surface.
         // Operators PATCH a collection's pin state; the AxisTieringManager
@@ -2597,6 +2635,29 @@ mod tests {
         let response = ProtoApiResponse::<()>::error(err);
         assert!(!response.success);
         assert!(response.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn rank_json_rejections_use_canonical_error_envelope() {
+        for (status, expected_type) in [
+            (StatusCode::BAD_REQUEST, "invalid_json"),
+            (StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported_media_type"),
+            (StatusCode::UNPROCESSABLE_ENTITY, "invalid_request_body"),
+        ] {
+            let response = rank_json_rejection_response(status, "invalid rank request".into());
+            assert_eq!(response.status(), status);
+            assert_eq!(
+                response.headers().get(axum::http::header::CONTENT_TYPE),
+                Some(&axum::http::HeaderValue::from_static("application/json"))
+            );
+            let body = axum::body::to_bytes(response.into_body(), 16 * 1024)
+                .await
+                .unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(body["error"]["type"], expected_type);
+            assert_eq!(body["error"]["message"], "invalid rank request");
+            assert_eq!(body["error"]["code"], status.as_u16());
+        }
     }
 
     #[test]

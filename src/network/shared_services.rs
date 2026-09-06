@@ -449,7 +449,7 @@ pub struct SharedServices {
     ///
     /// REST, gRPC, and Arrow Flight all pull the same `Arc<RankServices>`
     /// from here via `AppState::with_rank_services` / equivalent, so SQL
-    /// `RERANK(...)`, the REST `/api/v1/rank/search` route, and the
+    /// `RERANK(...)`, the REST `/api/v2/rank/search` route, and the
     /// `rank_features_export` Arrow Flight action share the same profile
     /// registry, candidate provider, scorer registry, and metric handles.
     /// Built around `ProductionHybridBackend` so retrieval lights up

@@ -1364,8 +1364,8 @@ export interface paths {
          *     The optional `X-Tenant-ID` header is not consulted by this
          *     handler beyond the standard tenant middleware context.
          *     Extractor rejections (malformed JSON, missing required field,
-         *     wrong content-type) are axum plain-text 400/415/422 — not the
-         *     JSON envelope.
+         *     wrong content-type) are normalized to the canonical JSON error
+         *     envelope with status 400/415/422.
          */
         post: operations["rankSearch"];
         delete?: never;
@@ -7880,8 +7880,37 @@ export interface operations {
                     "application/json": components["schemas"]["RankSearchResponse"];
                 };
             };
-            400: components["responses"]["BadRequest"];
+            /**
+             * @description Invalid rank profile or malformed JSON. Both handler and extractor
+             *     errors use the canonical JSON envelope.
+             */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             404: components["responses"]["NotFound"];
+            /** @description Request body is missing the application/json content type. */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description JSON body has the wrong shape or omits a required field. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             500: components["responses"]["InternalError"];
             /**
              * @description The server was constructed without RankServices — NOT the

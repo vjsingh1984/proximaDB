@@ -40139,8 +40139,8 @@ impl Client {
     /// The optional `X-Tenant-ID` header is not consulted by this
     /// handler beyond the standard tenant middleware context.
     /// Extractor rejections (malformed JSON, missing required field,
-    /// wrong content-type) are axum plain-text 400/415/422 — not the
-    /// JSON envelope.
+    /// wrong content-type) are normalized to the canonical JSON error
+    /// envelope with status 400/415/422.
     ///
     ///
     /// Sends a `POST` request to `/api/v2/rank/search`
@@ -51400,6 +51400,12 @@ pub mod builder {
                     ResponseValue::from_response(response).await?,
                 )),
                 404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                415u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                422u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 500u16 => Err(Error::ErrorResponse(

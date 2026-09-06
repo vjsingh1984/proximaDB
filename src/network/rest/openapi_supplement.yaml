@@ -1174,8 +1174,8 @@ paths:
         The optional `X-Tenant-ID` header is not consulted by this
         handler beyond the standard tenant middleware context.
         Extractor rejections (malformed JSON, missing required field,
-        wrong content-type) are axum plain-text 400/415/422 — not the
-        JSON envelope.
+        wrong content-type) are normalized to the canonical JSON error
+        envelope with status 400/415/422.
       requestBody:
         required: true
         content:
@@ -1189,8 +1189,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RankSearchResponse"
-        "400": { $ref: "#/components/responses/BadRequest" }
+        "400":
+          description: |
+            Invalid rank profile or malformed JSON. Both handler and extractor
+            errors use the canonical JSON envelope.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "415":
+          description: Request body is missing the application/json content type.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "422":
+          description: JSON body has the wrong shape or omits a required field.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
         "500": { $ref: "#/components/responses/InternalError" }
         "501":
           description: |

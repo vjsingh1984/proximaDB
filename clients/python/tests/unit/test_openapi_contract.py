@@ -637,7 +637,18 @@ def test_rank_surface_and_program_census(openapi_spec):
     """TD-SPECRAT-1 wave 8: rank search exposure + census resolutions."""
     op = openapi_spec["paths"]["/api/v2/rank/search"]["post"]
     assert op["operationId"] == "rankSearch"
-    assert sorted(op["responses"]) == ["200", "400", "404", "500", "501"]
+    assert sorted(op["responses"]) == [
+        "200",
+        "400",
+        "404",
+        "415",
+        "422",
+        "500",
+        "501",
+    ]
+    assert set(op["responses"]["400"]["content"]) == {"application/json"}
+    assert set(op["responses"]["415"]["content"]) == {"application/json"}
+    assert set(op["responses"]["422"]["content"]) == {"application/json"}
 
     schemas = openapi_spec["components"]["schemas"]
     expected = {
@@ -688,7 +699,6 @@ def test_rank_surface_and_program_census(openapi_spec):
     all_paths = openapi_spec["paths"]
     assert sum(1 for p in all_paths if p.startswith("/api/v2/model-registries")) == 4
     assert "/api/v2/hybrid/search" in all_paths and "/api/v2/hybrid/index" in all_paths
-
 
 def test_document_surface_has_the_complete_operation_set(openapi_spec):
     """TD-SPECRAT-1 wave 9: document collections — 7 paths / 13 ops."""

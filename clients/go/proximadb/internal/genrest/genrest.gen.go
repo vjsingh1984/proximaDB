@@ -7157,8 +7157,8 @@ type ClientInterface interface {
 	// The optional `X-Tenant-ID` header is not consulted by this
 	// handler beyond the standard tenant middleware context.
 	// Extractor rejections (malformed JSON, missing required field,
-	// wrong content-type) are axum plain-text 400/415/422 — not the
-	// JSON envelope.
+	// wrong content-type) are normalized to the canonical JSON error
+	// envelope with status 400/415/422.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -7178,8 +7178,8 @@ type ClientInterface interface {
 	// The optional `X-Tenant-ID` header is not consulted by this
 	// handler beyond the standard tenant middleware context.
 	// Extractor rejections (malformed JSON, missing required field,
-	// wrong content-type) are axum plain-text 400/415/422 — not the
-	// JSON envelope.
+	// wrong content-type) are normalized to the canonical JSON error
+	// envelope with status 400/415/422.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -10756,8 +10756,8 @@ func (c *Client) ExplainQuery(ctx context.Context, params *ExplainQueryParams, b
 // The optional `X-Tenant-ID` header is not consulted by this
 // handler beyond the standard tenant middleware context.
 // Extractor rejections (malformed JSON, missing required field,
-// wrong content-type) are axum plain-text 400/415/422 — not the
-// JSON envelope.
+// wrong content-type) are normalized to the canonical JSON error
+// envelope with status 400/415/422.
 //
 // Takes any type of body and a specified content type.
 //
@@ -10787,8 +10787,8 @@ func (c *Client) RankSearchWithBody(ctx context.Context, params *RankSearchParam
 // The optional `X-Tenant-ID` header is not consulted by this
 // handler beyond the standard tenant middleware context.
 // Extractor rejections (malformed JSON, missing required field,
-// wrong content-type) are axum plain-text 400/415/422 — not the
-// JSON envelope.
+// wrong content-type) are normalized to the canonical JSON error
+// envelope with status 400/415/422.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -20258,8 +20258,8 @@ type ClientWithResponsesInterface interface {
 	// The optional `X-Tenant-ID` header is not consulted by this
 	// handler beyond the standard tenant middleware context.
 	// Extractor rejections (malformed JSON, missing required field,
-	// wrong content-type) are axum plain-text 400/415/422 — not the
-	// JSON envelope.
+	// wrong content-type) are normalized to the canonical JSON error
+	// envelope with status 400/415/422.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -20279,8 +20279,8 @@ type ClientWithResponsesInterface interface {
 	// The optional `X-Tenant-ID` header is not consulted by this
 	// handler beyond the standard tenant middleware context.
 	// Extractor rejections (malformed JSON, missing required field,
-	// wrong content-type) are axum plain-text 400/415/422 — not the
-	// JSON envelope.
+	// wrong content-type) are normalized to the canonical JSON error
+	// envelope with status 400/415/422.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -26273,9 +26273,13 @@ type RankSearchHTTPResp struct {
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *RankSearchResponse
 	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
+	JSON400 *ErrorResponse
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *ErrorResponse
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 	// JSON501 the response for an HTTP 501 `application/json` response
@@ -26288,13 +26292,23 @@ func (r RankSearchHTTPResp) GetJSON200() *RankSearchResponse {
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r RankSearchHTTPResp) GetJSON400() *BadRequest {
+func (r RankSearchHTTPResp) GetJSON400() *ErrorResponse {
 	return r.JSON400
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r RankSearchHTTPResp) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r RankSearchHTTPResp) GetJSON415() *ErrorResponse {
+	return r.JSON415
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r RankSearchHTTPResp) GetJSON422() *ErrorResponse {
+	return r.JSON422
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -30081,8 +30095,8 @@ func (c *ClientWithResponses) ExplainQueryWithResponse(ctx context.Context, para
 // The optional `X-Tenant-ID` header is not consulted by this
 // handler beyond the standard tenant middleware context.
 // Extractor rejections (malformed JSON, missing required field,
-// wrong content-type) are axum plain-text 400/415/422 — not the
-// JSON envelope.
+// wrong content-type) are normalized to the canonical JSON error
+// envelope with status 400/415/422.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -30108,8 +30122,8 @@ func (c *ClientWithResponses) RankSearchWithBodyWithResponse(ctx context.Context
 // The optional `X-Tenant-ID` header is not consulted by this
 // handler beyond the standard tenant middleware context.
 // Extractor rejections (malformed JSON, missing required field,
-// wrong content-type) are axum plain-text 400/415/422 — not the
-// JSON envelope.
+// wrong content-type) are normalized to the canonical JSON error
+// envelope with status 400/415/422.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -34782,7 +34796,7 @@ func ParseRankSearchHTTPResp(rsp *http.Response) (*RankSearchHTTPResp, error) {
 		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
+		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -34794,6 +34808,20 @@ func ParseRankSearchHTTPResp(rsp *http.Response) (*RankSearchHTTPResp, error) {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
