@@ -825,7 +825,18 @@ mod tests {
                 Value::BinaryValue(vec![7u8; 16]),
             ),
             (
+                Value::UlidValue(vec![8u8; 16]),
+                Value::BinaryValue(vec![8u8; 16]),
+            ),
+            (
                 Value::TimestampValue(1234567890),
+                Value::IntegerValue(1234567890),
+            ),
+            (
+                Value::TimestampTzValue(pv2::TimestampTzValue {
+                    timestamp_us: 1234567890,
+                    timezone: "America/Chicago".to_string(),
+                }),
                 Value::IntegerValue(1234567890),
             ),
             (Value::DateValue(20260), Value::IntegerValue(20260)),
@@ -842,6 +853,15 @@ mod tests {
                 Value::SymbolValue("status".to_string()),
                 Value::TextValue("status".to_string()),
             ),
+            (
+                Value::SparseVectorValue(pv2::SparseVector {
+                    indices: vec![4, 1],
+                    values: vec![0.25, 0.75],
+                    dimension: 8,
+                }),
+                Value::TextValue(r#"{"indices":[4,1],"values":[0.25,0.75]}"#.to_string()),
+            ),
+            (Value::IsNull(true), Value::IsNull(true)),
         ];
 
         for (wire, expected_back) in cases {
@@ -856,6 +876,32 @@ mod tests {
                 back.value,
                 Some(expected_back),
                 "graph-boundary degradation drifted for input {tv_in:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn graph_boundary_rejects_invalid_typed_values() {
+        use pv2::typed_value::Value;
+
+        let invalid = [
+            Value::UuidValue(vec![0; 15]),
+            Value::UlidValue(vec![0; 17]),
+            Value::Int8Value(i32::from(i8::MAX) + 1),
+            Value::Uint8Value(u32::from(u8::MAX) + 1),
+            Value::JsonValue("not-json".to_string()),
+            Value::JsonbValue(vec![0xc1]),
+            Value::IsNull(false),
+        ];
+
+        for wire in invalid {
+            let typed = pv2::TypedValue {
+                declared_type: 0,
+                value: Some(wire),
+            };
+            assert!(
+                typed_value_to_property_value(&typed).is_err(),
+                "invalid typed value must fail before graph mutation: {typed:?}"
             );
         }
     }
