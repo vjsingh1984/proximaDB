@@ -802,7 +802,7 @@ impl RestServer {
             base_state = base_state.with_recall_probe_gate(gate);
         }
         // R-7c.3 production wiring: share the rank-pipeline singleton + the
-        // durable rank-profile catalog so the REST `/api/v1/rank/search` route
+        // durable rank-profile catalog so the REST `/api/v2/rank/search` route
         // and the new `/api/v1/rank/profiles` install endpoints reach the same
         // process-wide `RankServices` that pgwire SQL `RERANK(...)` uses.
         if let Some(services) = rank_services {

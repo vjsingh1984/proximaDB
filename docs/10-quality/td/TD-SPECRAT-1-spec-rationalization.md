@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Waves 1-6 landed (observability+nl, stub-rule fixes, ABAC, collections admin, catalog routing/explain, graph surface); wave 7 (timeseries) landing
+| Status | Waves 1-7 landed; wave 8 (rank + census resolution) landing — the program census closes here
 | Severity | Medium — ~100 route literals across ~15 areas are live on the wire but invisible to every SDK
 | Component | `src/network/rest/openapi_supplement.yaml`; `docs/openapi/proximadb-openapi.yaml`; `clients/*` (regenerated)
 | Relates to | [[TD-SSO-3]] (the census that surfaced the gap); TD-126 (spec-from-code); ADR-041
@@ -307,7 +307,7 @@ embeddings, and return `created_count` for batches. Contract tests pin the real
 list, get, node, traversal, and partial-batch envelopes so flat fake responses
 cannot mask these boundaries again.
 
-== Wave 7: time-series surface (this PR)
+== Wave 7: time-series surface (landed)
 
 **Exposed (5 paths / 6 operations; spec 74 → 79):** the complete
 `/api/v2/timeseries/collections*` surface (TD-TS-1; handlers in
@@ -338,3 +338,79 @@ Rationalization notes:
   to `/query` (serde drops them — never worked), and never calls
   `/aggregate`. Pre-existing, not introduced here — the published spec
   is what makes the divergence visible; the facade fix is a follow-up.
+
+== Wave 8: rank search + program census resolution (this PR)
+
+**Exposed (1 path / 1 operation; spec 79 → 80):**
+`POST /api/v2/rank/search` — the multi-phase ranking pipeline
+(R-7c.1): candidate retrieval (vector + optional BM25 text leg) →
+global composition → optional profile-driven second phase. Retrieval-
+only mode (no `rank_profile`) omits score vectors (NFR-9
+zero-cost-when-unused). Statuses: 200/400/404/501 (RankServices not
+injected — default deployments)/500. Ranked-surface note (mandate 13):
+the pipeline itself is deterministic; profiles embedding MODEL scorers
+become eval-eligible when they ship.
+
+**Program census RESOLVED (the remaining areas from the original
+~100-literal census):**
+
+* **streaming** — WebSocket-only (`/ws/v1/stream/insert|subscribe|
+  status`, `src/network/rest/websocket.rs`, mounted in both server
+  modes). OpenAPI cannot express a WS upgrade/duplex channel, and the
+  four codegen pipelines would generate broken REST methods. NOT
+  spec-exposable; SDKs need hand-written WS transports (a separate
+  workstream, not this program).
+* **prepared-SQL / unified query** — `/api/v2/unified/*` (9 routes:
+  execute, multi-model, federated, distributed, explain, prepare,
+  execute/{id}, prepared/{id} DELETE, prepared/stats). CORRECTED
+  (wave-8 round-2 review): these are LIVE production routes, not stubs —
+  the port has been wired in both server modes since Phase 9.9
+  (`multi_server.rs` always passes `query_adapter: Some(...)`; the v2
+  router mounts them unconditionally; `UnifiedQueryPortImpl` executes
+  real UQL→SQL→federated queries, `prepare_statement` returns 201 and
+  prepared DELETE returns 204). The earlier "ALL return honest 501s"
+  premise was stale — the 501 branch fires only on port-error string
+  matches, not by default. Disposition: **live, needs wave-9 exposure**
+  (they are exactly the live-but-unspec'd condition this program
+  exists to close; exposing them is a spec+SDK wave, not a wiring
+  change).
+* **events** — no REST surface exists (gRPC/eventlog only).
+* **model-registries** — already exposed (4 utoipa-annotated paths in
+  the generated core).
+* **external-collections** — the enterprise-catalogs surface
+  (`/api/v2/catalogs/*`, feature-gated, Iceberg/Delta/UC federation):
+  the one remaining genuinely-exposable area; needs its own
+  census+rationalization wave if product wants SDK access. **Product
+  call required.**
+* **progressive/rank** — hybrid search/index already exposed (wave-1
+  supplement); rank/search exposed by this wave.
+
+**Round-1 adversarial review PROVED the closure claim false** — a
+full router sweep (this review) found ~27 MORE mounted unexposed
+paths beyond the original 15-area census list. The closure is
+corrected to: *wave 8 closes the ORIGINAL census list only*. The
+additional areas now enumerated for waves 9+ (each needs
+expose/defer/never disposition):
+
+* Document CRUD — api-crate `document.rs`: `/{collection}`
+  GET/DELETE, `/{collection}/documents/{id}` GET/PATCH/DELETE,
+  `documents/batch`, `documents/aggregate`, `/{collection}/indexes`
+  POST/GET (5 paths / 10 ops; only the 2 free-form passthrough paths
+  are spec'd).
+* AQL — `/api/v2/aql/execute` + `/audit/{query_id}` (real, RUBICON).
+* Agent memory — `/api/v2/memory/ingest`, `/consolidation/{session_id}`
+  (TD-100/101).
+* Analytics — `/api/v2/analytics/entanglement` (TD-043).
+* Progressive — `/api/v2/progressive/search/{collection_id}` (the
+  wave-8 bullet below cited hybrid, not progressive — corrected).
+* CDC — v2 router `/changes`.
+* Discovery-jobs — v2 router ×3; **external-collections v2** — v2
+  router ×5 paths (Phase 8 F5 — DISTINCT from the enterprise
+  `/api/v2/catalogs/*` surface).
+* Diagnostics — `_diagnostics` ×4; compute suspend/resume ×2
+  (same-class as rank: mounted always, 501 only when service
+  unwired).
+* Carried deferrals — graph `/rag` (501) + branch-merge.
+
+The enterprise external-catalog wave remains additionally, pending a
+product decision.

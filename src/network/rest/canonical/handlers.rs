@@ -245,16 +245,18 @@ pub struct AppState {
     pub queue_client: Option<Arc<proximadb_queue::QueueClient>>,
     /// Optional ranking framework services (R-7c). When `Some`, the
     /// `/api/v2/rank/search` route routes through the multi-phase
-    /// pipeline; when `None`, the route returns 503. See
+    /// pipeline; when `None`, the route returns 501 Not Implemented
+    /// (the DEFAULT server always wires this — 501 is reachable only in
+    /// non-default/embedded constructions). See
     /// `src/network/rest/canonical/rank.rs` and
     /// `roadmap/RANKING_FRAMEWORK_SPEC_2026_05_23.md`.
     pub rank_services: Option<Arc<crate::network::rest::canonical::rank::RankServices>>,
 
     /// Optional durable rank-profile catalog (R-7c.3 production wiring).
-    /// When `Some`, the `/api/v2/rank/profiles` REST routes can install,
-    /// fetch, and remove profiles end-to-end. When `None`, those routes
-    /// return 503. Should always be wired alongside `rank_services` so
-    /// installs reach both the catalog and the live registry.
+    /// NOTE: the `/api/v2/rank/profiles` REST routes referenced below are
+    /// BUILT (rank_profile.rs dispatchers) but NOT MOUNTED anywhere —
+    /// profile management is TOML-file/pgwire-only until they are
+    /// registered (round-1 review finding, TD-SPECRAT-1 wave 8).
     pub rank_profile_store: Option<Arc<dyn crate::services::RankProfileStore>>,
 
     /// Optional recall-probe gate (TD-064 / LLD §5). When `Some`, the v2

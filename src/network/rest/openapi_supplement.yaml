@@ -825,6 +825,59 @@ paths:
                 $ref: "#/components/schemas/TsAggregateResponse"
         "500": { $ref: "#/components/responses/InternalError" }
   # ── Hybrid search (free-form passthrough). ──────────────────────────────
+  # TD-SPECRAT-1 wave 8 — rank search + program census resolution.
+  # POST /api/v2/rank/search: the multi-phase ranking pipeline (R-7c.1),
+  # mounted unconditionally in handlers.rs; no per-route permission gate.
+  # The DEFAULT server wires RankServices (the pipeline serves 200s);
+  # 501 fires only in non-default constructions (embedded/test AppState
+  # without RankServices). 404 = named rank profile not found; 400 =
+  # invalid profile; 500 = pipeline failure. Responses carry per-hit
+  # score vectors only when a rank profile was attached (retrieval-only
+  # mode omits them).
+  /api/v2/rank/search:
+    post:
+      tags: [Rank]
+      operationId: rankSearch
+      summary: Multi-phase ranked search (retrieval + optional rerank profile).
+      description: |
+        Runs the rank pipeline over the target collection: candidate
+        retrieval (vector + optional BM25 text leg), then the global
+        composition phase, then an optional profile-driven second phase.
+        `rank_profile` selects a named profile from the server registry;
+        when omitted, the response is retrieval-only (no score vectors —
+        the zero-cost-when-unused contract). `rank_overrides` tweak
+        per-phase knobs on top of the resolved profile. `query_vector`
+        is the POST-embedding vector (the caller computed it).
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler beyond the standard tenant middleware context.
+        Extractor rejections (malformed JSON, missing required field,
+        wrong content-type) are axum plain-text 400/415/422 — not the
+        JSON envelope.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RankSearchRequest"
+      responses:
+        "200":
+          description: Ranked hits.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RankSearchResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501":
+          description: |
+            The server was constructed without RankServices — NOT the
+            default deployment (the default server wires the pipeline
+            and returns 200s); reachable in embedded/test constructions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v2/hybrid/search:
     post:
       tags: [Hybrid]
@@ -3779,3 +3832,97 @@ components:
         buckets:
           type: array
           items: {}
+    RankPhaseOverride:
+      type: object
+      properties:
+        rerank_count:
+          type: [integer, "null"]
+          format: uint32
+        batch_size:
+          type: [integer, "null"]
+          format: uint32
+    RankOverrides:
+      type: object
+      properties:
+        second_phase: { $ref: "#/components/schemas/RankPhaseOverride" }
+        global_phase: { $ref: "#/components/schemas/RankPhaseOverride" }
+    RankSearchRequest:
+      type: object
+      required: [collection]
+      properties:
+        collection: { type: string }
+        query_vector:
+          type: array
+          items:
+            type: number
+            format: float
+          description: Post-embedding query vector (caller-computed).
+        query_text:
+          type: [string, "null"]
+          description: Optional BM25/full-text leg; absent/empty = vector-only.
+        k:
+          type: integer
+          format: uint64
+          default: 10
+        rank_profile:
+          type: [string, "null"]
+          description: Named profile; omitted = retrieval-only output.
+        rank_overrides: { $ref: "#/components/schemas/RankOverrides" }
+    ScoreComponent:
+      type: object
+      required: [name, value, weight, contribution]
+      properties:
+        name:
+          type: string
+          description: "e.g. bm25(title), closeness(embedding), model(rerank-v3)."
+        value:
+          type: number
+          format: double
+        weight:
+          type: number
+          format: double
+        contribution:
+          type: number
+          format: double
+          description: Typically value * weight.
+    RankScoreVector:
+      type: object
+      required: [primary, phase]
+      properties:
+        primary:
+          type: number
+          format: float
+        phase:
+          type: integer
+          description: JSON-friendly phase ordinal (not the kernel newtype).
+        components:
+          type: array
+          items: { $ref: "#/components/schemas/ScoreComponent" }
+    RankScoredHit:
+      type: object
+      required: [id, score]
+      properties:
+        id: { type: string }
+        score:
+          type: number
+          format: float
+        score_vector: { $ref: "#/components/schemas/RankScoreVector" }
+        match_features:
+          type: object
+          additionalProperties: { type: number, format: double }
+        summary_features:
+          type: object
+          additionalProperties: { type: number, format: double }
+    RankSearchResponse:
+      type: object
+      required: [hits, phase_truncated]
+      properties:
+        hits:
+          type: array
+          items: { $ref: "#/components/schemas/RankScoredHit" }
+        phase_truncated: { type: boolean }
+        rank_profile:
+          type: [string, "null"]
+        rank_profile_version:
+          type: [integer, "null"]
+          format: uint32

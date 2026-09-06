@@ -258,6 +258,14 @@ from .query_logs_response_200 import QueryLogsResponse200
 from .query_request import QueryRequest
 from .query_request_parameters_type_0_item import QueryRequestParametersType0Item
 from .query_response import QueryResponse
+from .rank_overrides import RankOverrides
+from .rank_phase_override import RankPhaseOverride
+from .rank_score_vector import RankScoreVector
+from .rank_scored_hit import RankScoredHit
+from .rank_scored_hit_match_features import RankScoredHitMatchFeatures
+from .rank_scored_hit_summary_features import RankScoredHitSummaryFeatures
+from .rank_search_request import RankSearchRequest
+from .rank_search_response import RankSearchResponse
 from .record_model_decision_mutation import RecordModelDecisionMutation
 from .record_model_decision_mutation_operation import (
     RecordModelDecisionMutationOperation,
@@ -277,6 +285,7 @@ from .scan_records_response import ScanRecordsResponse
 from .schema_change import SchemaChange
 from .schema_definition import SchemaDefinition
 from .schema_response import SchemaResponse
+from .score_component import ScoreComponent
 from .search_entities_request import SearchEntitiesRequest
 from .search_entities_request_filters import SearchEntitiesRequestFilters
 from .search_entities_response import SearchEntitiesResponse
@@ -564,6 +573,14 @@ __all__ = (
     "QueryRequest",
     "QueryRequestParametersType0Item",
     "QueryResponse",
+    "RankOverrides",
+    "RankPhaseOverride",
+    "RankScoredHit",
+    "RankScoredHitMatchFeatures",
+    "RankScoredHitSummaryFeatures",
+    "RankScoreVector",
+    "RankSearchRequest",
+    "RankSearchResponse",
     "RecordModelDecisionMutation",
     "RecordModelDecisionMutationOperation",
     "RecordV2Response",
@@ -579,6 +596,7 @@ __all__ = (
     "SchemaChange",
     "SchemaDefinition",
     "SchemaResponse",
+    "ScoreComponent",
     "SearchEntitiesRequest",
     "SearchEntitiesRequestFilters",
     "SearchEntitiesResponse",
