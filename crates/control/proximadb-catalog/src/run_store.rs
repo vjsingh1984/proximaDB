@@ -711,6 +711,48 @@ pub mod conformance_tests {
                 .contains_key("team")
         );
 
+        // Mutations on an ABSENT run are UnknownRun — never an internal
+        // error (the wire adapter maps this to RESOURCE_DOES_NOT_EXIST).
+        assert_eq!(
+            store.set_tag("no-such-run", "k", "v").await.unwrap_err(),
+            RunStoreError::UnknownRun {
+                run_id: "no-such-run".to_string()
+            }
+        );
+        assert_eq!(
+            store.finish_run("no-such-run", 1).await.unwrap_err(),
+            RunStoreError::UnknownRun {
+                run_id: "no-such-run".to_string()
+            }
+        );
+
+        // Counter preservation across unrelated rewrites: tag writes must
+        // not disturb the metric seq (a lost counter would make the NEXT
+        // append overwrite an existing history doc).
+        store.set_tag("run-0001", "unrelated", "x").await.unwrap();
+        store.delete_tag("run-0001", "unrelated").await.unwrap();
+        store
+            .log_metric(
+                "run-0001",
+                MetricPoint {
+                    key: "rmse".to_string(),
+                    value: 0.8,
+                    timestamp_ms: 3_000,
+                    step: 3,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .metric_history("run-0001", "rmse")
+                .await
+                .unwrap()
+                .len(),
+            3,
+            "seq must survive tag rewrites — history docs must never be overwritten"
+        );
+
         // Dataset inputs are name+digest lineage records.
         let ds = RunDatasetInput {
             dataset_name: "sift1m".to_string(),
@@ -787,7 +829,8 @@ pub mod conformance_tests {
                 .await
                 .unwrap()
                 .len(),
-            2
+            3,
+            "run-0001 history: two early points + the post-tag-rewrite append"
         );
         assert_eq!(
             store

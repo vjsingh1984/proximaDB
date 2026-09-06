@@ -36,7 +36,7 @@ use tokio::sync::Mutex;
 use crate::storage::document::service::scoped_document_collection;
 use crate::storage::document::{DocumentRecord, DocumentService};
 
-const COLLECTION: &str = "_mlflow_tracking";
+const COLLECTION: &str = "mlflow_tracking_system";
 
 /// Process-global mutation locks keyed by collection: two `for_tenant`
 /// instances over the same (service, tenant) must serialize their RMW
@@ -122,7 +122,7 @@ impl SubstrateRunStore {
             tree,
             self.collection.clone(),
             None,
-            Some("_mlflow_tracking".to_string()),
+            Some("mlflow_tracking_system".to_string()),
         );
         self.document
             .insert_document_record(&self.collection, record)
@@ -435,7 +435,7 @@ impl RunStore for SubstrateRunStore {
 
     async fn finish_run(&self, run_id: &str, end_time_ms: i64) -> Result<(), RunStoreError> {
         let _guard = self.mutation_lock.lock().await;
-        let (mut run, counters) = self.run_with_counters(run_id).await.map_err(Self::err)?;
+        let (mut run, counters) = self.run_with_counters(run_id).await?;
         run.status = RunStatus::Finished;
         run.end_time_ms = Some(end_time_ms);
         self.put_run(&run, &counters).await.map_err(Self::err)
@@ -443,21 +443,21 @@ impl RunStore for SubstrateRunStore {
 
     async fn delete_run(&self, run_id: &str) -> Result<(), RunStoreError> {
         let _guard = self.mutation_lock.lock().await;
-        let (mut run, counters) = self.run_with_counters(run_id).await.map_err(Self::err)?;
+        let (mut run, counters) = self.run_with_counters(run_id).await?;
         run.lifecycle = RunLifecycle::Deleted;
         self.put_run(&run, &counters).await.map_err(Self::err)
     }
 
     async fn restore_run(&self, run_id: &str) -> Result<(), RunStoreError> {
         let _guard = self.mutation_lock.lock().await;
-        let (mut run, counters) = self.run_with_counters(run_id).await.map_err(Self::err)?;
+        let (mut run, counters) = self.run_with_counters(run_id).await?;
         run.lifecycle = RunLifecycle::Active;
         self.put_run(&run, &counters).await.map_err(Self::err)
     }
 
     async fn log_param(&self, run_id: &str, key: &str, value: &str) -> Result<(), RunStoreError> {
         let _guard = self.mutation_lock.lock().await;
-        let (mut run, counters) = self.run_with_counters(run_id).await.map_err(Self::err)?;
+        let (mut run, counters) = self.run_with_counters(run_id).await?;
         if run.status == RunStatus::Finished {
             return Err(RunStoreError::RunFinished {
                 run_id: run_id.to_string(),
@@ -482,7 +482,7 @@ impl RunStore for SubstrateRunStore {
         point: MetricPoint,
     ) -> Result<MetricAppend, RunStoreError> {
         let _guard = self.mutation_lock.lock().await;
-        let (mut run, mut counters) = self.run_with_counters(run_id).await.map_err(Self::err)?;
+        let (mut run, mut counters) = self.run_with_counters(run_id).await?;
         if run.status == RunStatus::Finished {
             return Err(RunStoreError::RunFinished {
                 run_id: run_id.to_string(),
@@ -490,7 +490,7 @@ impl RunStore for SubstrateRunStore {
         }
         // seq lives in the run DOC's ctr_* fields (never the tags map); the
         // history point is its own append-only doc.
-        let counter_key = sanitize(&point.key);
+        let counter_key = counter_key(&point.key);
         let next_seq = counters.get(&counter_key).copied().unwrap_or(0) + 1;
         counters.insert(counter_key, next_seq);
         run.latest_metrics.insert(point.key.clone(), point.clone());
@@ -539,15 +539,24 @@ impl RunStore for SubstrateRunStore {
         for doc in result.documents {
             let seq = match doc.props.get("seq") {
                 Some(ProximaTreeNode::Value(ProximaValue::Int64(s))) => *s as u64,
-                _ => 0,
-            };
-            if let Some(ProximaTreeNode::Value(ProximaValue::String(json))) =
-                doc.props.get("payload")
-            {
-                if let Ok(point) = serde_json::from_str::<MetricPoint>(json) {
-                    points.push((seq, point));
+                other => {
+                    return Err(Self::err(anyhow::anyhow!(
+                        "metric doc '{}' missing its seq field ({other:?}) — cannot order history",
+                        doc.id
+                    )));
                 }
-            }
+            };
+            let Some(ProximaTreeNode::Value(ProximaValue::String(json))) = doc.props.get("payload")
+            else {
+                return Err(Self::err(anyhow::anyhow!(
+                    "metric doc '{}' has no payload",
+                    doc.id
+                )));
+            };
+            let point: MetricPoint = serde_json::from_str(json)
+                .with_context(|| format!("corrupt metric doc '{}'", doc.id))
+                .map_err(Self::err)?;
+            points.push((seq, point));
         }
         points.sort_by_key(|(seq, _)| *seq);
         Ok(points.into_iter().map(|(_, p)| p).collect())
@@ -555,14 +564,14 @@ impl RunStore for SubstrateRunStore {
 
     async fn set_tag(&self, run_id: &str, key: &str, value: &str) -> Result<(), RunStoreError> {
         let _guard = self.mutation_lock.lock().await;
-        let (mut run, counters) = self.run_with_counters(run_id).await.map_err(Self::err)?;
+        let (mut run, counters) = self.run_with_counters(run_id).await?;
         run.tags.insert(key.to_string(), value.to_string());
         self.put_run(&run, &counters).await.map_err(Self::err)
     }
 
     async fn delete_tag(&self, run_id: &str, key: &str) -> Result<(), RunStoreError> {
         let _guard = self.mutation_lock.lock().await;
-        let (mut run, counters) = self.run_with_counters(run_id).await.map_err(Self::err)?;
+        let (mut run, counters) = self.run_with_counters(run_id).await?;
         run.tags.remove(key);
         self.put_run(&run, &counters).await.map_err(Self::err)
     }
@@ -573,7 +582,7 @@ impl RunStore for SubstrateRunStore {
         input: RunDatasetInput,
     ) -> Result<(), RunStoreError> {
         let _guard = self.mutation_lock.lock().await;
-        let (mut run, mut counters) = self.run_with_counters(run_id).await.map_err(Self::err)?;
+        let (mut run, mut counters) = self.run_with_counters(run_id).await?;
         let n = counters.get("ds").copied().unwrap_or(0) + 1;
         counters.insert("ds".to_string(), n);
         self.put_run(&run, &counters).await.map_err(Self::err)?;
@@ -606,13 +615,17 @@ impl RunStore for SubstrateRunStore {
             .map_err(Self::err)?;
         let mut inputs = Vec::new();
         for doc in result.documents {
-            if let Some(ProximaTreeNode::Value(ProximaValue::String(json))) =
-                doc.props.get("payload")
-            {
-                if let Ok(input) = serde_json::from_str::<RunDatasetInput>(json) {
-                    inputs.push(input);
-                }
-            }
+            let Some(ProximaTreeNode::Value(ProximaValue::String(json))) = doc.props.get("payload")
+            else {
+                return Err(Self::err(anyhow::anyhow!(
+                    "dataset doc '{}' has no payload",
+                    doc.id
+                )));
+            };
+            let input: RunDatasetInput = serde_json::from_str(json)
+                .with_context(|| format!("corrupt dataset doc '{}'", doc.id))
+                .map_err(Self::err)?;
+            inputs.push(input);
         }
         Ok(inputs)
     }
@@ -646,20 +659,30 @@ impl SubstrateRunStore {
     }
 
     /// Read the run record TOGETHER with its durable counters.
-    async fn run_with_counters(&self, run_id: &str) -> Result<(RunRecord, BTreeMap<String, u64>)> {
-        let Some(record) = self
+    /// Absent runs surface as the typed [`RunStoreError::UnknownRun`] —
+    /// mutations on a nonexistent id must NOT collapse into Internal (the
+    /// MLflow adapter maps UnknownRun to RESOURCE_DOES_NOT_EXIST).
+    async fn run_with_counters(
+        &self,
+        run_id: &str,
+    ) -> Result<(RunRecord, BTreeMap<String, u64>), RunStoreError> {
+        let record = self
             .document
             .get_document(&self.collection, &format!("run-{run_id}"), None)
-            .await?
-        else {
-            anyhow::bail!("run '{run_id}' not found");
-        };
+            .await
+            .map_err(Self::err)?
+            .ok_or_else(|| RunStoreError::UnknownRun {
+                run_id: run_id.to_string(),
+            })?;
         let Some(ProximaTreeNode::Value(ProximaValue::String(json))) = record.props.get("payload")
         else {
-            anyhow::bail!("run document has no payload");
+            return Err(Self::err(anyhow::anyhow!(
+                "run document '{run_id}' has no payload"
+            )));
         };
         let run: RunRecord = serde_json::from_str(json)
-            .with_context(|| format!("corrupt run doc '{}'", record.id))?;
+            .with_context(|| format!("corrupt run doc '{}'", record.id))
+            .map_err(Self::err)?;
         let mut counters = BTreeMap::new();
         for (key, node) in &record.props {
             if let (Some(name), ProximaTreeNode::Value(ProximaValue::Int64(v))) =
@@ -672,16 +695,18 @@ impl SubstrateRunStore {
     }
 }
 
-/// Metric keys become tag-map keys (`seq_<key>`); keep them in the tag
-/// charset to avoid colliding with user tags visibly.
-fn sanitize(key: &str) -> String {
-    key.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' || c == '.' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
+/// Lossless counter-key encoding: every byte outside `[A-Za-z0-9]` becomes
+/// `%xx`, so distinct metric keys (e.g. `a/b` vs `a-b`) can never share a
+/// counter. Metric counters are namespaced `m_<key>` so a metric literally
+/// named `ds` cannot collide with the dataset counter.
+fn counter_key(key: &str) -> String {
+    let mut out = String::from("m_");
+    for b in key.as_bytes() {
+        if b.is_ascii_alphanumeric() {
+            out.push(*b as char);
+        } else {
+            out.push_str(&format!("%{b:02x}"));
+        }
+    }
+    out
 }
