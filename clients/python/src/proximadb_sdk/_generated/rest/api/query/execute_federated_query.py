@@ -85,6 +85,9 @@ def sync_detailed(
 ) -> Response[Any | UnifiedBareError]:
     """Execute a federated query.
 
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler — unified queries run without tenant selection.
+
     Args:
         x_tenant_id (str | Unset):
         body (UnifiedFederatedRequest):
@@ -117,6 +120,9 @@ def sync(
 ) -> Any | UnifiedBareError | None:
     """Execute a federated query.
 
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler — unified queries run without tenant selection.
+
     Args:
         x_tenant_id (str | Unset):
         body (UnifiedFederatedRequest):
@@ -143,6 +149,9 @@ async def asyncio_detailed(
     x_tenant_id: str | Unset = UNSET,
 ) -> Response[Any | UnifiedBareError]:
     """Execute a federated query.
+
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler — unified queries run without tenant selection.
 
     Args:
         x_tenant_id (str | Unset):
@@ -173,6 +182,9 @@ async def asyncio(
     x_tenant_id: str | Unset = UNSET,
 ) -> Any | UnifiedBareError | None:
     """Execute a federated query.
+
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler — unified queries run without tenant selection.
 
     Args:
         x_tenant_id (str | Unset):

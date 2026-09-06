@@ -12,13 +12,13 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.unified_bare_error import UnifiedBareError
-from ...models.unified_federated_request import UnifiedFederatedRequest
+from ...models.unified_distributed_request import UnifiedDistributedRequest
 from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     *,
-    body: UnifiedFederatedRequest,
+    body: UnifiedDistributedRequest,
     x_tenant_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
@@ -75,14 +75,19 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
-    body: UnifiedFederatedRequest,
+    body: UnifiedDistributedRequest,
     x_tenant_id: str | Unset = UNSET,
 ) -> Response[Any | UnifiedBareError]:
     """Execute a distributed query.
 
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler — unified queries run without tenant selection.
+
     Args:
         x_tenant_id (str | Unset):
-        body (UnifiedFederatedRequest):
+        body (UnifiedDistributedRequest): Like the federated request, plus an optional row limit
+            the impl
+            applies to the distributed result.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -107,14 +112,19 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
-    body: UnifiedFederatedRequest,
+    body: UnifiedDistributedRequest,
     x_tenant_id: str | Unset = UNSET,
 ) -> Any | UnifiedBareError | None:
     """Execute a distributed query.
 
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler — unified queries run without tenant selection.
+
     Args:
         x_tenant_id (str | Unset):
-        body (UnifiedFederatedRequest):
+        body (UnifiedDistributedRequest): Like the federated request, plus an optional row limit
+            the impl
+            applies to the distributed result.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -134,14 +144,19 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
-    body: UnifiedFederatedRequest,
+    body: UnifiedDistributedRequest,
     x_tenant_id: str | Unset = UNSET,
 ) -> Response[Any | UnifiedBareError]:
     """Execute a distributed query.
 
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler — unified queries run without tenant selection.
+
     Args:
         x_tenant_id (str | Unset):
-        body (UnifiedFederatedRequest):
+        body (UnifiedDistributedRequest): Like the federated request, plus an optional row limit
+            the impl
+            applies to the distributed result.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -164,14 +179,19 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
-    body: UnifiedFederatedRequest,
+    body: UnifiedDistributedRequest,
     x_tenant_id: str | Unset = UNSET,
 ) -> Any | UnifiedBareError | None:
     """Execute a distributed query.
 
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler — unified queries run without tenant selection.
+
     Args:
         x_tenant_id (str | Unset):
-        body (UnifiedFederatedRequest):
+        body (UnifiedDistributedRequest): Like the federated request, plus an optional row limit
+            the impl
+            applies to the distributed result.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

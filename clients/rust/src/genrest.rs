@@ -15959,6 +15959,53 @@ pub mod types {
             Default::default()
         }
     }
+    /// Like the federated request, plus an optional row limit the impl
+    /// applies to the distributed result.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Like the federated request, plus an optional row limit the impl\napplies to the distributed result.\n",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "query"
+    ///  ],
+    ///  "properties": {
+    ///    "limit": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint32"
+    ///    },
+    ///    "parameters": {
+    ///      "type": [
+    ///        "array",
+    ///        "null"
+    ///      ],
+    ///      "items": {}
+    ///    },
+    ///    "query": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct UnifiedDistributedRequest {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub limit: ::std::option::Option<u32>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub parameters: ::std::option::Option<::std::vec::Vec<::serde_json::Value>>,
+        pub query: ::std::string::String,
+    }
+    impl UnifiedDistributedRequest {
+        pub fn builder() -> builder::UnifiedDistributedRequest {
+            Default::default()
+        }
+    }
     ///`UnifiedExecutePreparedRequest`
     ///
     /// <details><summary>JSON schema</summary>
@@ -36498,6 +36545,79 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct UnifiedDistributedRequest {
+            limit: ::std::result::Result<::std::option::Option<u32>, ::std::string::String>,
+            parameters: ::std::result::Result<
+                ::std::option::Option<::std::vec::Vec<::serde_json::Value>>,
+                ::std::string::String,
+            >,
+            query: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for UnifiedDistributedRequest {
+            fn default() -> Self {
+                Self {
+                    limit: Ok(Default::default()),
+                    parameters: Ok(Default::default()),
+                    query: Err("no value supplied for query".to_string()),
+                }
+            }
+        }
+        impl UnifiedDistributedRequest {
+            pub fn limit<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.limit = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for limit: {e}"));
+                self
+            }
+            pub fn parameters<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::std::option::Option<::std::vec::Vec<::serde_json::Value>>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.parameters = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for parameters: {e}"));
+                self
+            }
+            pub fn query<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.query = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for query: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<UnifiedDistributedRequest> for super::UnifiedDistributedRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: UnifiedDistributedRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    limit: value.limit?,
+                    parameters: value.parameters?,
+                    query: value.query?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::UnifiedDistributedRequest> for UnifiedDistributedRequest {
+            fn from(value: super::UnifiedDistributedRequest) -> Self {
+                Self {
+                    limit: Ok(value.limit),
+                    parameters: Ok(value.parameters),
+                    query: Ok(value.query),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct UnifiedExecutePreparedRequest {
             collection: ::std::result::Result<
                 ::std::option::Option<::std::string::String>,
@@ -40171,6 +40291,10 @@ impl Client {
     }
     /// Execute a distributed query
     ///
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — unified queries run without tenant selection.
+    ///
+    ///
     /// Sends a `POST` request to `/api/v2/unified/distributed`
     ///
     /// Arguments:
@@ -40188,6 +40312,10 @@ impl Client {
     }
     /// Execute a unified (UQL) query
     ///
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — unified queries run without tenant selection.
+    ///
+    ///
     /// Sends a `POST` request to `/api/v2/unified/execute`
     ///
     /// Arguments:
@@ -40204,6 +40332,10 @@ impl Client {
         builder::ExecuteUnifiedQuery::new(self)
     }
     /// Execute a prepared statement with parameters
+    ///
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — unified queries run without tenant selection.
+    ///
     ///
     /// Sends a `POST` request to `/api/v2/unified/execute/{statement_id}`
     ///
@@ -40224,6 +40356,10 @@ impl Client {
     }
     /// Explain a unified query (plan, no execution)
     ///
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — unified queries run without tenant selection.
+    ///
+    ///
     /// Sends a `POST` request to `/api/v2/unified/explain`
     ///
     /// Arguments:
@@ -40240,6 +40376,10 @@ impl Client {
         builder::ExplainUnifiedQuery::new(self)
     }
     /// Execute a federated query
+    ///
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — unified queries run without tenant selection.
+    ///
     ///
     /// Sends a `POST` request to `/api/v2/unified/federated`
     ///
@@ -40258,6 +40398,10 @@ impl Client {
     }
     /// Execute a multi-model query (free-form body)
     ///
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — unified queries run without tenant selection.
+    ///
+    ///
     /// Sends a `POST` request to `/api/v2/unified/multi-model`
     ///
     /// Arguments:
@@ -40274,6 +40418,10 @@ impl Client {
         builder::ExecuteMultiModelQuery::new(self)
     }
     /// Prepare a statement for repeated execution
+    ///
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — unified queries run without tenant selection.
+    ///
     ///
     /// Sends a `POST` request to `/api/v2/unified/prepare`
     ///
@@ -40292,6 +40440,10 @@ impl Client {
     }
     /// Prepared-statement execution statistics
     ///
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — unified queries run without tenant selection.
+    ///
+    ///
     /// Sends a `POST` request to `/api/v2/unified/prepared/stats`
     ///
     /// Arguments:
@@ -40308,6 +40460,10 @@ impl Client {
         builder::GetPreparedStats::new(self)
     }
     /// Delete a prepared statement
+    ///
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — unified queries run without tenant selection.
+    ///
     ///
     /// Sends a `DELETE` request to `/api/v2/unified/prepared/{statement_id}`
     ///
@@ -51946,7 +52102,7 @@ pub mod builder {
     pub struct ExecuteDistributedQuery<'a> {
         client: &'a super::Client,
         x_tenant_id: Result<Option<::std::string::String>, String>,
-        body: Result<types::builder::UnifiedFederatedRequest, String>,
+        body: Result<types::builder::UnifiedDistributedRequest, String>,
     }
     impl<'a> ExecuteDistributedQuery<'a> {
         pub fn new(client: &'a super::Client) -> Self {
@@ -51967,12 +52123,13 @@ pub mod builder {
         }
         pub fn body<V>(mut self, value: V) -> Self
         where
-            V: std::convert::TryInto<types::UnifiedFederatedRequest>,
-            <V as std::convert::TryInto<types::UnifiedFederatedRequest>>::Error: std::fmt::Display,
+            V: std::convert::TryInto<types::UnifiedDistributedRequest>,
+            <V as std::convert::TryInto<types::UnifiedDistributedRequest>>::Error:
+                std::fmt::Display,
         {
             self.body = value.try_into().map(From::from).map_err(|s| {
                 format!(
-                    "conversion to `UnifiedFederatedRequest` for body failed: {}",
+                    "conversion to `UnifiedDistributedRequest` for body failed: {}",
                     s
                 )
             });
@@ -51981,8 +52138,8 @@ pub mod builder {
         pub fn body_map<F>(mut self, f: F) -> Self
         where
             F: std::ops::FnOnce(
-                    types::builder::UnifiedFederatedRequest,
-                ) -> types::builder::UnifiedFederatedRequest,
+                    types::builder::UnifiedDistributedRequest,
+                ) -> types::builder::UnifiedDistributedRequest,
         {
             self.body = self.body.map(f);
             self
@@ -52000,7 +52157,7 @@ pub mod builder {
             let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let body = body
                 .and_then(|v| {
-                    types::UnifiedFederatedRequest::try_from(v).map_err(|e| e.to_string())
+                    types::UnifiedDistributedRequest::try_from(v).map_err(|e| e.to_string())
                 })
                 .map_err(Error::InvalidRequest)?;
             let url = format!("{}/api/v2/unified/distributed", client.baseurl,);

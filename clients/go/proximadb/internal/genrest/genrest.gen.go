@@ -3267,6 +3267,14 @@ type UnifiedBareError struct {
 	Error string `json:"error"`
 }
 
+// UnifiedDistributedRequest Like the federated request, plus an optional row limit the impl
+// applies to the distributed result.
+type UnifiedDistributedRequest struct {
+	Limit      *uint32        `json:"limit,omitempty"`
+	Parameters *[]interface{} `json:"parameters,omitempty"`
+	Query      string         `json:"query"`
+}
+
 // UnifiedExecutePreparedRequest defines model for UnifiedExecutePreparedRequest.
 type UnifiedExecutePreparedRequest struct {
 	Collection *string        `json:"collection,omitempty"`
@@ -4503,7 +4511,7 @@ type IngestTimeseriesJSONRequestBody = TsIngestRequest
 type QueryTimeseriesJSONRequestBody = TsQueryRequest
 
 // ExecuteDistributedQueryJSONRequestBody defines body for ExecuteDistributedQuery for application/json ContentType.
-type ExecuteDistributedQueryJSONRequestBody = UnifiedFederatedRequest
+type ExecuteDistributedQueryJSONRequestBody = UnifiedDistributedRequest
 
 // ExecuteUnifiedQueryJSONRequestBody defines body for ExecuteUnifiedQuery for application/json ContentType.
 type ExecuteUnifiedQueryJSONRequestBody = UnifiedExecuteRequest
@@ -7271,12 +7279,18 @@ type ClientInterface interface {
 
 	// ExecuteDistributedQueryWithBody Execute a distributed query.
 	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /api/v2/unified/distributed (the `ExecuteDistributedQuery` operationId).
 	ExecuteDistributedQueryWithBody(ctx context.Context, params *ExecuteDistributedQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ExecuteDistributedQuery Execute a distributed query.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7285,12 +7299,18 @@ type ClientInterface interface {
 
 	// ExecuteUnifiedQueryWithBody Execute a unified (UQL) query.
 	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /api/v2/unified/execute (the `ExecuteUnifiedQuery` operationId).
 	ExecuteUnifiedQueryWithBody(ctx context.Context, params *ExecuteUnifiedQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ExecuteUnifiedQuery Execute a unified (UQL) query.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7299,12 +7319,18 @@ type ClientInterface interface {
 
 	// ExecutePreparedStatementWithBody Execute a prepared statement with parameters.
 	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /api/v2/unified/execute/{statement_id} (the `ExecutePreparedStatement` operationId).
 	ExecutePreparedStatementWithBody(ctx context.Context, statementId string, params *ExecutePreparedStatementParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ExecutePreparedStatement Execute a prepared statement with parameters.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7313,12 +7339,18 @@ type ClientInterface interface {
 
 	// ExplainUnifiedQueryWithBody Explain a unified query (plan, no execution).
 	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /api/v2/unified/explain (the `ExplainUnifiedQuery` operationId).
 	ExplainUnifiedQueryWithBody(ctx context.Context, params *ExplainUnifiedQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ExplainUnifiedQuery Explain a unified query (plan, no execution).
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7327,12 +7359,18 @@ type ClientInterface interface {
 
 	// ExecuteFederatedQueryWithBody Execute a federated query.
 	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /api/v2/unified/federated (the `ExecuteFederatedQuery` operationId).
 	ExecuteFederatedQueryWithBody(ctx context.Context, params *ExecuteFederatedQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ExecuteFederatedQuery Execute a federated query.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7341,12 +7379,18 @@ type ClientInterface interface {
 
 	// ExecuteMultiModelQueryWithBody Execute a multi-model query (free-form body).
 	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /api/v2/unified/multi-model (the `ExecuteMultiModelQuery` operationId).
 	ExecuteMultiModelQueryWithBody(ctx context.Context, params *ExecuteMultiModelQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ExecuteMultiModelQuery Execute a multi-model query (free-form body).
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7355,12 +7399,18 @@ type ClientInterface interface {
 
 	// PrepareStatementWithBody Prepare a statement for repeated execution.
 	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /api/v2/unified/prepare (the `PrepareStatement` operationId).
 	PrepareStatementWithBody(ctx context.Context, params *PrepareStatementParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PrepareStatement Prepare a statement for repeated execution.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7369,6 +7419,9 @@ type ClientInterface interface {
 
 	// GetPreparedStatsWithBody Prepared-statement execution statistics.
 	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /api/v2/unified/prepared/stats (the `GetPreparedStats` operationId).
@@ -7376,12 +7429,18 @@ type ClientInterface interface {
 
 	// GetPreparedStats Prepared-statement execution statistics.
 	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /api/v2/unified/prepared/stats (the `GetPreparedStats` operationId).
 	GetPreparedStats(ctx context.Context, params *GetPreparedStatsParams, body GetPreparedStatsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeletePreparedStatement Delete a prepared statement.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
 	//
 	// Corresponds with DELETE /api/v2/unified/prepared/{statement_id} (the `DeletePreparedStatement` operationId).
 	DeletePreparedStatement(ctx context.Context, statementId string, params *DeletePreparedStatementParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -10959,6 +11018,9 @@ func (c *Client) QueryTimeseries(ctx context.Context, collectionId string, param
 
 // ExecuteDistributedQueryWithBody Execute a distributed query.
 //
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /api/v2/unified/distributed (the `ExecuteDistributedQuery` operationId).
@@ -10975,6 +11037,9 @@ func (c *Client) ExecuteDistributedQueryWithBody(ctx context.Context, params *Ex
 }
 
 // ExecuteDistributedQuery Execute a distributed query.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -10993,6 +11058,9 @@ func (c *Client) ExecuteDistributedQuery(ctx context.Context, params *ExecuteDis
 
 // ExecuteUnifiedQueryWithBody Execute a unified (UQL) query.
 //
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /api/v2/unified/execute (the `ExecuteUnifiedQuery` operationId).
@@ -11009,6 +11077,9 @@ func (c *Client) ExecuteUnifiedQueryWithBody(ctx context.Context, params *Execut
 }
 
 // ExecuteUnifiedQuery Execute a unified (UQL) query.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -11027,6 +11098,9 @@ func (c *Client) ExecuteUnifiedQuery(ctx context.Context, params *ExecuteUnified
 
 // ExecutePreparedStatementWithBody Execute a prepared statement with parameters.
 //
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /api/v2/unified/execute/{statement_id} (the `ExecutePreparedStatement` operationId).
@@ -11043,6 +11117,9 @@ func (c *Client) ExecutePreparedStatementWithBody(ctx context.Context, statement
 }
 
 // ExecutePreparedStatement Execute a prepared statement with parameters.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -11061,6 +11138,9 @@ func (c *Client) ExecutePreparedStatement(ctx context.Context, statementId strin
 
 // ExplainUnifiedQueryWithBody Explain a unified query (plan, no execution).
 //
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /api/v2/unified/explain (the `ExplainUnifiedQuery` operationId).
@@ -11077,6 +11157,9 @@ func (c *Client) ExplainUnifiedQueryWithBody(ctx context.Context, params *Explai
 }
 
 // ExplainUnifiedQuery Explain a unified query (plan, no execution).
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -11095,6 +11178,9 @@ func (c *Client) ExplainUnifiedQuery(ctx context.Context, params *ExplainUnified
 
 // ExecuteFederatedQueryWithBody Execute a federated query.
 //
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /api/v2/unified/federated (the `ExecuteFederatedQuery` operationId).
@@ -11111,6 +11197,9 @@ func (c *Client) ExecuteFederatedQueryWithBody(ctx context.Context, params *Exec
 }
 
 // ExecuteFederatedQuery Execute a federated query.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -11129,6 +11218,9 @@ func (c *Client) ExecuteFederatedQuery(ctx context.Context, params *ExecuteFeder
 
 // ExecuteMultiModelQueryWithBody Execute a multi-model query (free-form body).
 //
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /api/v2/unified/multi-model (the `ExecuteMultiModelQuery` operationId).
@@ -11145,6 +11237,9 @@ func (c *Client) ExecuteMultiModelQueryWithBody(ctx context.Context, params *Exe
 }
 
 // ExecuteMultiModelQuery Execute a multi-model query (free-form body).
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -11163,6 +11258,9 @@ func (c *Client) ExecuteMultiModelQuery(ctx context.Context, params *ExecuteMult
 
 // PrepareStatementWithBody Prepare a statement for repeated execution.
 //
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /api/v2/unified/prepare (the `PrepareStatement` operationId).
@@ -11179,6 +11277,9 @@ func (c *Client) PrepareStatementWithBody(ctx context.Context, params *PrepareSt
 }
 
 // PrepareStatement Prepare a statement for repeated execution.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -11197,6 +11298,9 @@ func (c *Client) PrepareStatement(ctx context.Context, params *PrepareStatementP
 
 // GetPreparedStatsWithBody Prepared-statement execution statistics.
 //
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /api/v2/unified/prepared/stats (the `GetPreparedStats` operationId).
@@ -11214,6 +11318,9 @@ func (c *Client) GetPreparedStatsWithBody(ctx context.Context, params *GetPrepar
 
 // GetPreparedStats Prepared-statement execution statistics.
 //
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /api/v2/unified/prepared/stats (the `GetPreparedStats` operationId).
@@ -11230,6 +11337,9 @@ func (c *Client) GetPreparedStats(ctx context.Context, params *GetPreparedStatsP
 }
 
 // DeletePreparedStatement Delete a prepared statement.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
 //
 // Corresponds with DELETE /api/v2/unified/prepared/{statement_id} (the `DeletePreparedStatement` operationId).
 func (c *Client) DeletePreparedStatement(ctx context.Context, statementId string, params *DeletePreparedStatementParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -20274,12 +20384,18 @@ type ClientWithResponsesInterface interface {
 
 	// ExecuteDistributedQueryWithBodyWithResponse Execute a distributed query.
 	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v2/unified/distributed (the `ExecuteDistributedQuery` operationId).
 	ExecuteDistributedQueryWithBodyWithResponse(ctx context.Context, params *ExecuteDistributedQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecuteDistributedQueryHTTPResp, error)
 
 	// ExecuteDistributedQueryWithResponse Execute a distributed query.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -20288,12 +20404,18 @@ type ClientWithResponsesInterface interface {
 
 	// ExecuteUnifiedQueryWithBodyWithResponse Execute a unified (UQL) query.
 	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v2/unified/execute (the `ExecuteUnifiedQuery` operationId).
 	ExecuteUnifiedQueryWithBodyWithResponse(ctx context.Context, params *ExecuteUnifiedQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecuteUnifiedQueryHTTPResp, error)
 
 	// ExecuteUnifiedQueryWithResponse Execute a unified (UQL) query.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -20302,12 +20424,18 @@ type ClientWithResponsesInterface interface {
 
 	// ExecutePreparedStatementWithBodyWithResponse Execute a prepared statement with parameters.
 	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v2/unified/execute/{statement_id} (the `ExecutePreparedStatement` operationId).
 	ExecutePreparedStatementWithBodyWithResponse(ctx context.Context, statementId string, params *ExecutePreparedStatementParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecutePreparedStatementHTTPResp, error)
 
 	// ExecutePreparedStatementWithResponse Execute a prepared statement with parameters.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -20316,12 +20444,18 @@ type ClientWithResponsesInterface interface {
 
 	// ExplainUnifiedQueryWithBodyWithResponse Explain a unified query (plan, no execution).
 	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v2/unified/explain (the `ExplainUnifiedQuery` operationId).
 	ExplainUnifiedQueryWithBodyWithResponse(ctx context.Context, params *ExplainUnifiedQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExplainUnifiedQueryHTTPResp, error)
 
 	// ExplainUnifiedQueryWithResponse Explain a unified query (plan, no execution).
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -20330,12 +20464,18 @@ type ClientWithResponsesInterface interface {
 
 	// ExecuteFederatedQueryWithBodyWithResponse Execute a federated query.
 	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v2/unified/federated (the `ExecuteFederatedQuery` operationId).
 	ExecuteFederatedQueryWithBodyWithResponse(ctx context.Context, params *ExecuteFederatedQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecuteFederatedQueryHTTPResp, error)
 
 	// ExecuteFederatedQueryWithResponse Execute a federated query.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -20344,12 +20484,18 @@ type ClientWithResponsesInterface interface {
 
 	// ExecuteMultiModelQueryWithBodyWithResponse Execute a multi-model query (free-form body).
 	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v2/unified/multi-model (the `ExecuteMultiModelQuery` operationId).
 	ExecuteMultiModelQueryWithBodyWithResponse(ctx context.Context, params *ExecuteMultiModelQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecuteMultiModelQueryHTTPResp, error)
 
 	// ExecuteMultiModelQueryWithResponse Execute a multi-model query (free-form body).
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -20358,12 +20504,18 @@ type ClientWithResponsesInterface interface {
 
 	// PrepareStatementWithBodyWithResponse Prepare a statement for repeated execution.
 	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v2/unified/prepare (the `PrepareStatement` operationId).
 	PrepareStatementWithBodyWithResponse(ctx context.Context, params *PrepareStatementParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PrepareStatementHTTPResp, error)
 
 	// PrepareStatementWithResponse Prepare a statement for repeated execution.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -20372,6 +20524,9 @@ type ClientWithResponsesInterface interface {
 
 	// GetPreparedStatsWithBodyWithResponse Prepared-statement execution statistics.
 	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v2/unified/prepared/stats (the `GetPreparedStats` operationId).
@@ -20379,12 +20534,18 @@ type ClientWithResponsesInterface interface {
 
 	// GetPreparedStatsWithResponse Prepared-statement execution statistics.
 	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v2/unified/prepared/stats (the `GetPreparedStats` operationId).
 	GetPreparedStatsWithResponse(ctx context.Context, params *GetPreparedStatsParams, body GetPreparedStatsJSONRequestBody, reqEditors ...RequestEditorFn) (*GetPreparedStatsHTTPResp, error)
 
 	// DeletePreparedStatementWithResponse Delete a prepared statement.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -30130,6 +30291,9 @@ func (c *ClientWithResponses) QueryTimeseriesWithResponse(ctx context.Context, c
 
 // ExecuteDistributedQueryWithBodyWithResponse Execute a distributed query.
 //
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/v2/unified/distributed (the `ExecuteDistributedQuery` operationId).
@@ -30142,6 +30306,9 @@ func (c *ClientWithResponses) ExecuteDistributedQueryWithBodyWithResponse(ctx co
 }
 
 // ExecuteDistributedQueryWithResponse Execute a distributed query.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -30156,6 +30323,9 @@ func (c *ClientWithResponses) ExecuteDistributedQueryWithResponse(ctx context.Co
 
 // ExecuteUnifiedQueryWithBodyWithResponse Execute a unified (UQL) query.
 //
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/v2/unified/execute (the `ExecuteUnifiedQuery` operationId).
@@ -30168,6 +30338,9 @@ func (c *ClientWithResponses) ExecuteUnifiedQueryWithBodyWithResponse(ctx contex
 }
 
 // ExecuteUnifiedQueryWithResponse Execute a unified (UQL) query.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -30182,6 +30355,9 @@ func (c *ClientWithResponses) ExecuteUnifiedQueryWithResponse(ctx context.Contex
 
 // ExecutePreparedStatementWithBodyWithResponse Execute a prepared statement with parameters.
 //
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/v2/unified/execute/{statement_id} (the `ExecutePreparedStatement` operationId).
@@ -30194,6 +30370,9 @@ func (c *ClientWithResponses) ExecutePreparedStatementWithBodyWithResponse(ctx c
 }
 
 // ExecutePreparedStatementWithResponse Execute a prepared statement with parameters.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -30208,6 +30387,9 @@ func (c *ClientWithResponses) ExecutePreparedStatementWithResponse(ctx context.C
 
 // ExplainUnifiedQueryWithBodyWithResponse Explain a unified query (plan, no execution).
 //
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/v2/unified/explain (the `ExplainUnifiedQuery` operationId).
@@ -30220,6 +30402,9 @@ func (c *ClientWithResponses) ExplainUnifiedQueryWithBodyWithResponse(ctx contex
 }
 
 // ExplainUnifiedQueryWithResponse Explain a unified query (plan, no execution).
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -30234,6 +30419,9 @@ func (c *ClientWithResponses) ExplainUnifiedQueryWithResponse(ctx context.Contex
 
 // ExecuteFederatedQueryWithBodyWithResponse Execute a federated query.
 //
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/v2/unified/federated (the `ExecuteFederatedQuery` operationId).
@@ -30246,6 +30434,9 @@ func (c *ClientWithResponses) ExecuteFederatedQueryWithBodyWithResponse(ctx cont
 }
 
 // ExecuteFederatedQueryWithResponse Execute a federated query.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -30260,6 +30451,9 @@ func (c *ClientWithResponses) ExecuteFederatedQueryWithResponse(ctx context.Cont
 
 // ExecuteMultiModelQueryWithBodyWithResponse Execute a multi-model query (free-form body).
 //
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/v2/unified/multi-model (the `ExecuteMultiModelQuery` operationId).
@@ -30272,6 +30466,9 @@ func (c *ClientWithResponses) ExecuteMultiModelQueryWithBodyWithResponse(ctx con
 }
 
 // ExecuteMultiModelQueryWithResponse Execute a multi-model query (free-form body).
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -30286,6 +30483,9 @@ func (c *ClientWithResponses) ExecuteMultiModelQueryWithResponse(ctx context.Con
 
 // PrepareStatementWithBodyWithResponse Prepare a statement for repeated execution.
 //
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/v2/unified/prepare (the `PrepareStatement` operationId).
@@ -30298,6 +30498,9 @@ func (c *ClientWithResponses) PrepareStatementWithBodyWithResponse(ctx context.C
 }
 
 // PrepareStatementWithResponse Prepare a statement for repeated execution.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -30312,6 +30515,9 @@ func (c *ClientWithResponses) PrepareStatementWithResponse(ctx context.Context, 
 
 // GetPreparedStatsWithBodyWithResponse Prepared-statement execution statistics.
 //
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/v2/unified/prepared/stats (the `GetPreparedStats` operationId).
@@ -30325,6 +30531,9 @@ func (c *ClientWithResponses) GetPreparedStatsWithBodyWithResponse(ctx context.C
 
 // GetPreparedStatsWithResponse Prepared-statement execution statistics.
 //
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/v2/unified/prepared/stats (the `GetPreparedStats` operationId).
@@ -30337,6 +30546,9 @@ func (c *ClientWithResponses) GetPreparedStatsWithResponse(ctx context.Context, 
 }
 
 // DeletePreparedStatementWithResponse Delete a prepared statement.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
 //
 // Returns a wrapper object for the known response body format(s).
 //

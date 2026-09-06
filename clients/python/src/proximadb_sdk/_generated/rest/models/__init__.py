@@ -336,6 +336,7 @@ from .typed_search_response import TypedSearchResponse
 from .typed_search_result import TypedSearchResult
 from .typed_search_result_props import TypedSearchResultProps
 from .unified_bare_error import UnifiedBareError
+from .unified_distributed_request import UnifiedDistributedRequest
 from .unified_execute_prepared_request import UnifiedExecutePreparedRequest
 from .unified_execute_request import UnifiedExecuteRequest
 from .unified_explain_request import UnifiedExplainRequest
@@ -666,6 +667,7 @@ __all__ = (
     "TypedSearchResult",
     "TypedSearchResultProps",
     "UnifiedBareError",
+    "UnifiedDistributedRequest",
     "UnifiedExecutePreparedRequest",
     "UnifiedExecuteRequest",
     "UnifiedExplainRequest",

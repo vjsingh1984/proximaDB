@@ -77,6 +77,9 @@ def sync_detailed(
 ) -> Response[Any | UnifiedBareError]:
     """Delete a prepared statement.
 
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler — unified queries run without tenant selection.
+
     Args:
         statement_id (str):
         x_tenant_id (str | Unset):
@@ -109,6 +112,9 @@ def sync(
 ) -> Any | UnifiedBareError | None:
     """Delete a prepared statement.
 
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler — unified queries run without tenant selection.
+
     Args:
         statement_id (str):
         x_tenant_id (str | Unset):
@@ -135,6 +141,9 @@ async def asyncio_detailed(
     x_tenant_id: str | Unset = UNSET,
 ) -> Response[Any | UnifiedBareError]:
     """Delete a prepared statement.
+
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler — unified queries run without tenant selection.
 
     Args:
         statement_id (str):
@@ -165,6 +174,9 @@ async def asyncio(
     x_tenant_id: str | Unset = UNSET,
 ) -> Any | UnifiedBareError | None:
     """Delete a prepared statement.
+
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler — unified queries run without tenant selection.
 
     Args:
         statement_id (str):

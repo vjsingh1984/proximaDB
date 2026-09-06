@@ -1158,7 +1158,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Execute a unified (UQL) query. */
+        /**
+         * Execute a unified (UQL) query.
+         * @description The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — unified queries run without tenant selection.
+         */
         post: operations["executeUnifiedQuery"];
         delete?: never;
         options?: never;
@@ -1175,7 +1179,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Execute a multi-model query (free-form body). */
+        /**
+         * Execute a multi-model query (free-form body).
+         * @description The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — unified queries run without tenant selection.
+         */
         post: operations["executeMultiModelQuery"];
         delete?: never;
         options?: never;
@@ -1192,7 +1200,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Execute a federated query. */
+        /**
+         * Execute a federated query.
+         * @description The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — unified queries run without tenant selection.
+         */
         post: operations["executeFederatedQuery"];
         delete?: never;
         options?: never;
@@ -1209,7 +1221,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Execute a distributed query. */
+        /**
+         * Execute a distributed query.
+         * @description The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — unified queries run without tenant selection.
+         */
         post: operations["executeDistributedQuery"];
         delete?: never;
         options?: never;
@@ -1226,7 +1242,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Explain a unified query (plan, no execution). */
+        /**
+         * Explain a unified query (plan, no execution).
+         * @description The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — unified queries run without tenant selection.
+         */
         post: operations["explainUnifiedQuery"];
         delete?: never;
         options?: never;
@@ -1243,7 +1263,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Prepare a statement for repeated execution. */
+        /**
+         * Prepare a statement for repeated execution.
+         * @description The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — unified queries run without tenant selection.
+         */
         post: operations["prepareStatement"];
         delete?: never;
         options?: never;
@@ -1262,7 +1286,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Execute a prepared statement with parameters. */
+        /**
+         * Execute a prepared statement with parameters.
+         * @description The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — unified queries run without tenant selection.
+         */
         post: operations["executePreparedStatement"];
         delete?: never;
         options?: never;
@@ -1282,7 +1310,11 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Delete a prepared statement. */
+        /**
+         * Delete a prepared statement.
+         * @description The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — unified queries run without tenant selection.
+         */
         delete: operations["deletePreparedStatement"];
         options?: never;
         head?: never;
@@ -1298,7 +1330,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Prepared-statement execution statistics. */
+        /**
+         * Prepared-statement execution statistics.
+         * @description The optional `X-Tenant-ID` header is not consulted by this
+         *     handler — unified queries run without tenant selection.
+         */
         post: operations["getPreparedStats"];
         delete?: never;
         options?: never;
@@ -5017,6 +5053,16 @@ export interface components {
         UnifiedPreparedStatsRequest: {
             statement_ids?: string[];
         };
+        /**
+         * @description Like the federated request, plus an optional row limit the impl
+         *     applies to the distributed result.
+         */
+        UnifiedDistributedRequest: {
+            query: string;
+            parameters?: unknown[] | null;
+            /** Format: uint32 */
+            limit?: number | null;
+        };
     };
     responses: {
         /** @description Invalid request. */
@@ -7549,7 +7595,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["UnifiedFederatedRequest"];
+                "application/json": components["schemas"]["UnifiedDistributedRequest"];
             };
         };
         responses: {
@@ -7733,7 +7779,11 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Deleted (or already absent — no distinct 404). */
+            /**
+             * @description Deleted. NOTE an unknown (or already-deleted) statement id
+             *     is a 500 with the bare error shape — not a 204 and not a
+             *     404; an expired-but-not-evicted id may still 204.
+             */
             204: {
                 headers: {
                     [name: string]: unknown;

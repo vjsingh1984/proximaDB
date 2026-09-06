@@ -79,6 +79,9 @@ def sync_detailed(
 ) -> Response[Any | UnifiedBareError]:
     """Execute a multi-model query (free-form body).
 
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler — unified queries run without tenant selection.
+
     Args:
         x_tenant_id (str | Unset):
         body (Any): Free-form JSON (the port's serde_json::Value rendering).
@@ -111,6 +114,9 @@ def sync(
 ) -> Any | UnifiedBareError | None:
     """Execute a multi-model query (free-form body).
 
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler — unified queries run without tenant selection.
+
     Args:
         x_tenant_id (str | Unset):
         body (Any): Free-form JSON (the port's serde_json::Value rendering).
@@ -137,6 +143,9 @@ async def asyncio_detailed(
     x_tenant_id: str | Unset = UNSET,
 ) -> Response[Any | UnifiedBareError]:
     """Execute a multi-model query (free-form body).
+
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler — unified queries run without tenant selection.
 
     Args:
         x_tenant_id (str | Unset):
@@ -167,6 +176,9 @@ async def asyncio(
     x_tenant_id: str | Unset = UNSET,
 ) -> Any | UnifiedBareError | None:
     """Execute a multi-model query (free-form body).
+
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler — unified queries run without tenant selection.
 
     Args:
         x_tenant_id (str | Unset):

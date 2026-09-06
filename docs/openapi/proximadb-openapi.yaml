@@ -2340,6 +2340,9 @@ paths:
       - Query
       operationId: executeUnifiedQuery
       summary: Execute a unified (UQL) query.
+      description: |
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — unified queries run without tenant selection.
       requestBody:
         required: true
         content:
@@ -2384,6 +2387,9 @@ paths:
       - Query
       operationId: executeMultiModelQuery
       summary: Execute a multi-model query (free-form body).
+      description: |
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — unified queries run without tenant selection.
       requestBody:
         required: true
         content:
@@ -2422,6 +2428,9 @@ paths:
       - Query
       operationId: executeFederatedQuery
       summary: Execute a federated query.
+      description: |
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — unified queries run without tenant selection.
       requestBody:
         required: true
         content:
@@ -2466,12 +2475,15 @@ paths:
       - Query
       operationId: executeDistributedQuery
       summary: Execute a distributed query.
+      description: |
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — unified queries run without tenant selection.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UnifiedFederatedRequest'
+              $ref: '#/components/schemas/UnifiedDistributedRequest'
       responses:
         '200':
           description: Query result (free-form).
@@ -2504,6 +2516,9 @@ paths:
       - Query
       operationId: explainUnifiedQuery
       summary: Explain a unified query (plan, no execution).
+      description: |
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — unified queries run without tenant selection.
       requestBody:
         required: true
         content:
@@ -2542,6 +2557,9 @@ paths:
       - Query
       operationId: prepareStatement
       summary: Prepare a statement for repeated execution.
+      description: |
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — unified queries run without tenant selection.
       requestBody:
         required: true
         content:
@@ -2586,6 +2604,9 @@ paths:
       - Query
       operationId: executePreparedStatement
       summary: Execute a prepared statement with parameters.
+      description: |
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — unified queries run without tenant selection.
       requestBody:
         required: true
         content:
@@ -2630,9 +2651,15 @@ paths:
       - Query
       operationId: deletePreparedStatement
       summary: Delete a prepared statement.
+      description: |
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — unified queries run without tenant selection.
       responses:
         '204':
-          description: Deleted (or already absent — no distinct 404).
+          description: |
+            Deleted. NOTE an unknown (or already-deleted) statement id
+            is a 500 with the bare error shape — not a 204 and not a
+            404; an expired-but-not-evicted id may still 204.
         '500':
           description: Port error — the BARE error shape (a plain string under error).
           content:
@@ -2658,6 +2685,9 @@ paths:
       - Query
       operationId: getPreparedStats
       summary: Prepared-statement execution statistics.
+      description: |
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — unified queries run without tenant selection.
       requestBody:
         required: true
         content:
@@ -9958,6 +9988,26 @@ components:
           type: array
           items:
             type: string
+    UnifiedDistributedRequest:
+      type: object
+      required:
+      - query
+      description: |
+        Like the federated request, plus an optional row limit the impl
+        applies to the distributed result.
+      properties:
+        query:
+          type: string
+        parameters:
+          type:
+          - array
+          - 'null'
+          items: {}
+        limit:
+          type:
+          - integer
+          - 'null'
+          format: uint32
   securitySchemes:
     bearerAuth:
       type: http

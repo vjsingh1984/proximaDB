@@ -82,6 +82,9 @@ def sync_detailed(
 ) -> Response[UnifiedBareError | UnifiedPrepareResponse]:
     """Prepare a statement for repeated execution.
 
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler — unified queries run without tenant selection.
+
     Args:
         x_tenant_id (str | Unset):
         body (UnifiedPrepareRequest):
@@ -114,6 +117,9 @@ def sync(
 ) -> UnifiedBareError | UnifiedPrepareResponse | None:
     """Prepare a statement for repeated execution.
 
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler — unified queries run without tenant selection.
+
     Args:
         x_tenant_id (str | Unset):
         body (UnifiedPrepareRequest):
@@ -140,6 +146,9 @@ async def asyncio_detailed(
     x_tenant_id: str | Unset = UNSET,
 ) -> Response[UnifiedBareError | UnifiedPrepareResponse]:
     """Prepare a statement for repeated execution.
+
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler — unified queries run without tenant selection.
 
     Args:
         x_tenant_id (str | Unset):
@@ -170,6 +179,9 @@ async def asyncio(
     x_tenant_id: str | Unset = UNSET,
 ) -> UnifiedBareError | UnifiedPrepareResponse | None:
     """Prepare a statement for repeated execution.
+
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler — unified queries run without tenant selection.
 
     Args:
         x_tenant_id (str | Unset):

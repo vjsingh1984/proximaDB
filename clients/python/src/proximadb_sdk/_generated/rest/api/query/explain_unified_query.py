@@ -80,6 +80,9 @@ def sync_detailed(
 ) -> Response[Any | UnifiedBareError]:
     """Explain a unified query (plan, no execution).
 
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler — unified queries run without tenant selection.
+
     Args:
         x_tenant_id (str | Unset):
         body (UnifiedExplainRequest):
@@ -112,6 +115,9 @@ def sync(
 ) -> Any | UnifiedBareError | None:
     """Explain a unified query (plan, no execution).
 
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler — unified queries run without tenant selection.
+
     Args:
         x_tenant_id (str | Unset):
         body (UnifiedExplainRequest):
@@ -138,6 +144,9 @@ async def asyncio_detailed(
     x_tenant_id: str | Unset = UNSET,
 ) -> Response[Any | UnifiedBareError]:
     """Explain a unified query (plan, no execution).
+
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler — unified queries run without tenant selection.
 
     Args:
         x_tenant_id (str | Unset):
@@ -168,6 +177,9 @@ async def asyncio(
     x_tenant_id: str | Unset = UNSET,
 ) -> Any | UnifiedBareError | None:
     """Explain a unified query (plan, no execution).
+
+     The optional `X-Tenant-ID` header is not consulted by this
+    handler — unified queries run without tenant selection.
 
     Args:
         x_tenant_id (str | Unset):
