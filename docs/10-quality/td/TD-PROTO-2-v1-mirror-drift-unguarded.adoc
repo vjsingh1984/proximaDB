@@ -682,6 +682,32 @@ surfaces (REST row builders, Arrow/observability stringifiers) each follow
 their local BytesValue convention (hex / per-byte arrays / placeholders); see
 the ledger + follow-ups.
 
+**Round 19 (2026-09-05, entity-boundary review) — degradation contract
+pinned + narrated:**
+
+* The v2 entity boundary now routes through the canonical model
+  (`TypedValue → ProximaValue → graph PropertyValue`, and reverse). The
+  graph property model is deliberately neutral (string/int/double/bool/
+  bytes/array/object/vector) — richer variants cannot carry their type
+  marker through it without a graph-format change (which would require
+  the #8 mixed-read migration discipline). The exact read-back
+  degradation is therefore a CONTRACT, now pinned by
+  `graph_boundary_degradation_table_is_pinned`: Uuid/Ulid → BinaryValue
+  (value bytes survive), Timestamp/TimestampTz/Date/Time → IntegerValue,
+  Decimal/Symbol/SparseVector → TextValue (canonical JSON for sparse).
+  Mixed-read note: a 16-byte blob stored by v0.3.0 decoded as UuidValue
+  under the old heuristic; it now decodes as BinaryValue.
+* The write side now FAILS LOUD on genuinely-malformed input (UUID of
+  ≠16 bytes, IsNull(false), out-of-range Int8/Uint8, undecodable JSONB)
+  — requests v0.3.0 silently degraded now return invalid_argument. The
+  old silent-drop behavior was the silent-Ok(failure) anti-pattern.
+* SparseVector joins the canonical-text contract (sorted keys, round 18
+  rule applied at the last unsorted seam).
+* MapValue round-trips as StructValue (the graph model does not
+  distinguish Map from Struct — the write-side lowering comment states
+  this); nodes carrying present nulls are now emitted as IsNull(true)
+  instead of omitted (rounds 11-12 rule at the read boundary).
+
 == Not in scope
 
 The v2 package already has both generation (`PROXIMADB_PROTO_REGEN=1`) and the

@@ -426,7 +426,11 @@ pub(crate) fn proxima_value_to_property_value(value: &ProximaValue) -> PropertyV
             )),
         },
         ProximaValue::SparseVector { .. } => Some(Value::StringValue(
-            proximadb_records::conversions::proxima_to_json(value).to_string(),
+            // Same canonical-text contract as the JSON(B) arm (round 18):
+            // unsorted keys vary with preserve_order across write seams.
+            crate::storage::entity_store::graph_schema::canonical_json_string(
+                &proximadb_records::conversions::proxima_to_json(value),
+            ),
         )),
         ProximaValue::Null => None,
     };

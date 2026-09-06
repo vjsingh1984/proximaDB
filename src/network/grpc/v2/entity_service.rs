@@ -795,4 +795,68 @@ mod tests {
         // Unknown / IN / NOT_IN default to Equals.
         assert_eq!(entity_op_to_graph_op(7), Op::Equals as i32);
     }
+
+    #[test]
+    fn graph_boundary_degradation_table_is_pinned() {
+        // The graph property model is neutral (string/int/double/bool/bytes/
+        // array/object/vector) — richer v2 variants cannot carry their type
+        // marker through it without a graph-format change. This table PINS
+        // the exact read-back degradation so any future movement (in either
+        // direction) is a conscious contract change, not silent drift.
+        // Value bytes survive; the declared type does not (TD-PROTO-2).
+        use pv2::typed_value::Value;
+
+        let cases: Vec<(Value, Value)> = vec![
+            // Identity survivors.
+            (
+                Value::TextValue("hello".to_string()),
+                Value::TextValue("hello".to_string()),
+            ),
+            (Value::IntegerValue(42), Value::IntegerValue(42)),
+            (Value::FloatValue(1.5), Value::FloatValue(1.5)),
+            (Value::BooleanValue(true), Value::BooleanValue(true)),
+            (
+                Value::BinaryValue(vec![1, 2, 3, 4]),
+                Value::BinaryValue(vec![1, 2, 3, 4]),
+            ),
+            // Degradations: the graph model has no native slot.
+            (
+                Value::UuidValue(vec![7u8; 16]),
+                Value::BinaryValue(vec![7u8; 16]),
+            ),
+            (
+                Value::TimestampValue(1234567890),
+                Value::IntegerValue(1234567890),
+            ),
+            (Value::DateValue(20260), Value::IntegerValue(20260)),
+            (Value::TimeValue(86399), Value::IntegerValue(86399)),
+            (
+                Value::DecimalValue(pv2::DecimalValue {
+                    value: b"3.14159".to_vec(),
+                    precision: 38,
+                    scale: 18,
+                }),
+                Value::TextValue("3.14159".to_string()),
+            ),
+            (
+                Value::SymbolValue("status".to_string()),
+                Value::TextValue("status".to_string()),
+            ),
+        ];
+
+        for (wire, expected_back) in cases {
+            let tv_in = pv2::TypedValue {
+                declared_type: 0,
+                value: Some(wire),
+            };
+            let pv = typed_value_to_property_value(&tv_in)
+                .unwrap_or_else(|e| panic!("write side rejected {tv_in:?}: {e}"));
+            let back = property_value_to_typed_value(&pv);
+            assert_eq!(
+                back.value,
+                Some(expected_back),
+                "graph-boundary degradation drifted for input {tv_in:?}"
+            );
+        }
+    }
 }
