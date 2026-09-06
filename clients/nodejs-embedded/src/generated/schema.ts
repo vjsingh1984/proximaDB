@@ -1149,6 +1149,163 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/unified/execute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Execute a unified (UQL) query. */
+        post: operations["executeUnifiedQuery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/unified/multi-model": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Execute a multi-model query (free-form body). */
+        post: operations["executeMultiModelQuery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/unified/federated": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Execute a federated query. */
+        post: operations["executeFederatedQuery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/unified/distributed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Execute a distributed query. */
+        post: operations["executeDistributedQuery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/unified/explain": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Explain a unified query (plan, no execution). */
+        post: operations["explainUnifiedQuery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/unified/prepare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Prepare a statement for repeated execution. */
+        post: operations["prepareStatement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/unified/execute/{statement_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                statement_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Execute a prepared statement with parameters. */
+        post: operations["executePreparedStatement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/unified/prepared/{statement_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                statement_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a prepared statement. */
+        delete: operations["deletePreparedStatement"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/unified/prepared/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Prepared-statement execution statistics. */
+        post: operations["getPreparedStats"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/rank/search": {
         parameters: {
             query?: never;
@@ -4817,6 +4974,49 @@ export interface components {
                 unique: boolean;
             }[];
         };
+        /** @description Free-form JSON (the port's serde_json::Value rendering). */
+        UnifiedOpenValue: unknown;
+        /**
+         * @description The unified surface's BARE error shape — a plain string under
+         *     `error`, NOT the canonical {error:{type,message,code}} envelope
+         *     other surfaces carry.
+         */
+        UnifiedBareError: {
+            error: string;
+        };
+        UnifiedExecuteRequest: {
+            query: string;
+            parameters?: unknown[] | null;
+            collection?: string;
+            /** Format: uint32 */
+            limit?: number | null;
+        };
+        UnifiedFederatedRequest: {
+            query: string;
+            parameters?: unknown[] | null;
+        };
+        UnifiedExplainRequest: {
+            query: string;
+            collection?: string;
+        };
+        UnifiedPrepareRequest: {
+            query: string;
+            name?: string;
+            /** @default false */
+            cache_results: boolean;
+            /** Format: uint64 */
+            ttl_seconds?: number | null;
+        };
+        UnifiedPrepareResponse: {
+            statement_id: string;
+        };
+        UnifiedExecutePreparedRequest: {
+            parameters?: unknown[] | null;
+            collection?: string;
+        };
+        UnifiedPreparedStatsRequest: {
+            statement_ids?: string[];
+        };
     };
     responses: {
         /** @description Invalid request. */
@@ -7182,6 +7382,427 @@ export interface operations {
                 };
             };
             500: components["responses"]["InternalError"];
+        };
+    };
+    executeUnifiedQuery: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnifiedExecuteRequest"];
+            };
+        };
+        responses: {
+            /** @description Query result (free-form — the port's JSON rendering). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedOpenValue"];
+                };
+            };
+            /** @description Empty query — the BARE error shape (a plain string under error). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedBareError"];
+                };
+            };
+            /** @description Port error — the BARE error shape (a plain string under error). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedBareError"];
+                };
+            };
+            /** @description The port returned not-implemented (non-default constructions). */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedBareError"];
+                };
+            };
+        };
+    };
+    executeMultiModelQuery: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnifiedOpenValue"];
+            };
+        };
+        responses: {
+            /** @description Query result (free-form). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedOpenValue"];
+                };
+            };
+            /** @description Port error — the BARE error shape (a plain string under error). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedBareError"];
+                };
+            };
+            /** @description The port returned not-implemented (non-default constructions). */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedBareError"];
+                };
+            };
+        };
+    };
+    executeFederatedQuery: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnifiedFederatedRequest"];
+            };
+        };
+        responses: {
+            /** @description Query result (free-form). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedOpenValue"];
+                };
+            };
+            /** @description Empty query — the BARE error shape (a plain string under error). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedBareError"];
+                };
+            };
+            /** @description Port error — the BARE error shape (a plain string under error). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedBareError"];
+                };
+            };
+            /** @description The port returned not-implemented (non-default constructions). */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedBareError"];
+                };
+            };
+        };
+    };
+    executeDistributedQuery: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnifiedFederatedRequest"];
+            };
+        };
+        responses: {
+            /** @description Query result (free-form). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedOpenValue"];
+                };
+            };
+            /** @description Port error — the BARE error shape (a plain string under error). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedBareError"];
+                };
+            };
+            /** @description The port returned not-implemented (non-default constructions). */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedBareError"];
+                };
+            };
+        };
+    };
+    explainUnifiedQuery: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnifiedExplainRequest"];
+            };
+        };
+        responses: {
+            /** @description The plan (free-form). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedOpenValue"];
+                };
+            };
+            /** @description Port error — the BARE error shape (a plain string under error). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedBareError"];
+                };
+            };
+            /** @description The port returned not-implemented (non-default constructions). */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedBareError"];
+                };
+            };
+        };
+    };
+    prepareStatement: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnifiedPrepareRequest"];
+            };
+        };
+        responses: {
+            /** @description Prepared — the statement id. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedPrepareResponse"];
+                };
+            };
+            /** @description Port error — the BARE error shape (a plain string under error). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedBareError"];
+                };
+            };
+            /** @description The port returned not-implemented (non-default constructions). */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedBareError"];
+                };
+            };
+        };
+    };
+    executePreparedStatement: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                statement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnifiedExecutePreparedRequest"];
+            };
+        };
+        responses: {
+            /** @description Query result (free-form). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedOpenValue"];
+                };
+            };
+            /** @description Port error — the BARE error shape (a plain string under error). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedBareError"];
+                };
+            };
+            /** @description The port returned not-implemented (non-default constructions). */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedBareError"];
+                };
+            };
+        };
+    };
+    deletePreparedStatement: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                statement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted (or already absent — no distinct 404). */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Port error — the BARE error shape (a plain string under error). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedBareError"];
+                };
+            };
+            /** @description The port returned not-implemented (non-default constructions). */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedBareError"];
+                };
+            };
+        };
+    };
+    getPreparedStats: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnifiedPreparedStatsRequest"];
+            };
+        };
+        responses: {
+            /** @description Stats (free-form). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedOpenValue"];
+                };
+            };
+            /** @description Port error — the BARE error shape (a plain string under error). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedBareError"];
+                };
+            };
+            /** @description The port returned not-implemented (non-default constructions). */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedBareError"];
+                };
+            };
         };
     };
     rankSearch: {

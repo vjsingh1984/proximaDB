@@ -335,6 +335,14 @@ from .typed_search_request import TypedSearchRequest
 from .typed_search_response import TypedSearchResponse
 from .typed_search_result import TypedSearchResult
 from .typed_search_result_props import TypedSearchResultProps
+from .unified_bare_error import UnifiedBareError
+from .unified_execute_prepared_request import UnifiedExecutePreparedRequest
+from .unified_execute_request import UnifiedExecuteRequest
+from .unified_explain_request import UnifiedExplainRequest
+from .unified_federated_request import UnifiedFederatedRequest
+from .unified_prepare_request import UnifiedPrepareRequest
+from .unified_prepare_response import UnifiedPrepareResponse
+from .unified_prepared_stats_request import UnifiedPreparedStatsRequest
 from .unique_constraint_request import UniqueConstraintRequest
 from .update_graph_schema_request import UpdateGraphSchemaRequest
 from .update_graph_schema_request_schema import UpdateGraphSchemaRequestSchema
@@ -657,6 +665,14 @@ __all__ = (
     "TypedSearchResponse",
     "TypedSearchResult",
     "TypedSearchResultProps",
+    "UnifiedBareError",
+    "UnifiedExecutePreparedRequest",
+    "UnifiedExecuteRequest",
+    "UnifiedExplainRequest",
+    "UnifiedFederatedRequest",
+    "UnifiedPreparedStatsRequest",
+    "UnifiedPrepareRequest",
+    "UnifiedPrepareResponse",
     "UniqueConstraintRequest",
     "UpdateGraphSchemaRequest",
     "UpdateGraphSchemaRequestSchema",

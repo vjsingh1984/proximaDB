@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Waves 1-8 landed; wave 9 (document CRUD) landing
+| Status | Waves 1-9 landed; wave 10 (unified query) landing
 | Severity | Medium — ~100 route literals across ~15 areas are live on the wire but invisible to every SDK
 | Component | `src/network/rest/openapi_supplement.yaml`; `docs/openapi/proximadb-openapi.yaml`; `clients/*` (regenerated)
 | Relates to | [[TD-SSO-3]] (the census that surfaced the gap); TD-126 (spec-from-code); ADR-041
@@ -415,7 +415,7 @@ expose/defer/never disposition):
 The enterprise external-catalog wave remains additionally, pending a
 product decision.
 
-== Wave 9: document CRUD (this PR)
+== Wave 9: document CRUD (landed)
 
 **Exposed (7 paths / 13 operations; spec 80 → 85 — 2 paths were reworked free-form entries, 5 are new):** the complete
 `/api/v2/document-collections*` surface (api-crate `document.rs`):
@@ -438,3 +438,28 @@ Rationalization notes:
 * Batch insert reports COUNTS only (per-item failures not enumerated).
 * Collection info bodies are open objects (serialized port records).
 * No per-route permission gate; extractor rejections plain text.
+
+== Wave 10: unified query surface (this PR)
+
+**Exposed (9 paths / 9 operations; spec 85 → 94):** the complete
+`/api/v2/unified/*` surface (api-crate `multimodal_query.rs`, mounted
+when the unified_query_port is wired — the default server wires it):
+execute, multi-model, federated, distributed, explain, prepare (201),
+execute/{statement_id}, prepared/{statement_id} DELETE (204),
+prepared/stats. This is the surface the wave-8 round-2 review
+corrected from "all-501 stubs" to LIVE (the port impl at
+`src/query/unified_query_port_impl.rs` executes real queries).
+
+Rationalization notes:
+
+* **BARE error shape, documented as its own schema** — the surface's
+  400/500/501 bodies are `{error: "<string>"}`, NOT the canonical
+  envelope (UnifiedBareError). 400 exists only on execute/federated
+  (empty-query validation).
+* **Most success bodies are free-form** (the port returns
+  serde_json::Value) — typed where the handler is typed (prepare 201
+  {statement_id}); everything else open.
+* 501 fires only when the port itself returns not-implemented
+  (non-default constructions); the default server returns 200s.
+* The wave-8 negative-space ratchet (no /unified paths) is superseded
+  — updated in the same commit as the exposure.

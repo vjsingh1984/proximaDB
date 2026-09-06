@@ -765,18 +765,58 @@ def test_document_surface_has_the_complete_operation_set(openapi_spec):
         "collection",
     ]
 
-    # Census resolutions pinned (wave 8): WS streaming and the all-501
-    # unified surface are deliberately ABSENT from the spec.
+    # Census resolutions pinned (wave 8; unified updated by wave 10):
+    # WS streaming is not REST-spec'd and no REST events surface exists.
+    # (The unified surface WAS all-501 at wave 8; wave 10 exposed it as
+    # LIVE — see test_unified_surface_has_the_complete_operation_set.)
     paths = openapi_spec["paths"]
     assert not any(
         p.startswith("/ws/") for p in paths
     ), "WS streaming must not be REST-spec'd"
     assert not any(
-        "/unified" in p for p in paths
-    ), "all-501 unified surface stays unexposed"
-    assert not any(
         p.startswith("/api/v2/events") for p in paths
     ), "no REST events surface exists"
+
+
+def test_unified_surface_has_the_complete_operation_set(openapi_spec):
+    """TD-SPECRAT-1 wave 10: unified query (LIVE) — 9 paths / 9 ops."""
+    expected_operations = {
+        "executeUnifiedQuery",
+        "executeMultiModelQuery",
+        "executeFederatedQuery",
+        "executeDistributedQuery",
+        "explainUnifiedQuery",
+        "prepareStatement",
+        "executePreparedStatement",
+        "deletePreparedStatement",
+        "getPreparedStats",
+    }
+    unified_paths = {
+        path: item
+        for path, item in openapi_spec["paths"].items()
+        if path.startswith("/api/v2/unified")
+    }
+    actual_operations = {
+        operation["operationId"]
+        for item in unified_paths.values()
+        for method, operation in item.items()
+        if method in {"get", "put", "post", "delete", "patch"}
+    }
+
+    assert len(unified_paths) == 9
+    assert actual_operations == expected_operations
+
+    # Distinctive contracts: prepare = 201 with a statement_id; prepared
+    # DELETE = 204; the error shape is the BARE {error: string}.
+    prep = unified_paths["/api/v2/unified/prepare"]["post"]["responses"]
+    assert sorted(prep) == ["201", "500", "501"]
+    dele = unified_paths["/api/v2/unified/prepared/{statement_id}"]["delete"][
+        "responses"
+    ]
+    assert sorted(dele) == ["204", "500", "501"]
+    schemas = openapi_spec["components"]["schemas"]
+    assert schemas["UnifiedBareError"]["required"] == ["error"]
+    assert schemas["UnifiedPrepareResponse"]["required"] == ["statement_id"]
 
 
 # ---------------------------------------------------------------------------
