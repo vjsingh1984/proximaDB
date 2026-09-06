@@ -2436,6 +2436,60 @@ type QueryRequest struct {
 // free-form JSON object.
 type QueryResponse = map[string]interface{}
 
+// RankOverrides defines model for RankOverrides.
+type RankOverrides struct {
+	GlobalPhase *RankPhaseOverride `json:"global_phase,omitempty"`
+	SecondPhase *RankPhaseOverride `json:"second_phase,omitempty"`
+}
+
+// RankPhaseOverride defines model for RankPhaseOverride.
+type RankPhaseOverride struct {
+	BatchSize   *uint32 `json:"batch_size,omitempty"`
+	RerankCount *uint32 `json:"rerank_count,omitempty"`
+}
+
+// RankScoreVector defines model for RankScoreVector.
+type RankScoreVector struct {
+	Components *[]ScoreComponent `json:"components,omitempty"`
+
+	// Phase JSON-friendly phase ordinal (not the kernel newtype).
+	Phase   int     `json:"phase"`
+	Primary float32 `json:"primary"`
+}
+
+// RankScoredHit defines model for RankScoredHit.
+type RankScoredHit struct {
+	Id              string              `json:"id"`
+	MatchFeatures   *map[string]float64 `json:"match_features,omitempty"`
+	Score           float32             `json:"score"`
+	ScoreVector     *RankScoreVector    `json:"score_vector,omitempty"`
+	SummaryFeatures *map[string]float64 `json:"summary_features,omitempty"`
+}
+
+// RankSearchRequest defines model for RankSearchRequest.
+type RankSearchRequest struct {
+	Collection string  `json:"collection"`
+	K          *uint64 `json:"k,omitempty"`
+
+	// QueryText Optional BM25/full-text leg; absent/empty = vector-only.
+	QueryText *string `json:"query_text,omitempty"`
+
+	// QueryVector Post-embedding query vector (caller-computed).
+	QueryVector   *[]float32     `json:"query_vector,omitempty"`
+	RankOverrides *RankOverrides `json:"rank_overrides,omitempty"`
+
+	// RankProfile Named profile; omitted = retrieval-only output.
+	RankProfile *string `json:"rank_profile,omitempty"`
+}
+
+// RankSearchResponse defines model for RankSearchResponse.
+type RankSearchResponse struct {
+	Hits               []RankScoredHit `json:"hits"`
+	PhaseTruncated     bool            `json:"phase_truncated"`
+	RankProfile        *string         `json:"rank_profile,omitempty"`
+	RankProfileVersion *uint32         `json:"rank_profile_version,omitempty"`
+}
+
 // RecordV2Response Response for getting a single record
 type RecordV2Response struct {
 	// Id Record ID
@@ -2635,6 +2689,17 @@ type SchemaResponse struct {
 
 	// UpdatedAt Last update timestamp
 	UpdatedAt *string `json:"updated_at,omitempty"`
+}
+
+// ScoreComponent defines model for ScoreComponent.
+type ScoreComponent struct {
+	// Contribution Typically value * weight.
+	Contribution float64 `json:"contribution"`
+
+	// Name e.g. bm25(title), closeness(embedding), model(rerank-v3).
+	Name   string  `json:"name"`
+	Value  float64 `json:"value"`
+	Weight float64 `json:"weight"`
 }
 
 // SearchEntitiesRequest defines model for SearchEntitiesRequest.
@@ -3906,6 +3971,12 @@ type ExplainQueryParams struct {
 	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
 
+// RankSearchParams defines parameters for RankSearch.
+type RankSearchParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
 // ExecuteSqlParams defines parameters for ExecuteSql.
 type ExecuteSqlParams struct {
 	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
@@ -4121,6 +4192,9 @@ type ExecuteQueryJSONRequestBody = QueryRequest
 
 // ExplainQueryJSONRequestBody defines body for ExplainQuery for application/json ContentType.
 type ExplainQueryJSONRequestBody = ExplainQueryRequest
+
+// RankSearchJSONRequestBody defines body for RankSearch for application/json ContentType.
+type RankSearchJSONRequestBody = RankSearchRequest
 
 // ExecuteSqlJSONRequestBody defines body for ExecuteSql for application/json ContentType.
 type ExecuteSqlJSONRequestBody = SqlRequest
@@ -6650,6 +6724,42 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v2/query/explain (the `ExplainQuery` operationId).
 	ExplainQuery(ctx context.Context, params *ExplainQueryParams, body ExplainQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RankSearchWithBody Multi-phase ranked search (retrieval + optional rerank profile).
+	//
+	// Runs the rank pipeline over the target collection: candidate
+	// retrieval (vector + optional BM25 text leg), then the global
+	// composition phase, then an optional profile-driven second phase.
+	// `rank_profile` selects a named profile from the server registry;
+	// when omitted, the response is retrieval-only (no score vectors —
+	// the zero-cost-when-unused contract). `rank_overrides` tweak
+	// per-phase knobs on top of the resolved profile. `query_vector`
+	// is the POST-embedding vector (the caller computed it).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler beyond the standard tenant middleware context.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/rank/search (the `RankSearch` operationId).
+	RankSearchWithBody(ctx context.Context, params *RankSearchParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RankSearch Multi-phase ranked search (retrieval + optional rerank profile).
+	//
+	// Runs the rank pipeline over the target collection: candidate
+	// retrieval (vector + optional BM25 text leg), then the global
+	// composition phase, then an optional profile-driven second phase.
+	// `rank_profile` selects a named profile from the server registry;
+	// when omitted, the response is retrieval-only (no score vectors —
+	// the zero-cost-when-unused contract). `rank_overrides` tweak
+	// per-phase knobs on top of the resolved profile. `query_vector`
+	// is the POST-embedding vector (the caller computed it).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler beyond the standard tenant middleware context.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/rank/search (the `RankSearch` operationId).
+	RankSearch(ctx context.Context, params *RankSearchParams, body RankSearchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ExecuteSqlWithBody Execute one authenticated SQL statement.
 	//
@@ -9804,6 +9914,62 @@ func (c *Client) ExplainQueryWithBody(ctx context.Context, params *ExplainQueryP
 // Corresponds with POST /api/v2/query/explain (the `ExplainQuery` operationId).
 func (c *Client) ExplainQuery(ctx context.Context, params *ExplainQueryParams, body ExplainQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewExplainQueryRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RankSearchWithBody Multi-phase ranked search (retrieval + optional rerank profile).
+//
+// Runs the rank pipeline over the target collection: candidate
+// retrieval (vector + optional BM25 text leg), then the global
+// composition phase, then an optional profile-driven second phase.
+// `rank_profile` selects a named profile from the server registry;
+// when omitted, the response is retrieval-only (no score vectors —
+// the zero-cost-when-unused contract). `rank_overrides` tweak
+// per-phase knobs on top of the resolved profile. `query_vector`
+// is the POST-embedding vector (the caller computed it).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler beyond the standard tenant middleware context.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/rank/search (the `RankSearch` operationId).
+func (c *Client) RankSearchWithBody(ctx context.Context, params *RankSearchParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRankSearchRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RankSearch Multi-phase ranked search (retrieval + optional rerank profile).
+//
+// Runs the rank pipeline over the target collection: candidate
+// retrieval (vector + optional BM25 text leg), then the global
+// composition phase, then an optional profile-driven second phase.
+// `rank_profile` selects a named profile from the server registry;
+// when omitted, the response is retrieval-only (no score vectors —
+// the zero-cost-when-unused contract). `rank_overrides` tweak
+// per-phase knobs on top of the resolved profile. `query_vector`
+// is the POST-embedding vector (the caller computed it).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler beyond the standard tenant middleware context.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/rank/search (the `RankSearch` operationId).
+func (c *Client) RankSearch(ctx context.Context, params *RankSearchParams, body RankSearchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRankSearchRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -15420,6 +15586,61 @@ func NewExplainQueryRequestWithBody(server string, params *ExplainQueryParams, c
 	return req, nil
 }
 
+// NewRankSearchRequest calls the generic RankSearch builder with application/json body
+func NewRankSearchRequest(server string, params *RankSearchParams, body RankSearchJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRankSearchRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewRankSearchRequestWithBody constructs an http.Request for the RankSearch method, with any body, and a specified content type
+func NewRankSearchRequestWithBody(server string, params *RankSearchParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/rank/search")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
 // NewExecuteSqlRequest calls the generic ExecuteSql builder with application/json body
 func NewExecuteSqlRequest(server string, params *ExecuteSqlParams, body ExecuteSqlJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -17666,6 +17887,42 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v2/query/explain (the `ExplainQuery` operationId).
 	ExplainQueryWithResponse(ctx context.Context, params *ExplainQueryParams, body ExplainQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*ExplainQueryHTTPResp, error)
+
+	// RankSearchWithBodyWithResponse Multi-phase ranked search (retrieval + optional rerank profile).
+	//
+	// Runs the rank pipeline over the target collection: candidate
+	// retrieval (vector + optional BM25 text leg), then the global
+	// composition phase, then an optional profile-driven second phase.
+	// `rank_profile` selects a named profile from the server registry;
+	// when omitted, the response is retrieval-only (no score vectors —
+	// the zero-cost-when-unused contract). `rank_overrides` tweak
+	// per-phase knobs on top of the resolved profile. `query_vector`
+	// is the POST-embedding vector (the caller computed it).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler beyond the standard tenant middleware context.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/rank/search (the `RankSearch` operationId).
+	RankSearchWithBodyWithResponse(ctx context.Context, params *RankSearchParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RankSearchHTTPResp, error)
+
+	// RankSearchWithResponse Multi-phase ranked search (retrieval + optional rerank profile).
+	//
+	// Runs the rank pipeline over the target collection: candidate
+	// retrieval (vector + optional BM25 text leg), then the global
+	// composition phase, then an optional profile-driven second phase.
+	// `rank_profile` selects a named profile from the server registry;
+	// when omitted, the response is retrieval-only (no score vectors —
+	// the zero-cost-when-unused contract). `rank_overrides` tweak
+	// per-phase knobs on top of the resolved profile. `query_vector`
+	// is the POST-embedding vector (the caller computed it).
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler beyond the standard tenant middleware context.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/rank/search (the `RankSearch` operationId).
+	RankSearchWithResponse(ctx context.Context, params *RankSearchParams, body RankSearchJSONRequestBody, reqEditors ...RequestEditorFn) (*RankSearchHTTPResp, error)
 
 	// ExecuteSqlWithBodyWithResponse Execute one authenticated SQL statement.
 	//
@@ -22968,6 +23225,75 @@ func (r ExplainQueryHTTPResp) ContentType() string {
 	return ""
 }
 
+type RankSearchHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *RankSearchResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON501 the response for an HTTP 501 `application/json` response
+	JSON501 *ErrorResponse
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RankSearchHTTPResp) GetJSON200() *RankSearchResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r RankSearchHTTPResp) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r RankSearchHTTPResp) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r RankSearchHTTPResp) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON501 returns the response for an HTTP 501 `application/json` response
+func (r RankSearchHTTPResp) GetJSON501() *ErrorResponse {
+	return r.JSON501
+}
+
+// GetBody returns the raw response body bytes
+func (r RankSearchHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RankSearchHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RankSearchHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RankSearchHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ExecuteSqlHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -26012,6 +26338,54 @@ func (c *ClientWithResponses) ExplainQueryWithResponse(ctx context.Context, para
 		return nil, err
 	}
 	return ParseExplainQueryHTTPResp(rsp)
+}
+
+// RankSearchWithBodyWithResponse Multi-phase ranked search (retrieval + optional rerank profile).
+//
+// Runs the rank pipeline over the target collection: candidate
+// retrieval (vector + optional BM25 text leg), then the global
+// composition phase, then an optional profile-driven second phase.
+// `rank_profile` selects a named profile from the server registry;
+// when omitted, the response is retrieval-only (no score vectors —
+// the zero-cost-when-unused contract). `rank_overrides` tweak
+// per-phase knobs on top of the resolved profile. `query_vector`
+// is the POST-embedding vector (the caller computed it).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler beyond the standard tenant middleware context.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/rank/search (the `RankSearch` operationId).
+func (c *ClientWithResponses) RankSearchWithBodyWithResponse(ctx context.Context, params *RankSearchParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RankSearchHTTPResp, error) {
+	rsp, err := c.RankSearchWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRankSearchHTTPResp(rsp)
+}
+
+// RankSearchWithResponse Multi-phase ranked search (retrieval + optional rerank profile).
+//
+// Runs the rank pipeline over the target collection: candidate
+// retrieval (vector + optional BM25 text leg), then the global
+// composition phase, then an optional profile-driven second phase.
+// `rank_profile` selects a named profile from the server registry;
+// when omitted, the response is retrieval-only (no score vectors —
+// the zero-cost-when-unused contract). `rank_overrides` tweak
+// per-phase knobs on top of the resolved profile. `query_vector`
+// is the POST-embedding vector (the caller computed it).
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler beyond the standard tenant middleware context.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/rank/search (the `RankSearch` operationId).
+func (c *ClientWithResponses) RankSearchWithResponse(ctx context.Context, params *RankSearchParams, body RankSearchJSONRequestBody, reqEditors ...RequestEditorFn) (*RankSearchHTTPResp, error) {
+	rsp, err := c.RankSearch(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRankSearchHTTPResp(rsp)
 }
 
 // ExecuteSqlWithBodyWithResponse Execute one authenticated SQL statement.
@@ -30000,6 +30374,60 @@ func ParseExplainQueryHTTPResp(rsp *http.Response) (*ExplainQueryHTTPResp, error
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRankSearchHTTPResp parses an HTTP response from a RankSearchWithResponse call
+func ParseRankSearchHTTPResp(rsp *http.Response) (*RankSearchHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RankSearchHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RankSearchResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON501 = &dest
 
 	}
 

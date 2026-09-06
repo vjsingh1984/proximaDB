@@ -633,6 +633,62 @@ def test_timeseries_surface_has_the_complete_operation_set(openapi_spec):
     assert schemas["TsCollectionConfig"]["required"] == ["name"]
 
 
+def test_rank_surface_and_program_census(openapi_spec):
+    """TD-SPECRAT-1 wave 8: rank search exposure + census resolutions."""
+    op = openapi_spec["paths"]["/api/v2/rank/search"]["post"]
+    assert op["operationId"] == "rankSearch"
+    assert sorted(op["responses"]) == ["200", "400", "404", "500", "501"]
+
+    schemas = openapi_spec["components"]["schemas"]
+    expected = {
+        "RankSearchRequest": {
+            "collection",
+            "query_vector",
+            "query_text",
+            "k",
+            "rank_profile",
+            "rank_overrides",
+        },
+        "RankOverrides": {"second_phase", "global_phase"},
+        "RankPhaseOverride": {"rerank_count", "batch_size"},
+        "RankScoredHit": {
+            "id",
+            "score",
+            "score_vector",
+            "match_features",
+            "summary_features",
+        },
+        "RankScoreVector": {"primary", "phase", "components"},
+        "ScoreComponent": {"name", "value", "weight", "contribution"},
+        "RankSearchResponse": {
+            "hits",
+            "phase_truncated",
+            "rank_profile",
+            "rank_profile_version",
+        },
+    }
+    for schema_name, exp in expected.items():
+        actual = set(schemas[schema_name]["properties"])
+        assert (
+            actual == exp
+        ), f"{schema_name} drifted: missing={exp - actual} extra={actual - exp}"
+    assert schemas["RankSearchRequest"]["required"] == ["collection"]
+    assert schemas["RankSearchResponse"]["required"] == ["hits", "phase_truncated"]
+
+    # Census resolutions pinned (wave 8): WS streaming and the all-501
+    # unified surface are deliberately ABSENT from the spec.
+    paths = openapi_spec["paths"]
+    assert not any(
+        p.startswith("/ws/") for p in paths
+    ), "WS streaming must not be REST-spec'd"
+    assert not any(
+        "/unified" in p for p in paths
+    ), "all-501 unified surface stays unexposed"
+    assert not any(
+        p.startswith("/api/v2/events") for p in paths
+    ), "no REST events surface exists"
+
+
 # ---------------------------------------------------------------------------
 # Capturing transport
 # ---------------------------------------------------------------------------

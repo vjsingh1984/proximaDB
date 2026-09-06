@@ -11808,6 +11808,317 @@ pub mod types {
             Self(value)
         }
     }
+    ///`RankOverrides`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "global_phase": {
+    ///      "$ref": "#/components/schemas/RankPhaseOverride"
+    ///    },
+    ///    "second_phase": {
+    ///      "$ref": "#/components/schemas/RankPhaseOverride"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct RankOverrides {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub global_phase: ::std::option::Option<RankPhaseOverride>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub second_phase: ::std::option::Option<RankPhaseOverride>,
+    }
+    impl ::std::default::Default for RankOverrides {
+        fn default() -> Self {
+            Self {
+                global_phase: Default::default(),
+                second_phase: Default::default(),
+            }
+        }
+    }
+    impl RankOverrides {
+        pub fn builder() -> builder::RankOverrides {
+            Default::default()
+        }
+    }
+    ///`RankPhaseOverride`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "batch_size": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint32"
+    ///    },
+    ///    "rerank_count": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint32"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct RankPhaseOverride {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub batch_size: ::std::option::Option<u32>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub rerank_count: ::std::option::Option<u32>,
+    }
+    impl ::std::default::Default for RankPhaseOverride {
+        fn default() -> Self {
+            Self {
+                batch_size: Default::default(),
+                rerank_count: Default::default(),
+            }
+        }
+    }
+    impl RankPhaseOverride {
+        pub fn builder() -> builder::RankPhaseOverride {
+            Default::default()
+        }
+    }
+    ///`RankScoreVector`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "phase",
+    ///    "primary"
+    ///  ],
+    ///  "properties": {
+    ///    "components": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/ScoreComponent"
+    ///      }
+    ///    },
+    ///    "phase": {
+    ///      "description": "JSON-friendly phase ordinal (not the kernel newtype).",
+    ///      "type": "integer"
+    ///    },
+    ///    "primary": {
+    ///      "type": "number",
+    ///      "format": "float"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct RankScoreVector {
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub components: ::std::vec::Vec<ScoreComponent>,
+        ///JSON-friendly phase ordinal (not the kernel newtype).
+        pub phase: i64,
+        pub primary: f32,
+    }
+    impl RankScoreVector {
+        pub fn builder() -> builder::RankScoreVector {
+            Default::default()
+        }
+    }
+    ///`RankScoredHit`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "id",
+    ///    "score"
+    ///  ],
+    ///  "properties": {
+    ///    "id": {
+    ///      "type": "string"
+    ///    },
+    ///    "match_features": {
+    ///      "type": "object",
+    ///      "additionalProperties": {
+    ///        "type": "number",
+    ///        "format": "double"
+    ///      }
+    ///    },
+    ///    "score": {
+    ///      "type": "number",
+    ///      "format": "float"
+    ///    },
+    ///    "score_vector": {
+    ///      "$ref": "#/components/schemas/RankScoreVector"
+    ///    },
+    ///    "summary_features": {
+    ///      "type": "object",
+    ///      "additionalProperties": {
+    ///        "type": "number",
+    ///        "format": "double"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct RankScoredHit {
+        pub id: ::std::string::String,
+        #[serde(
+            default,
+            skip_serializing_if = ":: std :: collections :: HashMap::is_empty"
+        )]
+        pub match_features: ::std::collections::HashMap<::std::string::String, f64>,
+        pub score: f32,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub score_vector: ::std::option::Option<RankScoreVector>,
+        #[serde(
+            default,
+            skip_serializing_if = ":: std :: collections :: HashMap::is_empty"
+        )]
+        pub summary_features: ::std::collections::HashMap<::std::string::String, f64>,
+    }
+    impl RankScoredHit {
+        pub fn builder() -> builder::RankScoredHit {
+            Default::default()
+        }
+    }
+    ///`RankSearchRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "collection"
+    ///  ],
+    ///  "properties": {
+    ///    "collection": {
+    ///      "type": "string"
+    ///    },
+    ///    "k": {
+    ///      "default": 10,
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "query_text": {
+    ///      "description": "Optional BM25/full-text leg; absent/empty = vector-only.",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "query_vector": {
+    ///      "description": "Post-embedding query vector (caller-computed).",
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "number",
+    ///        "format": "float"
+    ///      }
+    ///    },
+    ///    "rank_overrides": {
+    ///      "$ref": "#/components/schemas/RankOverrides"
+    ///    },
+    ///    "rank_profile": {
+    ///      "description": "Named profile; omitted = retrieval-only output.",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct RankSearchRequest {
+        pub collection: ::std::string::String,
+        #[serde(default = "defaults::default_u64::<u64, 10>")]
+        pub k: u64,
+        ///Optional BM25/full-text leg; absent/empty = vector-only.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub query_text: ::std::option::Option<::std::string::String>,
+        ///Post-embedding query vector (caller-computed).
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub query_vector: ::std::vec::Vec<f32>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub rank_overrides: ::std::option::Option<RankOverrides>,
+        ///Named profile; omitted = retrieval-only output.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub rank_profile: ::std::option::Option<::std::string::String>,
+    }
+    impl RankSearchRequest {
+        pub fn builder() -> builder::RankSearchRequest {
+            Default::default()
+        }
+    }
+    ///`RankSearchResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "hits",
+    ///    "phase_truncated"
+    ///  ],
+    ///  "properties": {
+    ///    "hits": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/RankScoredHit"
+    ///      }
+    ///    },
+    ///    "phase_truncated": {
+    ///      "type": "boolean"
+    ///    },
+    ///    "rank_profile": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "rank_profile_version": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint32"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct RankSearchResponse {
+        pub hits: ::std::vec::Vec<RankScoredHit>,
+        pub phase_truncated: bool,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub rank_profile: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub rank_profile_version: ::std::option::Option<u32>,
+    }
+    impl RankSearchResponse {
+        pub fn builder() -> builder::RankSearchResponse {
+            Default::default()
+        }
+    }
     ///Response for getting a single record
     ///
     /// <details><summary>JSON schema</summary>
@@ -12589,6 +12900,55 @@ pub mod types {
     }
     impl SchemaResponse {
         pub fn builder() -> builder::SchemaResponse {
+            Default::default()
+        }
+    }
+    ///`ScoreComponent`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "contribution",
+    ///    "name",
+    ///    "value",
+    ///    "weight"
+    ///  ],
+    ///  "properties": {
+    ///    "contribution": {
+    ///      "description": "Typically value * weight.",
+    ///      "type": "number",
+    ///      "format": "double"
+    ///    },
+    ///    "name": {
+    ///      "description": "e.g. bm25(title), closeness(embedding), model(rerank-v3).",
+    ///      "type": "string"
+    ///    },
+    ///    "value": {
+    ///      "type": "number",
+    ///      "format": "double"
+    ///    },
+    ///    "weight": {
+    ///      "type": "number",
+    ///      "format": "double"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct ScoreComponent {
+        ///Typically value * weight.
+        pub contribution: f64,
+        ///e.g. bm25(title), closeness(embedding), model(rerank-v3).
+        pub name: ::std::string::String,
+        pub value: f64,
+        pub weight: f64,
+    }
+    impl ScoreComponent {
+        pub fn builder() -> builder::ScoreComponent {
             Default::default()
         }
     }
@@ -29082,6 +29442,502 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct RankOverrides {
+            global_phase: ::std::result::Result<
+                ::std::option::Option<super::RankPhaseOverride>,
+                ::std::string::String,
+            >,
+            second_phase: ::std::result::Result<
+                ::std::option::Option<super::RankPhaseOverride>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for RankOverrides {
+            fn default() -> Self {
+                Self {
+                    global_phase: Ok(Default::default()),
+                    second_phase: Ok(Default::default()),
+                }
+            }
+        }
+        impl RankOverrides {
+            pub fn global_phase<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::RankPhaseOverride>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.global_phase = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for global_phase: {e}"));
+                self
+            }
+            pub fn second_phase<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::RankPhaseOverride>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.second_phase = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for second_phase: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<RankOverrides> for super::RankOverrides {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: RankOverrides,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    global_phase: value.global_phase?,
+                    second_phase: value.second_phase?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::RankOverrides> for RankOverrides {
+            fn from(value: super::RankOverrides) -> Self {
+                Self {
+                    global_phase: Ok(value.global_phase),
+                    second_phase: Ok(value.second_phase),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct RankPhaseOverride {
+            batch_size: ::std::result::Result<::std::option::Option<u32>, ::std::string::String>,
+            rerank_count: ::std::result::Result<::std::option::Option<u32>, ::std::string::String>,
+        }
+        impl ::std::default::Default for RankPhaseOverride {
+            fn default() -> Self {
+                Self {
+                    batch_size: Ok(Default::default()),
+                    rerank_count: Ok(Default::default()),
+                }
+            }
+        }
+        impl RankPhaseOverride {
+            pub fn batch_size<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.batch_size = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for batch_size: {e}"));
+                self
+            }
+            pub fn rerank_count<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.rerank_count = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for rerank_count: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<RankPhaseOverride> for super::RankPhaseOverride {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: RankPhaseOverride,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    batch_size: value.batch_size?,
+                    rerank_count: value.rerank_count?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::RankPhaseOverride> for RankPhaseOverride {
+            fn from(value: super::RankPhaseOverride) -> Self {
+                Self {
+                    batch_size: Ok(value.batch_size),
+                    rerank_count: Ok(value.rerank_count),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct RankScoreVector {
+            components: ::std::result::Result<
+                ::std::vec::Vec<super::ScoreComponent>,
+                ::std::string::String,
+            >,
+            phase: ::std::result::Result<i64, ::std::string::String>,
+            primary: ::std::result::Result<f32, ::std::string::String>,
+        }
+        impl ::std::default::Default for RankScoreVector {
+            fn default() -> Self {
+                Self {
+                    components: Ok(Default::default()),
+                    phase: Err("no value supplied for phase".to_string()),
+                    primary: Err("no value supplied for primary".to_string()),
+                }
+            }
+        }
+        impl RankScoreVector {
+            pub fn components<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::ScoreComponent>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.components = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for components: {e}"));
+                self
+            }
+            pub fn phase<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.phase = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for phase: {e}"));
+                self
+            }
+            pub fn primary<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<f32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.primary = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for primary: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<RankScoreVector> for super::RankScoreVector {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: RankScoreVector,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    components: value.components?,
+                    phase: value.phase?,
+                    primary: value.primary?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::RankScoreVector> for RankScoreVector {
+            fn from(value: super::RankScoreVector) -> Self {
+                Self {
+                    components: Ok(value.components),
+                    phase: Ok(value.phase),
+                    primary: Ok(value.primary),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct RankScoredHit {
+            id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            match_features: ::std::result::Result<
+                ::std::collections::HashMap<::std::string::String, f64>,
+                ::std::string::String,
+            >,
+            score: ::std::result::Result<f32, ::std::string::String>,
+            score_vector: ::std::result::Result<
+                ::std::option::Option<super::RankScoreVector>,
+                ::std::string::String,
+            >,
+            summary_features: ::std::result::Result<
+                ::std::collections::HashMap<::std::string::String, f64>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for RankScoredHit {
+            fn default() -> Self {
+                Self {
+                    id: Err("no value supplied for id".to_string()),
+                    match_features: Ok(Default::default()),
+                    score: Err("no value supplied for score".to_string()),
+                    score_vector: Ok(Default::default()),
+                    summary_features: Ok(Default::default()),
+                }
+            }
+        }
+        impl RankScoredHit {
+            pub fn id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for id: {e}"));
+                self
+            }
+            pub fn match_features<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::collections::HashMap<::std::string::String, f64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.match_features = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for match_features: {e}")
+                });
+                self
+            }
+            pub fn score<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<f32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.score = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for score: {e}"));
+                self
+            }
+            pub fn score_vector<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::RankScoreVector>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.score_vector = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for score_vector: {e}"));
+                self
+            }
+            pub fn summary_features<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::collections::HashMap<::std::string::String, f64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.summary_features = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for summary_features: {e}")
+                });
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<RankScoredHit> for super::RankScoredHit {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: RankScoredHit,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    id: value.id?,
+                    match_features: value.match_features?,
+                    score: value.score?,
+                    score_vector: value.score_vector?,
+                    summary_features: value.summary_features?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::RankScoredHit> for RankScoredHit {
+            fn from(value: super::RankScoredHit) -> Self {
+                Self {
+                    id: Ok(value.id),
+                    match_features: Ok(value.match_features),
+                    score: Ok(value.score),
+                    score_vector: Ok(value.score_vector),
+                    summary_features: Ok(value.summary_features),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct RankSearchRequest {
+            collection: ::std::result::Result<::std::string::String, ::std::string::String>,
+            k: ::std::result::Result<u64, ::std::string::String>,
+            query_text: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            query_vector: ::std::result::Result<::std::vec::Vec<f32>, ::std::string::String>,
+            rank_overrides: ::std::result::Result<
+                ::std::option::Option<super::RankOverrides>,
+                ::std::string::String,
+            >,
+            rank_profile: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for RankSearchRequest {
+            fn default() -> Self {
+                Self {
+                    collection: Err("no value supplied for collection".to_string()),
+                    k: Ok(super::defaults::default_u64::<u64, 10>()),
+                    query_text: Ok(Default::default()),
+                    query_vector: Ok(Default::default()),
+                    rank_overrides: Ok(Default::default()),
+                    rank_profile: Ok(Default::default()),
+                }
+            }
+        }
+        impl RankSearchRequest {
+            pub fn collection<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.collection = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for collection: {e}"));
+                self
+            }
+            pub fn k<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.k = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for k: {e}"));
+                self
+            }
+            pub fn query_text<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.query_text = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for query_text: {e}"));
+                self
+            }
+            pub fn query_vector<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<f32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.query_vector = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for query_vector: {e}"));
+                self
+            }
+            pub fn rank_overrides<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::RankOverrides>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.rank_overrides = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for rank_overrides: {e}")
+                });
+                self
+            }
+            pub fn rank_profile<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.rank_profile = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for rank_profile: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<RankSearchRequest> for super::RankSearchRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: RankSearchRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    collection: value.collection?,
+                    k: value.k?,
+                    query_text: value.query_text?,
+                    query_vector: value.query_vector?,
+                    rank_overrides: value.rank_overrides?,
+                    rank_profile: value.rank_profile?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::RankSearchRequest> for RankSearchRequest {
+            fn from(value: super::RankSearchRequest) -> Self {
+                Self {
+                    collection: Ok(value.collection),
+                    k: Ok(value.k),
+                    query_text: Ok(value.query_text),
+                    query_vector: Ok(value.query_vector),
+                    rank_overrides: Ok(value.rank_overrides),
+                    rank_profile: Ok(value.rank_profile),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct RankSearchResponse {
+            hits:
+                ::std::result::Result<::std::vec::Vec<super::RankScoredHit>, ::std::string::String>,
+            phase_truncated: ::std::result::Result<bool, ::std::string::String>,
+            rank_profile: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            rank_profile_version:
+                ::std::result::Result<::std::option::Option<u32>, ::std::string::String>,
+        }
+        impl ::std::default::Default for RankSearchResponse {
+            fn default() -> Self {
+                Self {
+                    hits: Err("no value supplied for hits".to_string()),
+                    phase_truncated: Err("no value supplied for phase_truncated".to_string()),
+                    rank_profile: Ok(Default::default()),
+                    rank_profile_version: Ok(Default::default()),
+                }
+            }
+        }
+        impl RankSearchResponse {
+            pub fn hits<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::RankScoredHit>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.hits = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for hits: {e}"));
+                self
+            }
+            pub fn phase_truncated<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.phase_truncated = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for phase_truncated: {e}")
+                });
+                self
+            }
+            pub fn rank_profile<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.rank_profile = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for rank_profile: {e}"));
+                self
+            }
+            pub fn rank_profile_version<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.rank_profile_version = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for rank_profile_version: {e}")
+                });
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<RankSearchResponse> for super::RankSearchResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: RankSearchResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    hits: value.hits?,
+                    phase_truncated: value.phase_truncated?,
+                    rank_profile: value.rank_profile?,
+                    rank_profile_version: value.rank_profile_version?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::RankSearchResponse> for RankSearchResponse {
+            fn from(value: super::RankSearchResponse) -> Self {
+                Self {
+                    hits: Ok(value.hits),
+                    phase_truncated: Ok(value.phase_truncated),
+                    rank_profile: Ok(value.rank_profile),
+                    rank_profile_version: Ok(value.rank_profile_version),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct RecordV2Response {
             id: ::std::result::Result<::std::string::String, ::std::string::String>,
             props: ::std::result::Result<
@@ -30136,6 +30992,88 @@ pub mod types {
                     schema_id: Ok(value.schema_id),
                     schema_version: Ok(value.schema_version),
                     updated_at: Ok(value.updated_at),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct ScoreComponent {
+            contribution: ::std::result::Result<f64, ::std::string::String>,
+            name: ::std::result::Result<::std::string::String, ::std::string::String>,
+            value: ::std::result::Result<f64, ::std::string::String>,
+            weight: ::std::result::Result<f64, ::std::string::String>,
+        }
+        impl ::std::default::Default for ScoreComponent {
+            fn default() -> Self {
+                Self {
+                    contribution: Err("no value supplied for contribution".to_string()),
+                    name: Err("no value supplied for name".to_string()),
+                    value: Err("no value supplied for value".to_string()),
+                    weight: Err("no value supplied for weight".to_string()),
+                }
+            }
+        }
+        impl ScoreComponent {
+            pub fn contribution<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<f64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.contribution = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for contribution: {e}"));
+                self
+            }
+            pub fn name<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.name = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for name: {e}"));
+                self
+            }
+            pub fn value<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<f64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.value = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for value: {e}"));
+                self
+            }
+            pub fn weight<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<f64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.weight = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for weight: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<ScoreComponent> for super::ScoreComponent {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: ScoreComponent,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    contribution: value.contribution?,
+                    name: value.name?,
+                    value: value.value?,
+                    weight: value.weight?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::ScoreComponent> for ScoreComponent {
+            fn from(value: super::ScoreComponent) -> Self {
+                Self {
+                    contribution: Ok(value.contribution),
+                    name: Ok(value.name),
+                    value: Ok(value.value),
+                    weight: Ok(value.weight),
                 }
             }
         }
@@ -36492,6 +37430,35 @@ impl Client {
     /// ```
     pub fn explain_query(&self) -> builder::ExplainQuery<'_> {
         builder::ExplainQuery::new(self)
+    }
+    /// Multi-phase ranked search (retrieval + optional rerank profile)
+    ///
+    /// Runs the rank pipeline over the target collection: candidate
+    /// retrieval (vector + optional BM25 text leg), then the global
+    /// composition phase, then an optional profile-driven second phase.
+    /// `rank_profile` selects a named profile from the server registry;
+    /// when omitted, the response is retrieval-only (no score vectors —
+    /// the zero-cost-when-unused contract). `rank_overrides` tweak
+    /// per-phase knobs on top of the resolved profile. `query_vector`
+    /// is the POST-embedding vector (the caller computed it).
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler beyond the standard tenant middleware context.
+    ///
+    ///
+    /// Sends a `POST` request to `/api/v2/rank/search`
+    ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.rank_search()
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn rank_search(&self) -> builder::RankSearch<'_> {
+        builder::RankSearch::new(self)
     }
     /// Execute one authenticated SQL statement
     ///
@@ -46418,6 +47385,110 @@ pub mod builder {
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
                 400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::rank_search`]
+    ///
+    /// [`Client::rank_search`]: super::Client::rank_search
+    #[derive(Debug, Clone)]
+    pub struct RankSearch<'a> {
+        client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::RankSearchRequest, String>,
+    }
+    impl<'a> RankSearch<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::RankSearchRequest>,
+            <V as std::convert::TryInto<types::RankSearchRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value
+                .try_into()
+                .map(From::from)
+                .map_err(|s| format!("conversion to `RankSearchRequest` for body failed: {}", s));
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::RankSearchRequest,
+                ) -> types::builder::RankSearchRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/rank/search`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::RankSearchResponse>, Error<types::ErrorResponse>> {
+            let Self {
+                client,
+                x_tenant_id,
+                body,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::RankSearchRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!("{}/api/v2/rank/search", client.baseurl,);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "rank_search",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                501u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 _ => Err(Error::UnexpectedResponse(response)),

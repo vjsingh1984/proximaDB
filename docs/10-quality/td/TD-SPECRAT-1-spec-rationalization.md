@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Waves 1-6 landed (observability+nl, stub-rule fixes, ABAC, collections admin, catalog routing/explain, graph surface); wave 7 (timeseries) landing
+| Status | Waves 1-7 landed; wave 8 (rank + census resolution) landing — the program census closes here
 | Severity | Medium — ~100 route literals across ~15 areas are live on the wire but invisible to every SDK
 | Component | `src/network/rest/openapi_supplement.yaml`; `docs/openapi/proximadb-openapi.yaml`; `clients/*` (regenerated)
 | Relates to | [[TD-SSO-3]] (the census that surfaced the gap); TD-126 (spec-from-code); ADR-041
@@ -308,6 +308,7 @@ list, get, node, traversal, and partial-batch envelopes so flat fake responses
 cannot mask these boundaries again.
 
 == Wave 7: time-series surface (this PR)
+== Wave 7: time-series surface (landed)
 
 **Exposed (5 paths / 6 operations; spec 74 → 79):** the complete
 `/api/v2/timeseries/collections*` surface (TD-TS-1; handlers in
@@ -338,3 +339,43 @@ Rationalization notes:
   to `/query` (serde drops them — never worked), and never calls
   `/aggregate`. Pre-existing, not introduced here — the published spec
   is what makes the divergence visible; the facade fix is a follow-up.
+
+== Wave 8: rank search + program census resolution (this PR)
+
+**Exposed (1 path / 1 operation; spec 79 → 80):**
+`POST /api/v2/rank/search` — the multi-phase ranking pipeline
+(R-7c.1): candidate retrieval (vector + optional BM25 text leg) →
+global composition → optional profile-driven second phase. Retrieval-
+only mode (no `rank_profile`) omits score vectors (NFR-9
+zero-cost-when-unused). Statuses: 200/400/404/501 (RankServices not
+injected — default deployments)/500. Ranked-surface note (mandate 13):
+the pipeline itself is deterministic; profiles embedding MODEL scorers
+become eval-eligible when they ship.
+
+**Program census RESOLVED (the remaining areas from the original
+~100-literal census):**
+
+* **streaming** — WebSocket-only (`/ws/v1/stream/insert|subscribe|
+  status`, `src/network/rest/websocket.rs`, mounted in both server
+  modes). OpenAPI cannot express a WS upgrade/duplex channel, and the
+  four codegen pipelines would generate broken REST methods. NOT
+  spec-exposable; SDKs need hand-written WS transports (a separate
+  workstream, not this program).
+* **prepared-SQL / unified query** — `/api/v2/unified/*` (10 routes:
+  execute, multi-model, federated, distributed, explain, prepare,
+  execute/{id}, prepared/{id} DELETE, prepared/stats) ALL return honest
+  501s today (root-crate port returns Not Implemented until Phase
+  9.9/9.10). Stub rule: exposed when wired, not before.
+* **events** — no REST surface exists (gRPC/eventlog only).
+* **model-registries** — already exposed (4 utoipa-annotated paths in
+  the generated core).
+* **external-collections** — the enterprise-catalogs surface
+  (`/api/v2/catalogs/*`, feature-gated, Iceberg/Delta/UC federation):
+  the one remaining genuinely-exposable area; needs its own
+  census+rationalization wave if product wants SDK access. **Product
+  call required.**
+* **progressive/rank** — hybrid search/index already exposed (wave-1
+  supplement); rank/search exposed by this wave.
+
+After wave 8, the program's remaining surface is exactly one item:
+the enterprise external-catalog wave, pending a product decision.

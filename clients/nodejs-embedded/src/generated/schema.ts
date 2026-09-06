@@ -1149,6 +1149,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/rank/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Multi-phase ranked search (retrieval + optional rerank profile).
+         * @description Runs the rank pipeline over the target collection: candidate
+         *     retrieval (vector + optional BM25 text leg), then the global
+         *     composition phase, then an optional profile-driven second phase.
+         *     `rank_profile` selects a named profile from the server registry;
+         *     when omitted, the response is retrieval-only (no score vectors —
+         *     the zero-cost-when-unused contract). `rank_overrides` tweak
+         *     per-phase knobs on top of the resolved profile. `query_vector`
+         *     is the POST-embedding vector (the caller computed it).
+         *     The optional `X-Tenant-ID` header is not consulted by this
+         *     handler beyond the standard tenant middleware context.
+         */
+        post: operations["rankSearch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/hybrid/search": {
         parameters: {
             query?: never;
@@ -4514,6 +4543,70 @@ export interface components {
         TsAggregateResponse: {
             buckets: unknown[];
         };
+        RankPhaseOverride: {
+            /** Format: uint32 */
+            rerank_count?: number | null;
+            /** Format: uint32 */
+            batch_size?: number | null;
+        };
+        RankOverrides: {
+            second_phase?: components["schemas"]["RankPhaseOverride"];
+            global_phase?: components["schemas"]["RankPhaseOverride"];
+        };
+        RankSearchRequest: {
+            collection: string;
+            /** @description Post-embedding query vector (caller-computed). */
+            query_vector?: number[];
+            /** @description Optional BM25/full-text leg; absent/empty = vector-only. */
+            query_text?: string | null;
+            /**
+             * Format: uint64
+             * @default 10
+             */
+            k: number;
+            /** @description Named profile; omitted = retrieval-only output. */
+            rank_profile?: string | null;
+            rank_overrides?: components["schemas"]["RankOverrides"];
+        };
+        ScoreComponent: {
+            /** @description e.g. bm25(title), closeness(embedding), model(rerank-v3). */
+            name: string;
+            /** Format: double */
+            value: number;
+            /** Format: double */
+            weight: number;
+            /**
+             * Format: double
+             * @description Typically value * weight.
+             */
+            contribution: number;
+        };
+        RankScoreVector: {
+            /** Format: float */
+            primary: number;
+            /** @description JSON-friendly phase ordinal (not the kernel newtype). */
+            phase: number;
+            components?: components["schemas"]["ScoreComponent"][];
+        };
+        RankScoredHit: {
+            id: string;
+            /** Format: float */
+            score: number;
+            score_vector?: components["schemas"]["RankScoreVector"];
+            match_features?: {
+                [key: string]: number;
+            };
+            summary_features?: {
+                [key: string]: number;
+            };
+        };
+        RankSearchResponse: {
+            hits: components["schemas"]["RankScoredHit"][];
+            phase_truncated: boolean;
+            rank_profile?: string | null;
+            /** Format: uint32 */
+            rank_profile_version?: number | null;
+        };
     };
     responses: {
         /** @description Invalid request. */
@@ -6879,6 +6972,48 @@ export interface operations {
                 };
             };
             500: components["responses"]["InternalError"];
+        };
+    };
+    rankSearch: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RankSearchRequest"];
+            };
+        };
+        responses: {
+            /** @description Ranked hits. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RankSearchResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+            /**
+             * @description RankServices not injected at startup (default deployments
+             *     do not wire the rank pipeline).
+             */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     hybridSearch: {
