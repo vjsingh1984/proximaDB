@@ -1,0 +1,174 @@
+= TD-MLOPS-1: MLflow compatibility adapter — tracking + registry lowering onto xCatalog
+:toc: macro
+:status: Open
+:dim: D2
+:pillar: OE
+
+[cols="1,3", options="header"]
+|===
+| Field | Value
+| Status | Open — slice plan filed; slice 1 (tracking core) in progress
+| Severity | Medium — platform gap: the AI-native data platform cannot be driven by the ML tooling ecosystem (MLflow clients) without this adapter
+| Component | `src/network/rest/mlflow/` (new), `crates/control/proximadb-catalog` (registry lowering), RunStore port (new)
+| Design authority | `docs/12-design/XCATALOG_MLOPS_MODEL_REGISTRY_2026_08_12.adoc` ("one authority, several adapters")
+| Related | TD-SPECRAT-1 (spec program), ADR-053 (UnifiedQueryPort/connectivity core), mandate 18b (connectivity spine)
+|===
+
+toc::[]
+
+== Problem
+
+The xCatalog MLOps model registry is the durable authority for embedding
+model contracts (implemented: typed contracts, immutable versions, command
+mutations, tenant-scoped lifecycle APIs, generated SDKs), and its design
+names MLflow compatibility as the next adapter slice. Without it:
+
+* The ecosystem's standard experiment-tracking clients (`mlflow` Python SDK,
+  MLflow REST) cannot drive the platform — every team wires bespoke tracking.
+* Model registration happens through bespoke scripts instead of the MLflow
+  registry workflow most ML engineers already know.
+* The design's own standard pressure-test (MLflow / MLMD / OpenLineage /
+  KServe / Unity Catalog mappings) remains unexercised — the mappings are
+  prose, not conformance-tested code.
+
+== Non-negotiable adapter laws (from the design authority)
+
+0. **Scope note (review round 1):** the design authority's MLflow rows
+   cover the REGISTRY only; extending the adapter to TRACKING (experiments/
+   runs) is this TD's extension and requires an amendment note in the
+   XCATALOG doc when slice 2 ships. To keep run identity ONE-HOME
+   (mandate-19 twin risk): the RunStore document is the durable record of
+   a run; when a model version registered from that run cites "source run
+   identity" (the design's retained field), it MUST reference the
+   RunStore's run_id verbatim — the catalog stores the reference, never a
+   second copy of run state.
+1. **Lower to xCatalog commands — never own another metadata database.**
+   Registry operations lower to `CatalogModelRegistryService` commands
+   (`RegisterVersion`, `SetAlias`, `AppendEvidence`, `RecordDecision`,
+   `UpsertDeployment`) via `apply_mutation`. Tracking runs lower to a
+   `RunStore` port whose FIRST implementation is the multimodal substrate
+   (system-namespaced document collection under `DrPathBuilder` paths,
+   tenant-scoped) — not a private table.
+2. **Neither adapter owns persistence.** All durability flows through the
+   substrate / catalog seams.
+3. **Connectivity spine (mandate 18b):** the MLflow router is a thin
+   wire-codec — auth/tenant from the shared `HeaderTrustPolicy` +
+   `TenantContext` plane (never from MLflow body fields), errors through the
+   shared error mapping, no hand-rolled auth.
+4. **Default-OFF, fail-closed:** the wire surface is gated by
+   `PROXIMADB_MLFLOW_COMPAT_ENABLE` (opt-in tier, default OFF; unset ⇒ every
+   `/api/2.0/mlflow/*` route 404s). Registry row lands with slice 2.
+5. **Mixed-read-safe by construction:** additive routes only; no existing
+   surface changes; gate-off is indistinguishable from absent.
+
+== Concept mapping (extends the design's standards table to TRACKING)
+
+[cols="2,3,2", options="header"]
+|===
+| MLflow concept | Native mapping | Consequence
+| Experiment | Tenant-scoped experiment record (RunStore) | Stable `experiment_id`; delete = soft (lifecycle marker), matching MLflow semantics.
+| Run | Producer execution + typed lineage entry | Run identity retained on model versions (design: "source run identity is retained").
+| Param / Metric / Tag | Substrate documents/columns | Metrics queryable (relational); params reject a DIFFERING second value but are idempotent on the same value (log-batch retries must succeed); tags mutable.
+| Metric history | Append-only points `(step, value, timestamp)` | Time-ordered retrieval; no in-place edits.
+| Artifact | OCI descriptor (URI, SHA-256, media type, size) | Content-addressed under DrPathBuilder paths; relocation-stable identity.
+| Registered model / version | `CatalogEmbeddingModelRegistry` + immutable version | Duplicate versions fail; digest identity.
+| Alias | Catalog alias transaction | No data-plane record stores an unresolved alias.
+| Tag (registry) | Annotation outside versions | Mutable, never affects contracts.
+| Stage transition | REJECTED with alias pointer | No built-in staging/production state machine (design); MLflow ≥2.5 aliases are the native path. NOTE: stage calls still function in current 2.x/3.x clients and `models:/name/Production` URIs will hard-fail — the slice-3 real-client workflow deliberately avoids stage calls, and the rejection message points at aliases.
+| Dataset (run input) | Name + content digest in lineage | Reproducibility never depends on a mutable path.
+| Signature | Typed input/output contract | Embedding semantics beyond tensor schemas.
+|===
+
+== Slices (TDD; each ships tests + docs; wire slices ship behind the gate)
+
+// Slice 0 note (review round 1): the design's rollout item 3 (typed
+// collection binding, data-plane) is INDEPENDENT of slices 1-4 — they need
+// only the already-implemented lifecycle service — so this wave may drive
+// in parallel with it.
+
+=== Slice 1 — Tracking core (RunStore port + substrate impl) — no wire
+
+* `RunStore` port: experiments CRUD (soft delete), runs lifecycle
+  (create/get/update/delete/set-tag), params (immutable), metrics +
+  history, tags. Tenant-scoped by construction.
+* First implementation: system-namespaced document collection through the
+  document substrate; keys under `data/{tenant}/{ns}/…` via `DrPathBuilder`
+  only.
+* Tests: red→green port conformance (round-trip, tenant isolation, metric
+  ordering, param differing-value rejection + same-value idempotency,
+  soft-delete visibility, CONCURRENT metric appends to one run from
+  interleaved writers at the same step), positive shapes.
+
+=== Slice 2 — MLflow tracking wire (gate OFF)
+
+* Router under `/api/2.0/mlflow/*` (axum, mounted only when
+  `PROXIMADB_MLFLOW_COMPAT_ENABLE` is set): experiments create/get/search/
+  delete/restore, runs create/get/update/search/delete/restore,
+  log-parameter, log-metric, log-batch, set-tag/delete-tag.
+* MLflow-native error envelope (`{error_code, message}`) and REST shapes —
+  MLflow's spec is the external contract (pgwire-class compatibility, not
+  our OpenAPI); document this in ENV_GATE_REGISTRY + the surface docs.
+* Search endpoints implement MLflow's filter language for the subset the
+  canonical workflow exercises (`params.x = 'y'`, `metrics.k < v`,
+  `tags.t = 'v'`, `LIKE`), plus `run_view_type` (ACTIVE_ONLY vs ALL —
+  interacting with soft-deletes), `order_by`, and pagination. NEGATIVE
+  CONTROLS REQUIRED: a non-matching filter returns empty (a ratchet that
+  counts passing steps passes happily with an ignored filter).
+* **Conformance ratchet:** a test lane drives the REAL `mlflow` Python
+  client (`mlflow-skinny`, version PINNED in the lane's pip install —
+  unpinned latest makes a counts-only-up ratchet drift with upstream)
+  through the canonical workflow (create experiment → run →
+  params/metrics/batch → search → artifacts). The lane counts passing
+  workflow steps (only up). Lane + path-filter wiring named at slice-2
+  time (the repeated repo failure: new test files matching no lane glob).
+* **Cross-tenant wire negative:** foreign experiment_id/run_id returns a
+  uniform MLflow-native `RESOURCE_DOES_NOT_EXIST` — never a distinguishing
+  403 that confirms id existence; search silently excludes foreign tenants.
+* Fail-closed: gate off ⇒ 404 on every route (negative control test).
+
+=== Slice 3 — MLflow registry wire (gate OFF)
+
+* registered-models create/get/search/delete; model-versions
+  create/get/search/delete; aliases set/delete/get — lowering to
+  `CatalogModelRegistryService` (create_registry / apply_mutation /
+  resolve_alias_binding).
+* Stage transitions rejected with the alias pointer (mapping table).
+* Conformance: real-client registry workflow + the design's
+  duplicate-version-fails / alias-history-preserved assertions.
+
+=== Slice 4 — Artifacts + datasets
+
+* Real MLflow clients do NOT fetch artifacts via `/api/2.0/mlflow/*`:
+  the tracking server returns `artifact_location` (e.g.
+  `mlflow-artifacts:/<exp>`) in experiment/run payloads and the client
+  resolves it against the tracking host's *proxy* routes under
+  `/api/2.0/mlflow-artifacts/*`. Slice 4 therefore mounts that route
+  family too and populates `artifact_location`/`artifact_uri` in every
+  experiment/run response — without it the slice-2 conformance step
+  "artifacts listing" 404s by construction.
+* `log-artifact` / list-download as OCI descriptors under DrPathBuilder;
+  run dataset inputs recorded as name+digest lineage entries.
+* Conformance: artifact round-trip digest-stable across relocation.
+
+=== Later (separate TD if pulled forward)
+
+* OpenLineage import/export over the same producer/input lineage.
+* MLflow 3.x llm/datasets extensions; serving integrations (out of scope).
+
+== Flip precondition (opt-in → default-ON)
+
+The gate stays default-OFF until: (a) the real-client conformance lanes are
+green in CI on two consecutive develop revisions, (b) load/footprint of the
+tracking writes is measured on the SIFT bed (evidence ledger claim), and
+(c) product signs off. Flip = its own PR (gate re-tier per the registry's
+pre-GA rules).
+
+== Out of scope
+
+MLflow UI proxying; MLflow file-store emulation; model serving; training
+execution; MLflow auth pass-through (tenant identity stays ours).
+
+== Next action
+
+Slice 1 in a worktree off `origin/develop`: `RunStore` port + substrate
+implementation, red tests first.
