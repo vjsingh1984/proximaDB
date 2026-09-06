@@ -5054,12 +5054,12 @@ export interface components {
             statement_ids?: string[];
         };
         /**
-         * @description Like the federated request, plus an optional row limit the impl
-         *     applies to the distributed result.
+         * @description A distributed query plus an optional row limit the implementation
+         *     applies to the result. Parameter binding is not supported on this
+         *     operation; use the federated or prepared surface when needed.
          */
         UnifiedDistributedRequest: {
             query: string;
-            parameters?: unknown[] | null;
             /** Format: uint32 */
             limit?: number | null;
         };
@@ -5072,6 +5072,33 @@ export interface components {
             };
             content: {
                 "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /** @description Malformed JSON or invalid request. */
+        UnifiedBadRequest: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["UnifiedBareError"];
+            };
+        };
+        /** @description Request body is not application/json. */
+        UnifiedUnsupportedMediaType: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["UnifiedBareError"];
+            };
+        };
+        /** @description JSON body does not match the request schema. */
+        UnifiedUnprocessableEntity: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["UnifiedBareError"];
             };
         };
         /** @description Resource not found. */
@@ -7455,15 +7482,9 @@ export interface operations {
                     "application/json": components["schemas"]["UnifiedOpenValue"];
                 };
             };
-            /** @description Empty query — the BARE error shape (a plain string under error). */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UnifiedBareError"];
-                };
-            };
+            400: components["responses"]["UnifiedBadRequest"];
+            415: components["responses"]["UnifiedUnsupportedMediaType"];
+            422: components["responses"]["UnifiedUnprocessableEntity"];
             /** @description Port error — the BARE error shape (a plain string under error). */
             500: {
                 headers: {
@@ -7509,6 +7530,9 @@ export interface operations {
                     "application/json": components["schemas"]["UnifiedOpenValue"];
                 };
             };
+            400: components["responses"]["UnifiedBadRequest"];
+            415: components["responses"]["UnifiedUnsupportedMediaType"];
+            422: components["responses"]["UnifiedUnprocessableEntity"];
             /** @description Port error — the BARE error shape (a plain string under error). */
             500: {
                 headers: {
@@ -7554,15 +7578,9 @@ export interface operations {
                     "application/json": components["schemas"]["UnifiedOpenValue"];
                 };
             };
-            /** @description Empty query — the BARE error shape (a plain string under error). */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UnifiedBareError"];
-                };
-            };
+            400: components["responses"]["UnifiedBadRequest"];
+            415: components["responses"]["UnifiedUnsupportedMediaType"];
+            422: components["responses"]["UnifiedUnprocessableEntity"];
             /** @description Port error — the BARE error shape (a plain string under error). */
             500: {
                 headers: {
@@ -7608,6 +7626,9 @@ export interface operations {
                     "application/json": components["schemas"]["UnifiedOpenValue"];
                 };
             };
+            400: components["responses"]["UnifiedBadRequest"];
+            415: components["responses"]["UnifiedUnsupportedMediaType"];
+            422: components["responses"]["UnifiedUnprocessableEntity"];
             /** @description Port error — the BARE error shape (a plain string under error). */
             500: {
                 headers: {
@@ -7653,6 +7674,9 @@ export interface operations {
                     "application/json": components["schemas"]["UnifiedOpenValue"];
                 };
             };
+            400: components["responses"]["UnifiedBadRequest"];
+            415: components["responses"]["UnifiedUnsupportedMediaType"];
+            422: components["responses"]["UnifiedUnprocessableEntity"];
             /** @description Port error — the BARE error shape (a plain string under error). */
             500: {
                 headers: {
@@ -7698,6 +7722,9 @@ export interface operations {
                     "application/json": components["schemas"]["UnifiedPrepareResponse"];
                 };
             };
+            400: components["responses"]["UnifiedBadRequest"];
+            415: components["responses"]["UnifiedUnsupportedMediaType"];
+            422: components["responses"]["UnifiedUnprocessableEntity"];
             /** @description Port error — the BARE error shape (a plain string under error). */
             500: {
                 headers: {
@@ -7745,6 +7772,9 @@ export interface operations {
                     "application/json": components["schemas"]["UnifiedOpenValue"];
                 };
             };
+            400: components["responses"]["UnifiedBadRequest"];
+            415: components["responses"]["UnifiedUnsupportedMediaType"];
+            422: components["responses"]["UnifiedUnprocessableEntity"];
             /** @description Port error — the BARE error shape (a plain string under error). */
             500: {
                 headers: {
@@ -7835,6 +7865,9 @@ export interface operations {
                     "application/json": components["schemas"]["UnifiedOpenValue"];
                 };
             };
+            400: components["responses"]["UnifiedBadRequest"];
+            415: components["responses"]["UnifiedUnsupportedMediaType"];
+            422: components["responses"]["UnifiedUnprocessableEntity"];
             /** @description Port error — the BARE error shape (a plain string under error). */
             500: {
                 headers: {

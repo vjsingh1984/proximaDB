@@ -50,6 +50,16 @@ def _parse_response(
 
         return response_400
 
+    if response.status_code == 415:
+        response_415 = UnifiedBareError.from_dict(response.json())
+
+        return response_415
+
+    if response.status_code == 422:
+        response_422 = UnifiedBareError.from_dict(response.json())
+
+        return response_422
+
     if response.status_code == 500:
         response_500 = UnifiedBareError.from_dict(response.json())
 

@@ -442,7 +442,7 @@ Rationalization notes:
 * Collection info bodies are open objects (serialized port records).
 * No per-route permission gate; extractor rejections plain text.
 
-== Wave 10: unified query surface (this PR)
+== Wave 10: unified query surface (landed)
 
 **Exposed (9 paths / 9 operations; spec 85 → 94):** the complete
 `/api/v2/unified/*` surface (api-crate `multimodal_query.rs`, mounted
@@ -456,12 +456,16 @@ corrected from "all-501 stubs" to LIVE (the port impl at
 Rationalization notes:
 
 * **BARE error shape, documented as its own schema** — the surface's
-  400/500/501 bodies are `{error: "<string>"}`, NOT the canonical
-  envelope (UnifiedBareError). 400 exists only on execute/federated
-  (empty-query validation).
+  400/415/422/500/501 bodies are `{error: "<string>"}`, NOT the canonical
+  envelope (UnifiedBareError). JSON extractor rejections are normalized
+  into that envelope: malformed JSON is 400, wrong content type is 415,
+  and request-schema failure is 422.
 * **Most success bodies are free-form** (the port returns
   serde_json::Value) — typed where the handler is typed (prepare 201
   {statement_id}); everything else open.
+* The distributed request exposes only `query` and `limit`; the production
+  port does not bind a `parameters` member, so the review removed that
+  previously advertised no-op from every generated SDK.
 * 501 fires only when the port itself returns not-implemented
   (non-default constructions); the default server returns 200s.
 * The wave-8 negative-space ratchet (no /unified paths) is superseded

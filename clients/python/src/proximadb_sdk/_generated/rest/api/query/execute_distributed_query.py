@@ -45,6 +45,21 @@ def _parse_response(
         response_200 = response.json()
         return response_200
 
+    if response.status_code == 400:
+        response_400 = UnifiedBareError.from_dict(response.json())
+
+        return response_400
+
+    if response.status_code == 415:
+        response_415 = UnifiedBareError.from_dict(response.json())
+
+        return response_415
+
+    if response.status_code == 422:
+        response_422 = UnifiedBareError.from_dict(response.json())
+
+        return response_422
+
     if response.status_code == 500:
         response_500 = UnifiedBareError.from_dict(response.json())
 
@@ -85,9 +100,10 @@ def sync_detailed(
 
     Args:
         x_tenant_id (str | Unset):
-        body (UnifiedDistributedRequest): Like the federated request, plus an optional row limit
-            the impl
-            applies to the distributed result.
+        body (UnifiedDistributedRequest): A distributed query plus an optional row limit the
+            implementation
+            applies to the result. Parameter binding is not supported on this
+            operation; use the federated or prepared surface when needed.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -122,9 +138,10 @@ def sync(
 
     Args:
         x_tenant_id (str | Unset):
-        body (UnifiedDistributedRequest): Like the federated request, plus an optional row limit
-            the impl
-            applies to the distributed result.
+        body (UnifiedDistributedRequest): A distributed query plus an optional row limit the
+            implementation
+            applies to the result. Parameter binding is not supported on this
+            operation; use the federated or prepared surface when needed.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -154,9 +171,10 @@ async def asyncio_detailed(
 
     Args:
         x_tenant_id (str | Unset):
-        body (UnifiedDistributedRequest): Like the federated request, plus an optional row limit
-            the impl
-            applies to the distributed result.
+        body (UnifiedDistributedRequest): A distributed query plus an optional row limit the
+            implementation
+            applies to the result. Parameter binding is not supported on this
+            operation; use the federated or prepared surface when needed.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -189,9 +207,10 @@ async def asyncio(
 
     Args:
         x_tenant_id (str | Unset):
-        body (UnifiedDistributedRequest): Like the federated request, plus an optional row limit
-            the impl
-            applies to the distributed result.
+        body (UnifiedDistributedRequest): A distributed query plus an optional row limit the
+            implementation
+            applies to the result. Parameter binding is not supported on this
+            operation; use the federated or prepared surface when needed.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

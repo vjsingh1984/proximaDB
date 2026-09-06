@@ -15959,14 +15959,15 @@ pub mod types {
             Default::default()
         }
     }
-    /// Like the federated request, plus an optional row limit the impl
-    /// applies to the distributed result.
+    /// A distributed query plus an optional row limit the implementation
+    /// applies to the result. Parameter binding is not supported on this
+    /// operation; use the federated or prepared surface when needed.
     ///
     /// <details><summary>JSON schema</summary>
     ///
     /// ```json
     ///{
-    ///  "description": "Like the federated request, plus an optional row limit the impl\napplies to the distributed result.\n",
+    ///  "description": "A distributed query plus an optional row limit the implementation\napplies to the result. Parameter binding is not supported on this\noperation; use the federated or prepared surface when needed.\n",
     ///  "type": "object",
     ///  "required": [
     ///    "query"
@@ -15979,13 +15980,6 @@ pub mod types {
     ///      ],
     ///      "format": "uint32"
     ///    },
-    ///    "parameters": {
-    ///      "type": [
-    ///        "array",
-    ///        "null"
-    ///      ],
-    ///      "items": {}
-    ///    },
     ///    "query": {
     ///      "type": "string"
     ///    }
@@ -15997,8 +15991,6 @@ pub mod types {
     pub struct UnifiedDistributedRequest {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub limit: ::std::option::Option<u32>,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub parameters: ::std::option::Option<::std::vec::Vec<::serde_json::Value>>,
         pub query: ::std::string::String,
     }
     impl UnifiedDistributedRequest {
@@ -36547,17 +36539,12 @@ pub mod types {
         #[derive(Clone, Debug)]
         pub struct UnifiedDistributedRequest {
             limit: ::std::result::Result<::std::option::Option<u32>, ::std::string::String>,
-            parameters: ::std::result::Result<
-                ::std::option::Option<::std::vec::Vec<::serde_json::Value>>,
-                ::std::string::String,
-            >,
             query: ::std::result::Result<::std::string::String, ::std::string::String>,
         }
         impl ::std::default::Default for UnifiedDistributedRequest {
             fn default() -> Self {
                 Self {
                     limit: Ok(Default::default()),
-                    parameters: Ok(Default::default()),
                     query: Err("no value supplied for query".to_string()),
                 }
             }
@@ -36571,18 +36558,6 @@ pub mod types {
                 self.limit = value
                     .try_into()
                     .map_err(|e| format!("error converting supplied value for limit: {e}"));
-                self
-            }
-            pub fn parameters<T>(mut self, value: T) -> Self
-            where
-                T: ::std::convert::TryInto<
-                        ::std::option::Option<::std::vec::Vec<::serde_json::Value>>,
-                    >,
-                T::Error: ::std::fmt::Display,
-            {
-                self.parameters = value
-                    .try_into()
-                    .map_err(|e| format!("error converting supplied value for parameters: {e}"));
                 self
             }
             pub fn query<T>(mut self, value: T) -> Self
@@ -36603,7 +36578,6 @@ pub mod types {
             ) -> ::std::result::Result<Self, super::error::ConversionError> {
                 Ok(Self {
                     limit: value.limit?,
-                    parameters: value.parameters?,
                     query: value.query?,
                 })
             }
@@ -36612,7 +36586,6 @@ pub mod types {
             fn from(value: super::UnifiedDistributedRequest) -> Self {
                 Self {
                     limit: Ok(value.limit),
-                    parameters: Ok(value.parameters),
                     query: Ok(value.query),
                 }
             }
@@ -52195,6 +52168,15 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                415u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                422u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
@@ -52297,6 +52279,12 @@ pub mod builder {
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
                 400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                415u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                422u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 500u16 => Err(Error::ErrorResponse(
@@ -52420,6 +52408,15 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                415u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                422u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
@@ -52521,6 +52518,15 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                415u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                422u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
@@ -52627,6 +52633,12 @@ pub mod builder {
                 400u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
+                415u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                422u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
@@ -52713,6 +52725,15 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                415u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                422u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
@@ -52814,6 +52835,15 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 201u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                415u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                422u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
@@ -52918,6 +52948,15 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                415u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                422u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),

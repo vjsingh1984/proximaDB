@@ -3267,12 +3267,12 @@ type UnifiedBareError struct {
 	Error string `json:"error"`
 }
 
-// UnifiedDistributedRequest Like the federated request, plus an optional row limit the impl
-// applies to the distributed result.
+// UnifiedDistributedRequest A distributed query plus an optional row limit the implementation
+// applies to the result. Parameter binding is not supported on this
+// operation; use the federated or prepared surface when needed.
 type UnifiedDistributedRequest struct {
-	Limit      *uint32        `json:"limit,omitempty"`
-	Parameters *[]interface{} `json:"parameters,omitempty"`
-	Query      string         `json:"query"`
+	Limit *uint32 `json:"limit,omitempty"`
+	Query string  `json:"query"`
 }
 
 // UnifiedExecutePreparedRequest defines model for UnifiedExecutePreparedRequest.
@@ -3536,6 +3536,21 @@ type PodUnauthorized = PrimaryPodOperatorErrorResponse
 // whenever the request passed through the request-id middleware; quote it in
 // bug reports.
 type Unauthorized = ErrorResponse
+
+// UnifiedBadRequest The unified surface's BARE error shape — a plain string under
+// `error`, NOT the canonical {error:{type,message,code}} envelope
+// other surfaces carry.
+type UnifiedBadRequest = UnifiedBareError
+
+// UnifiedUnprocessableEntity The unified surface's BARE error shape — a plain string under
+// `error`, NOT the canonical {error:{type,message,code}} envelope
+// other surfaces carry.
+type UnifiedUnprocessableEntity = UnifiedBareError
+
+// UnifiedUnsupportedMediaType The unified surface's BARE error shape — a plain string under
+// `error`, NOT the canonical {error:{type,message,code}} envelope
+// other surfaces carry.
+type UnifiedUnsupportedMediaType = UnifiedBareError
 
 // GetCapabilitiesParams defines parameters for GetCapabilities.
 type GetCapabilitiesParams struct {
@@ -26712,6 +26727,12 @@ type ExecuteDistributedQueryHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *UnifiedOpenValue
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *UnifiedBadRequest
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *UnifiedUnsupportedMediaType
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *UnifiedUnprocessableEntity
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *UnifiedBareError
 	// JSON501 the response for an HTTP 501 `application/json` response
@@ -26721,6 +26742,21 @@ type ExecuteDistributedQueryHTTPResp struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ExecuteDistributedQueryHTTPResp) GetJSON200() *UnifiedOpenValue {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ExecuteDistributedQueryHTTPResp) GetJSON400() *UnifiedBadRequest {
+	return r.JSON400
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r ExecuteDistributedQueryHTTPResp) GetJSON415() *UnifiedUnsupportedMediaType {
+	return r.JSON415
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r ExecuteDistributedQueryHTTPResp) GetJSON422() *UnifiedUnprocessableEntity {
+	return r.JSON422
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -26768,7 +26804,11 @@ type ExecuteUnifiedQueryHTTPResp struct {
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *UnifiedOpenValue
 	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *UnifiedBareError
+	JSON400 *UnifiedBadRequest
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *UnifiedUnsupportedMediaType
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *UnifiedUnprocessableEntity
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *UnifiedBareError
 	// JSON501 the response for an HTTP 501 `application/json` response
@@ -26781,8 +26821,18 @@ func (r ExecuteUnifiedQueryHTTPResp) GetJSON200() *UnifiedOpenValue {
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r ExecuteUnifiedQueryHTTPResp) GetJSON400() *UnifiedBareError {
+func (r ExecuteUnifiedQueryHTTPResp) GetJSON400() *UnifiedBadRequest {
 	return r.JSON400
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r ExecuteUnifiedQueryHTTPResp) GetJSON415() *UnifiedUnsupportedMediaType {
+	return r.JSON415
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r ExecuteUnifiedQueryHTTPResp) GetJSON422() *UnifiedUnprocessableEntity {
+	return r.JSON422
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -26829,6 +26879,12 @@ type ExecutePreparedStatementHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *UnifiedOpenValue
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *UnifiedBadRequest
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *UnifiedUnsupportedMediaType
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *UnifiedUnprocessableEntity
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *UnifiedBareError
 	// JSON501 the response for an HTTP 501 `application/json` response
@@ -26838,6 +26894,21 @@ type ExecutePreparedStatementHTTPResp struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ExecutePreparedStatementHTTPResp) GetJSON200() *UnifiedOpenValue {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ExecutePreparedStatementHTTPResp) GetJSON400() *UnifiedBadRequest {
+	return r.JSON400
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r ExecutePreparedStatementHTTPResp) GetJSON415() *UnifiedUnsupportedMediaType {
+	return r.JSON415
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r ExecutePreparedStatementHTTPResp) GetJSON422() *UnifiedUnprocessableEntity {
+	return r.JSON422
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -26884,6 +26955,12 @@ type ExplainUnifiedQueryHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *UnifiedOpenValue
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *UnifiedBadRequest
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *UnifiedUnsupportedMediaType
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *UnifiedUnprocessableEntity
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *UnifiedBareError
 	// JSON501 the response for an HTTP 501 `application/json` response
@@ -26893,6 +26970,21 @@ type ExplainUnifiedQueryHTTPResp struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ExplainUnifiedQueryHTTPResp) GetJSON200() *UnifiedOpenValue {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ExplainUnifiedQueryHTTPResp) GetJSON400() *UnifiedBadRequest {
+	return r.JSON400
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r ExplainUnifiedQueryHTTPResp) GetJSON415() *UnifiedUnsupportedMediaType {
+	return r.JSON415
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r ExplainUnifiedQueryHTTPResp) GetJSON422() *UnifiedUnprocessableEntity {
+	return r.JSON422
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -26940,7 +27032,11 @@ type ExecuteFederatedQueryHTTPResp struct {
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *UnifiedOpenValue
 	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *UnifiedBareError
+	JSON400 *UnifiedBadRequest
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *UnifiedUnsupportedMediaType
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *UnifiedUnprocessableEntity
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *UnifiedBareError
 	// JSON501 the response for an HTTP 501 `application/json` response
@@ -26953,8 +27049,18 @@ func (r ExecuteFederatedQueryHTTPResp) GetJSON200() *UnifiedOpenValue {
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r ExecuteFederatedQueryHTTPResp) GetJSON400() *UnifiedBareError {
+func (r ExecuteFederatedQueryHTTPResp) GetJSON400() *UnifiedBadRequest {
 	return r.JSON400
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r ExecuteFederatedQueryHTTPResp) GetJSON415() *UnifiedUnsupportedMediaType {
+	return r.JSON415
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r ExecuteFederatedQueryHTTPResp) GetJSON422() *UnifiedUnprocessableEntity {
+	return r.JSON422
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -27001,6 +27107,12 @@ type ExecuteMultiModelQueryHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *UnifiedOpenValue
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *UnifiedBadRequest
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *UnifiedUnsupportedMediaType
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *UnifiedUnprocessableEntity
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *UnifiedBareError
 	// JSON501 the response for an HTTP 501 `application/json` response
@@ -27010,6 +27122,21 @@ type ExecuteMultiModelQueryHTTPResp struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ExecuteMultiModelQueryHTTPResp) GetJSON200() *UnifiedOpenValue {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ExecuteMultiModelQueryHTTPResp) GetJSON400() *UnifiedBadRequest {
+	return r.JSON400
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r ExecuteMultiModelQueryHTTPResp) GetJSON415() *UnifiedUnsupportedMediaType {
+	return r.JSON415
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r ExecuteMultiModelQueryHTTPResp) GetJSON422() *UnifiedUnprocessableEntity {
+	return r.JSON422
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -27056,6 +27183,12 @@ type PrepareStatementHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON201 the response for an HTTP 201 `application/json` response
 	JSON201 *UnifiedPrepareResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *UnifiedBadRequest
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *UnifiedUnsupportedMediaType
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *UnifiedUnprocessableEntity
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *UnifiedBareError
 	// JSON501 the response for an HTTP 501 `application/json` response
@@ -27065,6 +27198,21 @@ type PrepareStatementHTTPResp struct {
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
 func (r PrepareStatementHTTPResp) GetJSON201() *UnifiedPrepareResponse {
 	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PrepareStatementHTTPResp) GetJSON400() *UnifiedBadRequest {
+	return r.JSON400
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r PrepareStatementHTTPResp) GetJSON415() *UnifiedUnsupportedMediaType {
+	return r.JSON415
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r PrepareStatementHTTPResp) GetJSON422() *UnifiedUnprocessableEntity {
+	return r.JSON422
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -27111,6 +27259,12 @@ type GetPreparedStatsHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *UnifiedOpenValue
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *UnifiedBadRequest
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *UnifiedUnsupportedMediaType
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *UnifiedUnprocessableEntity
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *UnifiedBareError
 	// JSON501 the response for an HTTP 501 `application/json` response
@@ -27120,6 +27274,21 @@ type GetPreparedStatsHTTPResp struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r GetPreparedStatsHTTPResp) GetJSON200() *UnifiedOpenValue {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetPreparedStatsHTTPResp) GetJSON400() *UnifiedBadRequest {
+	return r.JSON400
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r GetPreparedStatsHTTPResp) GetJSON415() *UnifiedUnsupportedMediaType {
+	return r.JSON415
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r GetPreparedStatsHTTPResp) GetJSON422() *UnifiedUnprocessableEntity {
+	return r.JSON422
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -35115,6 +35284,27 @@ func ParseExecuteDistributedQueryHTTPResp(rsp *http.Response) (*ExecuteDistribut
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest UnifiedBadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest UnifiedUnsupportedMediaType
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnifiedUnprocessableEntity
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest UnifiedBareError
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -35156,11 +35346,25 @@ func ParseExecuteUnifiedQueryHTTPResp(rsp *http.Response) (*ExecuteUnifiedQueryH
 		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest UnifiedBareError
+		var dest UnifiedBadRequest
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest UnifiedUnsupportedMediaType
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnifiedUnprocessableEntity
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest UnifiedBareError
@@ -35202,6 +35406,27 @@ func ParseExecutePreparedStatementHTTPResp(rsp *http.Response) (*ExecutePrepared
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest UnifiedBadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest UnifiedUnsupportedMediaType
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnifiedUnprocessableEntity
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest UnifiedBareError
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -35241,6 +35466,27 @@ func ParseExplainUnifiedQueryHTTPResp(rsp *http.Response) (*ExplainUnifiedQueryH
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest UnifiedBadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest UnifiedUnsupportedMediaType
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnifiedUnprocessableEntity
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest UnifiedBareError
@@ -35283,11 +35529,25 @@ func ParseExecuteFederatedQueryHTTPResp(rsp *http.Response) (*ExecuteFederatedQu
 		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest UnifiedBareError
+		var dest UnifiedBadRequest
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest UnifiedUnsupportedMediaType
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnifiedUnprocessableEntity
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest UnifiedBareError
@@ -35329,6 +35589,27 @@ func ParseExecuteMultiModelQueryHTTPResp(rsp *http.Response) (*ExecuteMultiModel
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest UnifiedBadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest UnifiedUnsupportedMediaType
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnifiedUnprocessableEntity
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest UnifiedBareError
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -35369,6 +35650,27 @@ func ParsePrepareStatementHTTPResp(rsp *http.Response) (*PrepareStatementHTTPRes
 		}
 		response.JSON201 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest UnifiedBadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest UnifiedUnsupportedMediaType
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnifiedUnprocessableEntity
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest UnifiedBareError
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -35408,6 +35710,27 @@ func ParseGetPreparedStatsHTTPResp(rsp *http.Response) (*GetPreparedStatsHTTPRes
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest UnifiedBadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest UnifiedUnsupportedMediaType
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnifiedUnprocessableEntity
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest UnifiedBareError

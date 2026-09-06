@@ -700,6 +700,7 @@ def test_rank_surface_and_program_census(openapi_spec):
     assert sum(1 for p in all_paths if p.startswith("/api/v2/model-registries")) == 4
     assert "/api/v2/hybrid/search" in all_paths and "/api/v2/hybrid/index" in all_paths
 
+
 def test_document_surface_has_the_complete_operation_set(openapi_spec):
     """TD-SPECRAT-1 wave 9: document collections — 7 paths / 13 ops."""
     expected_operations = {
@@ -817,9 +818,10 @@ def test_unified_surface_has_the_complete_operation_set(openapi_spec):
     assert actual_operations == expected_operations
 
     # Distinctive contracts: prepare = 201 with a statement_id; prepared
-    # DELETE = 204; the error shape is the BARE {error: string}.
+    # DELETE = 204; every JSON extractor rejection uses the same BARE
+    # {error: string} shape as the handler errors.
     prep = unified_paths["/api/v2/unified/prepare"]["post"]["responses"]
-    assert sorted(prep) == ["201", "500", "501"]
+    assert sorted(prep) == ["201", "400", "415", "422", "500", "501"]
     dele = unified_paths["/api/v2/unified/prepared/{statement_id}"]["delete"][
         "responses"
     ]
@@ -827,6 +829,29 @@ def test_unified_surface_has_the_complete_operation_set(openapi_spec):
     schemas = openapi_spec["components"]["schemas"]
     assert schemas["UnifiedBareError"]["required"] == ["error"]
     assert schemas["UnifiedPrepareResponse"]["required"] == ["statement_id"]
+
+    json_operations = [
+        ("/api/v2/unified/execute", "post"),
+        ("/api/v2/unified/multi-model", "post"),
+        ("/api/v2/unified/federated", "post"),
+        ("/api/v2/unified/distributed", "post"),
+        ("/api/v2/unified/explain", "post"),
+        ("/api/v2/unified/prepare", "post"),
+        ("/api/v2/unified/execute/{statement_id}", "post"),
+        ("/api/v2/unified/prepared/stats", "post"),
+    ]
+    for path, method in json_operations:
+        responses = unified_paths[path][method]["responses"]
+        assert {"400", "415", "422"} <= set(responses)
+        for status in ("400", "415", "422"):
+            response = responses[status]
+            if "$ref" in response:
+                response = _resolve_ref(openapi_spec, response["$ref"])
+            schema = response["content"]["application/json"]["schema"]
+            assert schema["$ref"].endswith("UnifiedBareError")
+
+    distributed = schemas["UnifiedDistributedRequest"]
+    assert set(distributed["properties"]) == {"query", "limit"}
 
 
 # ---------------------------------------------------------------------------

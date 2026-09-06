@@ -834,8 +834,8 @@ paths:
   # returns serde_json::Value) except prepare (201 {statement_id}) and
   # prepared delete (204). 501 fires only when the port returns
   # "not implemented"/UNIMPLEMENTED errors (non-default constructions).
-  # Extractor rejections (malformed JSON, missing required field, wrong
-  # content-type) are axum plain-text 400/415/422 — not the JSON shape.
+  # Extractor rejections are normalized to the same bare error shape:
+  # malformed JSON = 400, wrong content type = 415, schema failure = 422.
   /api/v2/unified/execute:
     post:
       tags: [Query]
@@ -857,12 +857,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UnifiedOpenValue"
-        "400":
-          description: Empty query — the BARE error shape (a plain string under error).
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UnifiedBareError"
+        "400": { $ref: "#/components/responses/UnifiedBadRequest" }
+        "415": { $ref: "#/components/responses/UnifiedUnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/UnifiedUnprocessableEntity" }
         "500":
           description: Port error — the BARE error shape (a plain string under error).
           content:
@@ -896,6 +893,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UnifiedOpenValue"
+        "400": { $ref: "#/components/responses/UnifiedBadRequest" }
+        "415": { $ref: "#/components/responses/UnifiedUnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/UnifiedUnprocessableEntity" }
         "500":
           description: Port error — the BARE error shape (a plain string under error).
           content:
@@ -929,12 +929,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UnifiedOpenValue"
-        "400":
-          description: Empty query — the BARE error shape (a plain string under error).
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UnifiedBareError"
+        "400": { $ref: "#/components/responses/UnifiedBadRequest" }
+        "415": { $ref: "#/components/responses/UnifiedUnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/UnifiedUnprocessableEntity" }
         "500":
           description: Port error — the BARE error shape (a plain string under error).
           content:
@@ -968,6 +965,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UnifiedOpenValue"
+        "400": { $ref: "#/components/responses/UnifiedBadRequest" }
+        "415": { $ref: "#/components/responses/UnifiedUnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/UnifiedUnprocessableEntity" }
         "500":
           description: Port error — the BARE error shape (a plain string under error).
           content:
@@ -1001,6 +1001,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UnifiedOpenValue"
+        "400": { $ref: "#/components/responses/UnifiedBadRequest" }
+        "415": { $ref: "#/components/responses/UnifiedUnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/UnifiedUnprocessableEntity" }
         "500":
           description: Port error — the BARE error shape (a plain string under error).
           content:
@@ -1034,6 +1037,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UnifiedPrepareResponse"
+        "400": { $ref: "#/components/responses/UnifiedBadRequest" }
+        "415": { $ref: "#/components/responses/UnifiedUnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/UnifiedUnprocessableEntity" }
         "500":
           description: Port error — the BARE error shape (a plain string under error).
           content:
@@ -1072,6 +1078,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UnifiedOpenValue"
+        "400": { $ref: "#/components/responses/UnifiedBadRequest" }
+        "415": { $ref: "#/components/responses/UnifiedUnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/UnifiedUnprocessableEntity" }
         "500":
           description: Port error — the BARE error shape (a plain string under error).
           content:
@@ -1136,6 +1145,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UnifiedOpenValue"
+        "400": { $ref: "#/components/responses/UnifiedBadRequest" }
+        "415": { $ref: "#/components/responses/UnifiedUnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/UnifiedUnprocessableEntity" }
         "500":
           description: Port error — the BARE error shape (a plain string under error).
           content:
@@ -2562,6 +2574,24 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    UnifiedBadRequest:
+      description: Malformed JSON or invalid request.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UnifiedBareError"
+    UnifiedUnsupportedMediaType:
+      description: Request body is not application/json.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UnifiedBareError"
+    UnifiedUnprocessableEntity:
+      description: JSON body does not match the request schema.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UnifiedBareError"
     NotFound:
       description: Resource not found.
       content:
@@ -4729,13 +4759,11 @@ components:
       type: object
       required: [query]
       description: |
-        Like the federated request, plus an optional row limit the impl
-        applies to the distributed result.
+        A distributed query plus an optional row limit the implementation
+        applies to the result. Parameter binding is not supported on this
+        operation; use the federated or prepared surface when needed.
       properties:
         query: { type: string }
-        parameters:
-          type: [array, "null"]
-          items: {}
         limit:
           type: [integer, "null"]
           format: uint32
