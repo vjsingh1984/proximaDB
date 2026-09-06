@@ -2479,11 +2479,11 @@ paths:
               $ref: '#/components/schemas/CreateDocumentCollectionRequest'
       responses:
         '200':
-          description: Created (open object — the serialized collection info).
+          description: Creation ack (success + collection).
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DocOpenObject'
+                $ref: '#/components/schemas/DocCreateCollectionResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '500':
@@ -2502,11 +2502,11 @@ paths:
       summary: List document collections.
       responses:
         '200':
-          description: Collections (open array).
+          description: Collections (an object carrying the array).
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DocOpenArray'
+                $ref: '#/components/schemas/DocCollectionListResponse'
         '500':
           $ref: '#/components/responses/InternalError'
       parameters:
@@ -2561,8 +2561,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DocDeleteAck'
-        '404':
-          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
       parameters:
@@ -2599,8 +2597,6 @@ paths:
                 $ref: '#/components/schemas/DocResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '404':
-          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
       parameters:
@@ -2648,8 +2644,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DocQueryResponse'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        '400':
+          description: |
+            Invalid filter JSON (canonical envelope) — the only 400
+            this op can emit; malformed query strings are axum plain
+            text.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           $ref: '#/components/responses/InternalError'
   /api/v2/document-collections/{collection}/documents/{id}:
@@ -2715,8 +2718,6 @@ paths:
                 $ref: '#/components/schemas/DocUpdateResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '404':
-          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
       parameters:
@@ -2738,8 +2739,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DocDeleteAck'
-        '404':
-          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
       parameters:
@@ -2776,8 +2775,6 @@ paths:
                 $ref: '#/components/schemas/DocBatchInsertResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '404':
-          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
       parameters:
@@ -2814,8 +2811,6 @@ paths:
                 $ref: '#/components/schemas/DocAggregateResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '404':
-          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
       parameters:
@@ -9314,11 +9309,25 @@ components:
       type: object
       additionalProperties: true
       description: Serialized collection info (open field set).
-    DocOpenArray:
-      type: array
-      items:
-        type: object
-        additionalProperties: true
+    DocCollectionListResponse:
+      type: object
+      required:
+      - collections
+      properties:
+        collections:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocOpenObject'
+    DocCreateCollectionResponse:
+      type: object
+      required:
+      - success
+      - collection
+      properties:
+        success:
+          type: boolean
+        collection:
+          $ref: '#/components/schemas/DocOpenObject'
     DocDeleteAck:
       type: object
       required:
@@ -9343,11 +9352,15 @@ components:
         index_type:
           type: string
           default: btree
-          description: btree is the only implemented type today.
+          description: |
+            btree | hash | inverted | fulltext | geo (unknown values
+            fall back to btree).
         unique:
           type: boolean
+          default: false
         sparse:
           type: boolean
+          default: false
     CreateDocumentCollectionRequest:
       type: object
       required:

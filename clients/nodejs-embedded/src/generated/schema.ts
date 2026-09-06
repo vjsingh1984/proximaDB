@@ -4726,9 +4726,13 @@ export interface components {
         DocOpenObject: {
             [key: string]: unknown;
         };
-        DocOpenArray: {
-            [key: string]: unknown;
-        }[];
+        DocCollectionListResponse: {
+            collections: components["schemas"]["DocOpenObject"][];
+        };
+        DocCreateCollectionResponse: {
+            success: boolean;
+            collection: components["schemas"]["DocOpenObject"];
+        };
         DocDeleteAck: {
             success: boolean;
             /** @description Present on document deletes; absent on collection deletes. */
@@ -4738,12 +4742,15 @@ export interface components {
             name?: string | null;
             path: string;
             /**
-             * @description btree is the only implemented type today.
+             * @description btree | hash | inverted | fulltext | geo (unknown values
+             *     fall back to btree).
              * @default btree
              */
             index_type: string;
-            unique?: boolean;
-            sparse?: boolean;
+            /** @default false */
+            unique: boolean;
+            /** @default false */
+            sparse: boolean;
         };
         CreateDocumentCollectionRequest: {
             name: string;
@@ -7301,13 +7308,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Collections (open array). */
+            /** @description Collections (an object carrying the array). */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DocOpenArray"];
+                    "application/json": components["schemas"]["DocCollectionListResponse"];
                 };
             };
             500: components["responses"]["InternalError"];
@@ -7329,13 +7336,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Created (open object — the serialized collection info). */
+            /** @description Creation ack (success + collection). */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DocOpenObject"];
+                    "application/json": components["schemas"]["DocCreateCollectionResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -7392,7 +7399,6 @@ export interface operations {
                     "application/json": components["schemas"]["DocDeleteAck"];
                 };
             };
-            404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
         };
     };
@@ -7426,7 +7432,19 @@ export interface operations {
                     "application/json": components["schemas"]["DocQueryResponse"];
                 };
             };
-            404: components["responses"]["NotFound"];
+            /**
+             * @description Invalid filter JSON (canonical envelope) — the only 400
+             *     this op can emit; malformed query strings are axum plain
+             *     text.
+             */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             500: components["responses"]["InternalError"];
         };
     };
@@ -7458,7 +7476,6 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
-            404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
         };
     };
@@ -7517,7 +7534,6 @@ export interface operations {
                     "application/json": components["schemas"]["DocDeleteAck"];
                 };
             };
-            404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
         };
     };
@@ -7550,7 +7566,6 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
-            404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
         };
     };
@@ -7582,7 +7597,6 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
-            404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
         };
     };
@@ -7614,7 +7628,6 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
-            404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
         };
     };

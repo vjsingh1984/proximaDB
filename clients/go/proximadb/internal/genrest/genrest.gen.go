@@ -1449,6 +1449,18 @@ type DocBatchInsertResponse struct {
 	Inserted uint64 `json:"inserted"`
 }
 
+// DocCollectionListResponse defines model for DocCollectionListResponse.
+type DocCollectionListResponse struct {
+	Collections []DocOpenObject `json:"collections"`
+}
+
+// DocCreateCollectionResponse defines model for DocCreateCollectionResponse.
+type DocCreateCollectionResponse struct {
+	// Collection Serialized collection info (open field set).
+	Collection DocOpenObject `json:"collection"`
+	Success    bool          `json:"success"`
+}
+
 // DocDeleteAck defines model for DocDeleteAck.
 type DocDeleteAck struct {
 	// Id Present on document deletes; absent on collection deletes.
@@ -1458,7 +1470,8 @@ type DocDeleteAck struct {
 
 // DocIndexDefinition defines model for DocIndexDefinition.
 type DocIndexDefinition struct {
-	// IndexType btree is the only implemented type today.
+	// IndexType btree | hash | inverted | fulltext | geo (unknown values
+	// fall back to btree).
 	IndexType *string `json:"index_type,omitempty"`
 	Name      *string `json:"name,omitempty"`
 	Path      string  `json:"path"`
@@ -1483,9 +1496,6 @@ type DocInsertRequest struct {
 	// Id Server-assigned when omitted.
 	Id *string `json:"id,omitempty"`
 }
-
-// DocOpenArray defines model for DocOpenArray.
-type DocOpenArray = []map[string]interface{}
 
 // DocOpenObject Serialized collection info (open field set).
 type DocOpenObject map[string]interface{}
@@ -21387,13 +21397,13 @@ type ListDocumentCollectionsHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *DocOpenArray
+	JSON200 *DocCollectionListResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListDocumentCollectionsHTTPResp) GetJSON200() *DocOpenArray {
+func (r ListDocumentCollectionsHTTPResp) GetJSON200() *DocCollectionListResponse {
 	return r.JSON200
 }
 
@@ -21435,7 +21445,7 @@ type CreateDocumentCollectionHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *DocOpenObject
+	JSON200 *DocCreateCollectionResponse
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON500 the response for an HTTP 500 `application/json` response
@@ -21443,7 +21453,7 @@ type CreateDocumentCollectionHTTPResp struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r CreateDocumentCollectionHTTPResp) GetJSON200() *DocOpenObject {
+func (r CreateDocumentCollectionHTTPResp) GetJSON200() *DocCreateCollectionResponse {
 	return r.JSON200
 }
 
@@ -21491,8 +21501,6 @@ type DeleteDocumentCollectionHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *DocDeleteAck
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 }
@@ -21500,11 +21508,6 @@ type DeleteDocumentCollectionHTTPResp struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r DeleteDocumentCollectionHTTPResp) GetJSON200() *DocDeleteAck {
 	return r.JSON200
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r DeleteDocumentCollectionHTTPResp) GetJSON404() *NotFound {
-	return r.JSON404
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -21601,8 +21604,8 @@ type QueryDocumentsHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *DocQueryResponse
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 }
@@ -21612,9 +21615,9 @@ func (r QueryDocumentsHTTPResp) GetJSON200() *DocQueryResponse {
 	return r.JSON200
 }
 
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r QueryDocumentsHTTPResp) GetJSON404() *NotFound {
-	return r.JSON404
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r QueryDocumentsHTTPResp) GetJSON400() *ErrorResponse {
+	return r.JSON400
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -21658,8 +21661,6 @@ type InsertDocumentHTTPResp struct {
 	JSON200 *DocResponse
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 }
@@ -21672,11 +21673,6 @@ func (r InsertDocumentHTTPResp) GetJSON200() *DocResponse {
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
 func (r InsertDocumentHTTPResp) GetJSON400() *BadRequest {
 	return r.JSON400
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r InsertDocumentHTTPResp) GetJSON404() *NotFound {
-	return r.JSON404
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -21720,8 +21716,6 @@ type AggregateDocumentsHTTPResp struct {
 	JSON200 *DocAggregateResponse
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 }
@@ -21734,11 +21728,6 @@ func (r AggregateDocumentsHTTPResp) GetJSON200() *DocAggregateResponse {
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
 func (r AggregateDocumentsHTTPResp) GetJSON400() *BadRequest {
 	return r.JSON400
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r AggregateDocumentsHTTPResp) GetJSON404() *NotFound {
-	return r.JSON404
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -21782,8 +21771,6 @@ type BatchInsertDocumentsHTTPResp struct {
 	JSON200 *DocBatchInsertResponse
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 }
@@ -21796,11 +21783,6 @@ func (r BatchInsertDocumentsHTTPResp) GetJSON200() *DocBatchInsertResponse {
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
 func (r BatchInsertDocumentsHTTPResp) GetJSON400() *BadRequest {
 	return r.JSON400
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r BatchInsertDocumentsHTTPResp) GetJSON404() *NotFound {
-	return r.JSON404
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -21842,8 +21824,6 @@ type DeleteDocumentHTTPResp struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *DocDeleteAck
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 }
@@ -21851,11 +21831,6 @@ type DeleteDocumentHTTPResp struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r DeleteDocumentHTTPResp) GetJSON200() *DocDeleteAck {
 	return r.JSON200
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r DeleteDocumentHTTPResp) GetJSON404() *NotFound {
-	return r.JSON404
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -21954,8 +21929,6 @@ type UpdateDocumentHTTPResp struct {
 	JSON200 *DocUpdateResponse
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 }
@@ -21968,11 +21941,6 @@ func (r UpdateDocumentHTTPResp) GetJSON200() *DocUpdateResponse {
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
 func (r UpdateDocumentHTTPResp) GetJSON400() *BadRequest {
 	return r.JSON400
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r UpdateDocumentHTTPResp) GetJSON404() *NotFound {
-	return r.JSON404
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -30116,7 +30084,7 @@ func ParseListDocumentCollectionsHTTPResp(rsp *http.Response) (*ListDocumentColl
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest DocOpenArray
+		var dest DocCollectionListResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -30149,7 +30117,7 @@ func ParseCreateDocumentCollectionHTTPResp(rsp *http.Response) (*CreateDocumentC
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest DocOpenObject
+		var dest DocCreateCollectionResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -30194,13 +30162,6 @@ func ParseDeleteDocumentCollectionHTTPResp(rsp *http.Response) (*DeleteDocumentC
 			return nil, err
 		}
 		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
@@ -30275,12 +30236,12 @@ func ParseQueryDocumentsHTTPResp(rsp *http.Response) (*QueryDocumentsHTTPResp, e
 		}
 		response.JSON200 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON404 = &dest
+		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
@@ -30322,13 +30283,6 @@ func ParseInsertDocumentHTTPResp(rsp *http.Response) (*InsertDocumentHTTPResp, e
 		}
 		response.JSON400 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -30368,13 +30322,6 @@ func ParseAggregateDocumentsHTTPResp(rsp *http.Response) (*AggregateDocumentsHTT
 			return nil, err
 		}
 		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
@@ -30416,13 +30363,6 @@ func ParseBatchInsertDocumentsHTTPResp(rsp *http.Response) (*BatchInsertDocument
 		}
 		response.JSON400 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -30455,13 +30395,6 @@ func ParseDeleteDocumentHTTPResp(rsp *http.Response) (*DeleteDocumentHTTPResp, e
 			return nil, err
 		}
 		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
@@ -30542,13 +30475,6 @@ func ParseUpdateDocumentHTTPResp(rsp *http.Response) (*UpdateDocumentHTTPResp, e
 			return nil, err
 		}
 		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError

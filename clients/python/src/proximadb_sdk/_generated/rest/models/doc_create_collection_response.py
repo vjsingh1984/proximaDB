@@ -6,36 +6,66 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="DocOpenArrayItem")
+if TYPE_CHECKING:
+    from ..models.doc_open_object import DocOpenObject
+
+
+T = TypeVar("T", bound="DocCreateCollectionResponse")
 
 
 @_attrs_define
-class DocOpenArrayItem:
-    """ """
+class DocCreateCollectionResponse:
+    """
+    Attributes:
+        success (bool):
+        collection (DocOpenObject): Serialized collection info (open field set).
+    """
 
+    success: bool
+    collection: DocOpenObject
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.doc_open_object import DocOpenObject
+
+        success = self.success
+
+        collection = self.collection.to_dict()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
+        field_dict.update(
+            {
+                "success": success,
+                "collection": collection,
+            }
+        )
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        d = dict(src_dict)
-        doc_open_array_item = cls()
+        from ..models.doc_open_object import DocOpenObject
 
-        doc_open_array_item.additional_properties = d
-        return doc_open_array_item
+        d = dict(src_dict)
+        success = d.pop("success")
+
+        collection = DocOpenObject.from_dict(d.pop("collection"))
+
+        doc_create_collection_response = cls(
+            success=success,
+            collection=collection,
+        )
+
+        doc_create_collection_response.additional_properties = d
+        return doc_create_collection_response
 
     @property
     def additional_keys(self) -> list[str]:

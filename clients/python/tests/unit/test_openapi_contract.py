@@ -749,6 +749,22 @@ def test_document_surface_has_the_complete_operation_set(openapi_spec):
     assert schemas["DocResponse"]["required"] == ["id", "document", "version"]
     assert schemas["DocUpdateResponse"]["required"] == ["success", "id", "new_version"]
 
+    # Round-1 review: pin the list 200 top-level TYPE (an object carrying
+    # `collections` — the array-typed predecessor broke every SDK).
+    list_200 = doc_paths["/api/v2/document-collections"]["get"]["responses"]["200"]
+    assert list_200["content"]["application/json"]["schema"]["$ref"].endswith(
+        "DocCollectionListResponse"
+    )
+    assert schemas["DocCollectionListResponse"]["required"] == ["collections"]
+    assert (
+        schemas["DocCollectionListResponse"]["properties"]["collections"]["type"]
+        == "array"
+    )
+    assert schemas["DocCreateCollectionResponse"]["required"] == [
+        "success",
+        "collection",
+    ]
+
     # Census resolutions pinned (wave 8): WS streaming and the all-501
     # unified surface are deliberately ABSENT from the spec.
     paths = openapi_spec["paths"]

@@ -5428,6 +5428,68 @@ pub mod types {
             Default::default()
         }
     }
+    ///`DocCollectionListResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "collections"
+    ///  ],
+    ///  "properties": {
+    ///    "collections": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/DocOpenObject"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct DocCollectionListResponse {
+        pub collections: ::std::vec::Vec<DocOpenObject>,
+    }
+    impl DocCollectionListResponse {
+        pub fn builder() -> builder::DocCollectionListResponse {
+            Default::default()
+        }
+    }
+    ///`DocCreateCollectionResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "collection",
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "collection": {
+    ///      "$ref": "#/components/schemas/DocOpenObject"
+    ///    },
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct DocCreateCollectionResponse {
+        pub collection: DocOpenObject,
+        pub success: bool,
+    }
+    impl DocCreateCollectionResponse {
+        pub fn builder() -> builder::DocCreateCollectionResponse {
+            Default::default()
+        }
+    }
     ///`DocDeleteAck`
     ///
     /// <details><summary>JSON schema</summary>
@@ -5474,7 +5536,7 @@ pub mod types {
     ///  ],
     ///  "properties": {
     ///    "index_type": {
-    ///      "description": "btree is the only implemented type today.",
+    ///      "description": "btree | hash | inverted | fulltext | geo (unknown values\nfall back to btree).\n",
     ///      "default": "btree",
     ///      "type": "string"
     ///    },
@@ -5488,9 +5550,11 @@ pub mod types {
     ///      "type": "string"
     ///    },
     ///    "sparse": {
+    ///      "default": false,
     ///      "type": "boolean"
     ///    },
     ///    "unique": {
+    ///      "default": false,
     ///      "type": "boolean"
     ///    }
     ///  }
@@ -5499,16 +5563,17 @@ pub mod types {
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
     pub struct DocIndexDefinition {
-        ///btree is the only implemented type today.
+        /// btree | hash | inverted | fulltext | geo (unknown values
+        /// fall back to btree).
         #[serde(default = "defaults::doc_index_definition_index_type")]
         pub index_type: ::std::string::String,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub name: ::std::option::Option<::std::string::String>,
         pub path: ::std::string::String,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub sparse: ::std::option::Option<bool>,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
-        pub unique: ::std::option::Option<bool>,
+        #[serde(default)]
+        pub sparse: bool,
+        #[serde(default)]
+        pub unique: bool,
     }
     impl DocIndexDefinition {
         pub fn builder() -> builder::DocIndexDefinition {
@@ -5640,53 +5705,6 @@ pub mod types {
     impl DocInsertRequest {
         pub fn builder() -> builder::DocInsertRequest {
             Default::default()
-        }
-    }
-    ///`DocOpenArray`
-    ///
-    /// <details><summary>JSON schema</summary>
-    ///
-    /// ```json
-    ///{
-    ///  "type": "array",
-    ///  "items": {
-    ///    "type": "object",
-    ///    "additionalProperties": true
-    ///  }
-    ///}
-    /// ```
-    /// </details>
-    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-    #[serde(transparent)]
-    pub struct DocOpenArray(
-        pub ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
-    );
-    impl ::std::ops::Deref for DocOpenArray {
-        type Target =
-            ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>;
-        fn deref(
-            &self,
-        ) -> &::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>
-        {
-            &self.0
-        }
-    }
-    impl ::std::convert::From<DocOpenArray>
-        for ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>
-    {
-        fn from(value: DocOpenArray) -> Self {
-            value.0
-        }
-    }
-    impl
-        ::std::convert::From<
-            ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
-        > for DocOpenArray
-    {
-        fn from(
-            value: ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
-        ) -> Self {
-            Self(value)
         }
     }
     ///Serialized collection info (open field set).
@@ -21977,6 +21995,101 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct DocCollectionListResponse {
+            collections:
+                ::std::result::Result<::std::vec::Vec<super::DocOpenObject>, ::std::string::String>,
+        }
+        impl ::std::default::Default for DocCollectionListResponse {
+            fn default() -> Self {
+                Self {
+                    collections: Err("no value supplied for collections".to_string()),
+                }
+            }
+        }
+        impl DocCollectionListResponse {
+            pub fn collections<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::DocOpenObject>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.collections = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for collections: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<DocCollectionListResponse> for super::DocCollectionListResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: DocCollectionListResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    collections: value.collections?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::DocCollectionListResponse> for DocCollectionListResponse {
+            fn from(value: super::DocCollectionListResponse) -> Self {
+                Self {
+                    collections: Ok(value.collections),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct DocCreateCollectionResponse {
+            collection: ::std::result::Result<super::DocOpenObject, ::std::string::String>,
+            success: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for DocCreateCollectionResponse {
+            fn default() -> Self {
+                Self {
+                    collection: Err("no value supplied for collection".to_string()),
+                    success: Err("no value supplied for success".to_string()),
+                }
+            }
+        }
+        impl DocCreateCollectionResponse {
+            pub fn collection<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::DocOpenObject>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.collection = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for collection: {e}"));
+                self
+            }
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<DocCreateCollectionResponse> for super::DocCreateCollectionResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: DocCreateCollectionResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    collection: value.collection?,
+                    success: value.success?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::DocCreateCollectionResponse> for DocCreateCollectionResponse {
+            fn from(value: super::DocCreateCollectionResponse) -> Self {
+                Self {
+                    collection: Ok(value.collection),
+                    success: Ok(value.success),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct DocDeleteAck {
             id: ::std::result::Result<
                 ::std::option::Option<::std::string::String>,
@@ -22041,8 +22154,8 @@ pub mod types {
                 ::std::string::String,
             >,
             path: ::std::result::Result<::std::string::String, ::std::string::String>,
-            sparse: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
-            unique: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+            sparse: ::std::result::Result<bool, ::std::string::String>,
+            unique: ::std::result::Result<bool, ::std::string::String>,
         }
         impl ::std::default::Default for DocIndexDefinition {
             fn default() -> Self {
@@ -22088,7 +22201,7 @@ pub mod types {
             }
             pub fn sparse<T>(mut self, value: T) -> Self
             where
-                T: ::std::convert::TryInto<::std::option::Option<bool>>,
+                T: ::std::convert::TryInto<bool>,
                 T::Error: ::std::fmt::Display,
             {
                 self.sparse = value
@@ -22098,7 +22211,7 @@ pub mod types {
             }
             pub fn unique<T>(mut self, value: T) -> Self
             where
-                T: ::std::convert::TryInto<::std::option::Option<bool>>,
+                T: ::std::convert::TryInto<bool>,
                 T::Error: ::std::fmt::Display,
             {
                 self.unique = value
@@ -43230,7 +43343,8 @@ pub mod builder {
         ///Sends a `GET` request to `/api/v2/document-collections`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::DocOpenArray>, Error<types::ErrorResponse>> {
+        ) -> Result<ResponseValue<types::DocCollectionListResponse>, Error<types::ErrorResponse>>
+        {
             let Self {
                 client,
                 x_tenant_id,
@@ -43323,7 +43437,8 @@ pub mod builder {
         ///Sends a `POST` request to `/api/v2/document-collections`
         pub async fn send(
             self,
-        ) -> Result<ResponseValue<types::DocOpenObject>, Error<types::ErrorResponse>> {
+        ) -> Result<ResponseValue<types::DocCreateCollectionResponse>, Error<types::ErrorResponse>>
+        {
             let Self {
                 client,
                 x_tenant_id,
@@ -43540,9 +43655,6 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
-                404u16 => Err(Error::ErrorResponse(
-                    ResponseValue::from_response(response).await?,
-                )),
                 500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
@@ -43674,7 +43786,7 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
-                404u16 => Err(Error::ErrorResponse(
+                400u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 500u16 => Err(Error::ErrorResponse(
@@ -43790,9 +43902,6 @@ pub mod builder {
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
                 400u16 => Err(Error::ErrorResponse(
-                    ResponseValue::from_response(response).await?,
-                )),
-                404u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 500u16 => Err(Error::ErrorResponse(
@@ -43911,9 +44020,6 @@ pub mod builder {
                 400u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
-                404u16 => Err(Error::ErrorResponse(
-                    ResponseValue::from_response(response).await?,
-                )),
                 500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
@@ -44030,9 +44136,6 @@ pub mod builder {
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
                 400u16 => Err(Error::ErrorResponse(
-                    ResponseValue::from_response(response).await?,
-                )),
-                404u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 500u16 => Err(Error::ErrorResponse(
@@ -44253,9 +44356,6 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
-                404u16 => Err(Error::ErrorResponse(
-                    ResponseValue::from_response(response).await?,
-                )),
                 500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
@@ -44383,9 +44483,6 @@ pub mod builder {
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
                 400u16 => Err(Error::ErrorResponse(
-                    ResponseValue::from_response(response).await?,
-                )),
-                404u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 500u16 => Err(Error::ErrorResponse(

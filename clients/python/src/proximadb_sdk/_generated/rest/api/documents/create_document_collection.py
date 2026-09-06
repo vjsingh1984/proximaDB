@@ -12,7 +12,7 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.create_document_collection_request import CreateDocumentCollectionRequest
-from ...models.doc_open_object import DocOpenObject
+from ...models.doc_create_collection_response import DocCreateCollectionResponse
 from ...models.error_response import ErrorResponse
 from ...types import UNSET, Response, Unset
 
@@ -41,9 +41,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> DocOpenObject | ErrorResponse | None:
+) -> DocCreateCollectionResponse | ErrorResponse | None:
     if response.status_code == 200:
-        response_200 = DocOpenObject.from_dict(response.json())
+        response_200 = DocCreateCollectionResponse.from_dict(response.json())
 
         return response_200
 
@@ -65,7 +65,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[DocOpenObject | ErrorResponse]:
+) -> Response[DocCreateCollectionResponse | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -79,7 +79,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: CreateDocumentCollectionRequest,
     x_tenant_id: str | Unset = UNSET,
-) -> Response[DocOpenObject | ErrorResponse]:
+) -> Response[DocCreateCollectionResponse | ErrorResponse]:
     """Create a document collection (with optional indexes).
 
     Args:
@@ -91,7 +91,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[DocOpenObject | ErrorResponse]
+        Response[DocCreateCollectionResponse | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -111,7 +111,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: CreateDocumentCollectionRequest,
     x_tenant_id: str | Unset = UNSET,
-) -> DocOpenObject | ErrorResponse | None:
+) -> DocCreateCollectionResponse | ErrorResponse | None:
     """Create a document collection (with optional indexes).
 
     Args:
@@ -123,7 +123,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        DocOpenObject | ErrorResponse
+        DocCreateCollectionResponse | ErrorResponse
     """
 
     return sync_detailed(
@@ -138,7 +138,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: CreateDocumentCollectionRequest,
     x_tenant_id: str | Unset = UNSET,
-) -> Response[DocOpenObject | ErrorResponse]:
+) -> Response[DocCreateCollectionResponse | ErrorResponse]:
     """Create a document collection (with optional indexes).
 
     Args:
@@ -150,7 +150,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[DocOpenObject | ErrorResponse]
+        Response[DocCreateCollectionResponse | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -168,7 +168,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: CreateDocumentCollectionRequest,
     x_tenant_id: str | Unset = UNSET,
-) -> DocOpenObject | ErrorResponse | None:
+) -> DocCreateCollectionResponse | ErrorResponse | None:
     """Create a document collection (with optional indexes).
 
     Args:
@@ -180,7 +180,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        DocOpenObject | ErrorResponse
+        DocCreateCollectionResponse | ErrorResponse
     """
 
     return (

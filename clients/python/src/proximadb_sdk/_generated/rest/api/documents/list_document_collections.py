@@ -11,7 +11,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.doc_open_array_item import DocOpenArrayItem
+from ...models.doc_collection_list_response import DocCollectionListResponse
 from ...models.error_response import ErrorResponse
 from ...types import UNSET, Response, Unset
 
@@ -35,16 +35,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorResponse | list[DocOpenArrayItem] | None:
+) -> DocCollectionListResponse | ErrorResponse | None:
     if response.status_code == 200:
-        response_200 = []
-        _response_200 = response.json()
-        for componentsschemas_doc_open_array_item_data in _response_200:
-            componentsschemas_doc_open_array_item = DocOpenArrayItem.from_dict(
-                componentsschemas_doc_open_array_item_data
-            )
-
-            response_200.append(componentsschemas_doc_open_array_item)
+        response_200 = DocCollectionListResponse.from_dict(response.json())
 
         return response_200
 
@@ -61,7 +54,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorResponse | list[DocOpenArrayItem]]:
+) -> Response[DocCollectionListResponse | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -74,7 +67,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     x_tenant_id: str | Unset = UNSET,
-) -> Response[ErrorResponse | list[DocOpenArrayItem]]:
+) -> Response[DocCollectionListResponse | ErrorResponse]:
     """List document collections.
 
     Args:
@@ -85,7 +78,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | list[DocOpenArrayItem]]
+        Response[DocCollectionListResponse | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -103,7 +96,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     x_tenant_id: str | Unset = UNSET,
-) -> ErrorResponse | list[DocOpenArrayItem] | None:
+) -> DocCollectionListResponse | ErrorResponse | None:
     """List document collections.
 
     Args:
@@ -114,7 +107,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | list[DocOpenArrayItem]
+        DocCollectionListResponse | ErrorResponse
     """
 
     return sync_detailed(
@@ -127,7 +120,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     x_tenant_id: str | Unset = UNSET,
-) -> Response[ErrorResponse | list[DocOpenArrayItem]]:
+) -> Response[DocCollectionListResponse | ErrorResponse]:
     """List document collections.
 
     Args:
@@ -138,7 +131,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | list[DocOpenArrayItem]]
+        Response[DocCollectionListResponse | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
@@ -154,7 +147,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     x_tenant_id: str | Unset = UNSET,
-) -> ErrorResponse | list[DocOpenArrayItem] | None:
+) -> DocCollectionListResponse | ErrorResponse | None:
     """List document collections.
 
     Args:
@@ -165,7 +158,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | list[DocOpenArrayItem]
+        DocCollectionListResponse | ErrorResponse
     """
 
     return (

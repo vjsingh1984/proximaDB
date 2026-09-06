@@ -22,16 +22,18 @@ class DocIndexDefinition:
     Attributes:
         path (str):
         name (None | str | Unset):
-        index_type (str | Unset): btree is the only implemented type today. Default: 'btree'.
-        unique (bool | Unset):
-        sparse (bool | Unset):
+        index_type (str | Unset): btree | hash | inverted | fulltext | geo (unknown values
+            fall back to btree).
+             Default: 'btree'.
+        unique (bool | Unset):  Default: False.
+        sparse (bool | Unset):  Default: False.
     """
 
     path: str
     name: None | str | Unset = UNSET
     index_type: str | Unset = "btree"
-    unique: bool | Unset = UNSET
-    sparse: bool | Unset = UNSET
+    unique: bool | Unset = False
+    sparse: bool | Unset = False
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

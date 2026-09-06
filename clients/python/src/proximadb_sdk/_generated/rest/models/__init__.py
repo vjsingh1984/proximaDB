@@ -125,12 +125,13 @@ from .doc_aggregate_request import DocAggregateRequest
 from .doc_aggregate_response import DocAggregateResponse
 from .doc_batch_insert_request import DocBatchInsertRequest
 from .doc_batch_insert_response import DocBatchInsertResponse
+from .doc_collection_list_response import DocCollectionListResponse
+from .doc_create_collection_response import DocCreateCollectionResponse
 from .doc_delete_ack import DocDeleteAck
 from .doc_index_definition import DocIndexDefinition
 from .doc_index_list_response import DocIndexListResponse
 from .doc_index_list_response_indexes_item import DocIndexListResponseIndexesItem
 from .doc_insert_request import DocInsertRequest
-from .doc_open_array_item import DocOpenArrayItem
 from .doc_open_object import DocOpenObject
 from .doc_query_response import DocQueryResponse
 from .doc_response import DocResponse
@@ -452,12 +453,13 @@ __all__ = (
     "DocAggregateResponse",
     "DocBatchInsertRequest",
     "DocBatchInsertResponse",
+    "DocCollectionListResponse",
+    "DocCreateCollectionResponse",
     "DocDeleteAck",
     "DocIndexDefinition",
     "DocIndexListResponse",
     "DocIndexListResponseIndexesItem",
     "DocInsertRequest",
-    "DocOpenArrayItem",
     "DocOpenObject",
     "DocQueryResponse",
     "DocResponse",
