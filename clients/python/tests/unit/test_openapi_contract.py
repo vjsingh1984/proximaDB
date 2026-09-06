@@ -689,6 +689,66 @@ def test_rank_surface_and_program_census(openapi_spec):
     assert sum(1 for p in all_paths if p.startswith("/api/v2/model-registries")) == 4
     assert "/api/v2/hybrid/search" in all_paths and "/api/v2/hybrid/index" in all_paths
 
+
+def test_document_surface_has_the_complete_operation_set(openapi_spec):
+    """TD-SPECRAT-1 wave 9: document collections — 7 paths / 13 ops."""
+    expected_operations = {
+        "createDocumentCollection",
+        "listDocumentCollections",
+        "getDocumentCollection",
+        "deleteDocumentCollection",
+        "insertDocument",
+        "queryDocuments",
+        "getDocument",
+        "updateDocument",
+        "deleteDocument",
+        "batchInsertDocuments",
+        "aggregateDocuments",
+        "createDocumentIndex",
+        "listDocumentIndexes",
+    }
+    doc_paths = {
+        path: item
+        for path, item in openapi_spec["paths"].items()
+        if path.startswith("/api/v2/document-collections")
+    }
+    actual_operations = {
+        operation["operationId"]
+        for item in doc_paths.values()
+        for method, operation in item.items()
+        if method in {"get", "put", "post", "delete", "patch"}
+    }
+
+    assert len(doc_paths) == 7
+    assert actual_operations == expected_operations
+
+    # createDocumentIndex is the HONEST always-400 (unsupported op).
+    idx = doc_paths["/api/v2/document-collections/{collection}/indexes"]["post"]
+    assert sorted(idx["responses"]) == ["400"]
+
+    schemas = openapi_spec["components"]["schemas"]
+    expected_properties = {
+        "DocResponse": {"id", "document", "version"},
+        "DocQueryResponse": {"documents", "total_count", "has_more"},
+        "DocUpdateRequest": {"updates", "expected_version"},
+        "DocUpdateResponse": {"success", "id", "new_version"},
+        "DocBatchInsertRequest": {"documents"},
+        "DocBatchInsertResponse": {"inserted", "failed"},
+        "DocAggregateRequest": {"pipeline"},
+        "DocAggregateResponse": {"results", "query_time_ms"},
+        "DocIndexDefinition": {"name", "path", "index_type", "unique", "sparse"},
+        "CreateDocumentCollectionRequest": {"name", "indexes"},
+        "DocInsertRequest": {"id", "document"},
+        "DocIndexListResponse": {"indexes"},
+    }
+    for schema_name, exp in expected_properties.items():
+        actual = set(schemas[schema_name]["properties"])
+        assert (
+            actual == exp
+        ), f"{schema_name} drifted: missing={exp - actual} extra={actual - exp}"
+    assert schemas["DocResponse"]["required"] == ["id", "document", "version"]
+    assert schemas["DocUpdateResponse"]["required"] == ["success", "id", "new_version"]
+
     # Census resolutions pinned (wave 8): WS streaming and the all-501
     # unified surface are deliberately ABSENT from the spec.
     paths = openapi_spec["paths"]

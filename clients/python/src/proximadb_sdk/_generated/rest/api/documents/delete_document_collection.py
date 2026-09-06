@@ -11,12 +11,13 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.doc_open_array_item import DocOpenArrayItem
+from ...models.doc_delete_ack import DocDeleteAck
 from ...models.error_response import ErrorResponse
 from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
+    collection: str,
     *,
     x_tenant_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
@@ -25,8 +26,10 @@ def _get_kwargs(
         headers["X-Tenant-ID"] = x_tenant_id
 
     _kwargs: dict[str, Any] = {
-        "method": "get",
-        "url": "/api/v2/document-collections",
+        "method": "delete",
+        "url": "/api/v2/document-collections/{collection}".format(
+            collection=quote(str(collection), safe=""),
+        ),
     }
 
     _kwargs["headers"] = headers
@@ -35,18 +38,16 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorResponse | list[DocOpenArrayItem] | None:
+) -> DocDeleteAck | ErrorResponse | None:
     if response.status_code == 200:
-        response_200 = []
-        _response_200 = response.json()
-        for componentsschemas_doc_open_array_item_data in _response_200:
-            componentsschemas_doc_open_array_item = DocOpenArrayItem.from_dict(
-                componentsschemas_doc_open_array_item_data
-            )
-
-            response_200.append(componentsschemas_doc_open_array_item)
+        response_200 = DocDeleteAck.from_dict(response.json())
 
         return response_200
+
+    if response.status_code == 404:
+        response_404 = ErrorResponse.from_dict(response.json())
+
+        return response_404
 
     if response.status_code == 500:
         response_500 = ErrorResponse.from_dict(response.json())
@@ -61,7 +62,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorResponse | list[DocOpenArrayItem]]:
+) -> Response[DocDeleteAck | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -71,13 +72,15 @@ def _build_response(
 
 
 def sync_detailed(
+    collection: str,
     *,
     client: AuthenticatedClient | Client,
     x_tenant_id: str | Unset = UNSET,
-) -> Response[ErrorResponse | list[DocOpenArrayItem]]:
-    """List document collections.
+) -> Response[DocDeleteAck | ErrorResponse]:
+    """Delete a document collection.
 
     Args:
+        collection (str):
         x_tenant_id (str | Unset):
 
     Raises:
@@ -85,10 +88,11 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | list[DocOpenArrayItem]]
+        Response[DocDeleteAck | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
+        collection=collection,
         x_tenant_id=x_tenant_id,
     )
 
@@ -100,13 +104,15 @@ def sync_detailed(
 
 
 def sync(
+    collection: str,
     *,
     client: AuthenticatedClient | Client,
     x_tenant_id: str | Unset = UNSET,
-) -> ErrorResponse | list[DocOpenArrayItem] | None:
-    """List document collections.
+) -> DocDeleteAck | ErrorResponse | None:
+    """Delete a document collection.
 
     Args:
+        collection (str):
         x_tenant_id (str | Unset):
 
     Raises:
@@ -114,23 +120,26 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | list[DocOpenArrayItem]
+        DocDeleteAck | ErrorResponse
     """
 
     return sync_detailed(
+        collection=collection,
         client=client,
         x_tenant_id=x_tenant_id,
     ).parsed
 
 
 async def asyncio_detailed(
+    collection: str,
     *,
     client: AuthenticatedClient | Client,
     x_tenant_id: str | Unset = UNSET,
-) -> Response[ErrorResponse | list[DocOpenArrayItem]]:
-    """List document collections.
+) -> Response[DocDeleteAck | ErrorResponse]:
+    """Delete a document collection.
 
     Args:
+        collection (str):
         x_tenant_id (str | Unset):
 
     Raises:
@@ -138,10 +147,11 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | list[DocOpenArrayItem]]
+        Response[DocDeleteAck | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
+        collection=collection,
         x_tenant_id=x_tenant_id,
     )
 
@@ -151,13 +161,15 @@ async def asyncio_detailed(
 
 
 async def asyncio(
+    collection: str,
     *,
     client: AuthenticatedClient | Client,
     x_tenant_id: str | Unset = UNSET,
-) -> ErrorResponse | list[DocOpenArrayItem] | None:
-    """List document collections.
+) -> DocDeleteAck | ErrorResponse | None:
+    """Delete a document collection.
 
     Args:
+        collection (str):
         x_tenant_id (str | Unset):
 
     Raises:
@@ -165,11 +177,12 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | list[DocOpenArrayItem]
+        DocDeleteAck | ErrorResponse
     """
 
     return (
         await asyncio_detailed(
+            collection=collection,
             client=client,
             x_tenant_id=x_tenant_id,
         )

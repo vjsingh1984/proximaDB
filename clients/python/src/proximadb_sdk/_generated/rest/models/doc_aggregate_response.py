@@ -6,36 +6,58 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="QueryDocumentsResponse200")
+T = TypeVar("T", bound="DocAggregateResponse")
 
 
 @_attrs_define
-class QueryDocumentsResponse200:
-    """ """
+class DocAggregateResponse:
+    """
+    Attributes:
+        results (list[Any]):
+        query_time_ms (int):
+    """
 
+    results: list[Any]
+    query_time_ms: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        results = self.results
+
+        query_time_ms = self.query_time_ms
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
+        field_dict.update(
+            {
+                "results": results,
+                "query_time_ms": query_time_ms,
+            }
+        )
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        query_documents_response_200 = cls()
+        results = cast(list[Any], d.pop("results"))
 
-        query_documents_response_200.additional_properties = d
-        return query_documents_response_200
+        query_time_ms = d.pop("query_time_ms")
+
+        doc_aggregate_response = cls(
+            results=results,
+            query_time_ms=query_time_ms,
+        )
+
+        doc_aggregate_response.additional_properties = d
+        return doc_aggregate_response
 
     @property
     def additional_keys(self) -> list[str]:

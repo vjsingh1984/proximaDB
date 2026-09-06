@@ -11,13 +11,15 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.doc_open_array_item import DocOpenArrayItem
+from ...models.doc_index_definition import DocIndexDefinition
 from ...models.error_response import ErrorResponse
 from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
+    collection: str,
     *,
+    body: DocIndexDefinition,
     x_tenant_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
@@ -25,9 +27,15 @@ def _get_kwargs(
         headers["X-Tenant-ID"] = x_tenant_id
 
     _kwargs: dict[str, Any] = {
-        "method": "get",
-        "url": "/api/v2/document-collections",
+        "method": "post",
+        "url": "/api/v2/document-collections/{collection}/indexes".format(
+            collection=quote(str(collection), safe=""),
+        ),
     }
+
+    _kwargs["json"] = body.to_dict()
+
+    headers["Content-Type"] = "application/json"
 
     _kwargs["headers"] = headers
     return _kwargs
@@ -35,23 +43,11 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorResponse | list[DocOpenArrayItem] | None:
-    if response.status_code == 200:
-        response_200 = []
-        _response_200 = response.json()
-        for componentsschemas_doc_open_array_item_data in _response_200:
-            componentsschemas_doc_open_array_item = DocOpenArrayItem.from_dict(
-                componentsschemas_doc_open_array_item_data
-            )
+) -> ErrorResponse | None:
+    if response.status_code == 400:
+        response_400 = ErrorResponse.from_dict(response.json())
 
-            response_200.append(componentsschemas_doc_open_array_item)
-
-        return response_200
-
-    if response.status_code == 500:
-        response_500 = ErrorResponse.from_dict(response.json())
-
-        return response_500
+        return response_400
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -61,7 +57,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorResponse | list[DocOpenArrayItem]]:
+) -> Response[ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -71,24 +67,34 @@ def _build_response(
 
 
 def sync_detailed(
+    collection: str,
     *,
     client: AuthenticatedClient | Client,
+    body: DocIndexDefinition,
     x_tenant_id: str | Unset = UNSET,
-) -> Response[ErrorResponse | list[DocOpenArrayItem]]:
-    """List document collections.
+) -> Response[ErrorResponse]:
+    """Create an index on an existing collection.
+
+     HONEST ALWAYS-400: creating indexes on existing collections is
+    not supported — specify `indexes` when creating the collection.
+    The 400 body says exactly this.
 
     Args:
+        collection (str):
         x_tenant_id (str | Unset):
+        body (DocIndexDefinition):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | list[DocOpenArrayItem]]
+        Response[ErrorResponse]
     """
 
     kwargs = _get_kwargs(
+        collection=collection,
+        body=body,
         x_tenant_id=x_tenant_id,
     )
 
@@ -100,48 +106,68 @@ def sync_detailed(
 
 
 def sync(
+    collection: str,
     *,
     client: AuthenticatedClient | Client,
+    body: DocIndexDefinition,
     x_tenant_id: str | Unset = UNSET,
-) -> ErrorResponse | list[DocOpenArrayItem] | None:
-    """List document collections.
+) -> ErrorResponse | None:
+    """Create an index on an existing collection.
+
+     HONEST ALWAYS-400: creating indexes on existing collections is
+    not supported — specify `indexes` when creating the collection.
+    The 400 body says exactly this.
 
     Args:
+        collection (str):
         x_tenant_id (str | Unset):
+        body (DocIndexDefinition):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | list[DocOpenArrayItem]
+        ErrorResponse
     """
 
     return sync_detailed(
+        collection=collection,
         client=client,
+        body=body,
         x_tenant_id=x_tenant_id,
     ).parsed
 
 
 async def asyncio_detailed(
+    collection: str,
     *,
     client: AuthenticatedClient | Client,
+    body: DocIndexDefinition,
     x_tenant_id: str | Unset = UNSET,
-) -> Response[ErrorResponse | list[DocOpenArrayItem]]:
-    """List document collections.
+) -> Response[ErrorResponse]:
+    """Create an index on an existing collection.
+
+     HONEST ALWAYS-400: creating indexes on existing collections is
+    not supported — specify `indexes` when creating the collection.
+    The 400 body says exactly this.
 
     Args:
+        collection (str):
         x_tenant_id (str | Unset):
+        body (DocIndexDefinition):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | list[DocOpenArrayItem]]
+        Response[ErrorResponse]
     """
 
     kwargs = _get_kwargs(
+        collection=collection,
+        body=body,
         x_tenant_id=x_tenant_id,
     )
 
@@ -151,26 +177,36 @@ async def asyncio_detailed(
 
 
 async def asyncio(
+    collection: str,
     *,
     client: AuthenticatedClient | Client,
+    body: DocIndexDefinition,
     x_tenant_id: str | Unset = UNSET,
-) -> ErrorResponse | list[DocOpenArrayItem] | None:
-    """List document collections.
+) -> ErrorResponse | None:
+    """Create an index on an existing collection.
+
+     HONEST ALWAYS-400: creating indexes on existing collections is
+    not supported — specify `indexes` when creating the collection.
+    The 400 body says exactly this.
 
     Args:
+        collection (str):
         x_tenant_id (str | Unset):
+        body (DocIndexDefinition):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | list[DocOpenArrayItem]
+        ErrorResponse
     """
 
     return (
         await asyncio_detailed(
+            collection=collection,
             client=client,
+            body=body,
             x_tenant_id=x_tenant_id,
         )
     ).parsed

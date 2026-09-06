@@ -2470,22 +2470,24 @@ paths:
       tags:
       - Documents
       operationId: createDocumentCollection
-      summary: Create a document collection.
+      summary: Create a document collection (with optional indexes).
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              $ref: '#/components/schemas/CreateDocumentCollectionRequest'
       responses:
         '200':
-          description: Created.
+          description: Created (open object — the serialized collection info).
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/DocOpenObject'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
       parameters:
       - name: X-Tenant-ID
         in: header
@@ -2500,12 +2502,69 @@ paths:
       summary: List document collections.
       responses:
         '200':
-          description: Collections.
+          description: Collections (open array).
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/DocOpenArray'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      parameters:
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
+  /api/v2/document-collections/{collection}:
+    parameters:
+    - name: collection
+      in: path
+      required: true
+      schema:
+        type: string
+    get:
+      tags:
+      - Documents
+      operationId: getDocumentCollection
+      summary: Get one collection's info.
+      description: |
+        404 when the collection does not exist. The body is an open
+        object (the serialized collection info).
+      responses:
+        '200':
+          description: Collection info.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocOpenObject'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      parameters:
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
+    delete:
+      tags:
+      - Documents
+      operationId: deleteDocumentCollection
+      summary: Delete a document collection.
+      responses:
+        '200':
+          description: Deletion acknowledged (success flag).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocDeleteAck'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
       parameters:
       - name: X-Tenant-ID
         in: header
@@ -2524,24 +2583,26 @@ paths:
       tags:
       - Documents
       operationId: insertDocument
-      summary: Insert a document.
+      summary: Insert one document.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              $ref: '#/components/schemas/DocInsertRequest'
       responses:
         '200':
-          description: Inserted.
+          description: The stored document (with its version).
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/DocResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
       parameters:
       - name: X-Tenant-ID
         in: header
@@ -2553,15 +2614,265 @@ paths:
       tags:
       - Documents
       operationId: queryDocuments
-      summary: Query documents.
+      summary: Query documents (filter/projection/limit).
+      parameters:
+      - name: filter
+        in: query
+        required: false
+        schema:
+          type: string
+        description: Filter expression (server-parsed).
+      - name: projection
+        in: query
+        required: false
+        schema:
+          type: string
+        description: Comma-separated field list.
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: uint32
+        description: Defaults to 100.
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
       responses:
         '200':
-          description: Documents.
+          description: Matching documents.
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/DocQueryResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v2/document-collections/{collection}/documents/{id}:
+    parameters:
+    - name: collection
+      in: path
+      required: true
+      schema:
+        type: string
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    get:
+      tags:
+      - Documents
+      operationId: getDocument
+      summary: Get one document.
+      parameters:
+      - name: projection
+        in: query
+        required: false
+        schema:
+          type: string
+        description: Comma-separated field list.
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
+      responses:
+        '200':
+          description: The document.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    patch:
+      tags:
+      - Documents
+      operationId: updateDocument
+      summary: Apply an update pipeline to a document.
+      description: |
+        Optimistic concurrency: `expected_version` rejects stale writes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DocUpdateRequest'
+      responses:
+        '200':
+          description: Update outcome (success, id, new_version).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocUpdateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      parameters:
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
+    delete:
+      tags:
+      - Documents
+      operationId: deleteDocument
+      summary: Delete one document.
+      responses:
+        '200':
+          description: Deletion acknowledged (success + id).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocDeleteAck'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      parameters:
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
+  /api/v2/document-collections/{collection}/documents/batch:
+    parameters:
+    - name: collection
+      in: path
+      required: true
+      schema:
+        type: string
+    post:
+      tags:
+      - Documents
+      operationId: batchInsertDocuments
+      summary: Insert multiple documents (per-item partial success).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DocBatchInsertRequest'
+      responses:
+        '200':
+          description: Counts (inserted + failed; failures counted, not enumerated).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocBatchInsertResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      parameters:
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
+  /api/v2/document-collections/{collection}/documents/aggregate:
+    parameters:
+    - name: collection
+      in: path
+      required: true
+      schema:
+        type: string
+    post:
+      tags:
+      - Documents
+      operationId: aggregateDocuments
+      summary: Run an aggregation pipeline.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DocAggregateRequest'
+      responses:
+        '200':
+          description: Aggregation results (free-form) + timing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocAggregateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      parameters:
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
+  /api/v2/document-collections/{collection}/indexes:
+    parameters:
+    - name: collection
+      in: path
+      required: true
+      schema:
+        type: string
+    post:
+      tags:
+      - Documents
+      operationId: createDocumentIndex
+      summary: Create an index on an existing collection.
+      description: |
+        HONEST ALWAYS-400: creating indexes on existing collections is
+        not supported — specify `indexes` when creating the collection.
+        The 400 body says exactly this.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DocIndexDefinition'
+      responses:
+        '400':
+          $ref: '#/components/responses/BadRequest'
+      parameters:
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
+    get:
+      tags:
+      - Documents
+      operationId: listDocumentIndexes
+      summary: List the collection's indexes.
+      responses:
+        '200':
+          description: Index definitions (name, path, unique).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocIndexListResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
       parameters:
       - name: X-Tenant-ID
         in: header
@@ -8999,6 +9310,191 @@ components:
           - integer
           - 'null'
           format: uint32
+    DocOpenObject:
+      type: object
+      additionalProperties: true
+      description: Serialized collection info (open field set).
+    DocOpenArray:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    DocDeleteAck:
+      type: object
+      required:
+      - success
+      properties:
+        success:
+          type: boolean
+        id:
+          type: string
+          description: Present on document deletes; absent on collection deletes.
+    DocIndexDefinition:
+      type: object
+      required:
+      - path
+      properties:
+        name:
+          type:
+          - string
+          - 'null'
+        path:
+          type: string
+        index_type:
+          type: string
+          default: btree
+          description: btree is the only implemented type today.
+        unique:
+          type: boolean
+        sparse:
+          type: boolean
+    CreateDocumentCollectionRequest:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+        indexes:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocIndexDefinition'
+    DocInsertRequest:
+      type: object
+      required:
+      - document
+      properties:
+        id:
+          type:
+          - string
+          - 'null'
+          description: Server-assigned when omitted.
+        document:
+          description: The document body (free-form JSON).
+    DocResponse:
+      type: object
+      required:
+      - id
+      - document
+      - version
+      properties:
+        id:
+          type: string
+        document: {}
+        version:
+          type: integer
+          format: uint64
+    DocQueryResponse:
+      type: object
+      required:
+      - documents
+      - has_more
+      properties:
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocResponse'
+        total_count:
+          type:
+          - integer
+          - 'null'
+          format: uint64
+        has_more:
+          type: boolean
+    DocUpdateRequest:
+      type: object
+      required:
+      - updates
+      properties:
+        updates:
+          type: array
+          items: {}
+          description: Update pipeline steps ({operation, path, value} objects).
+        expected_version:
+          type:
+          - integer
+          - 'null'
+          format: uint64
+          description: Optimistic-concurrency guard; rejects stale writes.
+    DocUpdateResponse:
+      type: object
+      required:
+      - success
+      - id
+      - new_version
+      properties:
+        success:
+          type: boolean
+        id:
+          type: string
+        new_version:
+          type: integer
+          format: uint64
+    DocBatchInsertRequest:
+      type: object
+      required:
+      - documents
+      properties:
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocInsertRequest'
+    DocBatchInsertResponse:
+      type: object
+      required:
+      - inserted
+      - failed
+      properties:
+        inserted:
+          type: integer
+          format: uint64
+        failed:
+          type: integer
+          format: uint64
+          description: Count only — per-item failures are not enumerated.
+    DocAggregateRequest:
+      type: object
+      required:
+      - pipeline
+      properties:
+        pipeline:
+          type: array
+          items: {}
+          description: Aggregation pipeline stages (free-form).
+    DocAggregateResponse:
+      type: object
+      required:
+      - results
+      - query_time_ms
+      properties:
+        results:
+          type: array
+          items: {}
+        query_time_ms:
+          type: integer
+          format: uint64
+    DocIndexListResponse:
+      type: object
+      required:
+      - indexes
+      properties:
+        indexes:
+          type: array
+          items:
+            type: object
+            required:
+            - name
+            - path
+            - unique
+            properties:
+              name:
+                type:
+                - string
+                - 'null'
+              path:
+                type: string
+              unique:
+                type: boolean
   securitySchemes:
     bearerAuth:
       type: http

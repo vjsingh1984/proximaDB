@@ -1360,6 +1360,12 @@ type CreateCollectionV2Response struct {
 	SchemaId *string `json:"schema_id,omitempty"`
 }
 
+// CreateDocumentCollectionRequest defines model for CreateDocumentCollectionRequest.
+type CreateDocumentCollectionRequest struct {
+	Indexes *[]DocIndexDefinition `json:"indexes,omitempty"`
+	Name    string                `json:"name"`
+}
+
 // CreateEdgeRequest defines model for CreateEdgeRequest.
 type CreateEdgeRequest struct {
 	Edge EdgeInput `json:"edge"`
@@ -1417,6 +1423,101 @@ type DeleteRecordV2Response struct {
 
 	// Success Whether the delete tombstone was accepted.
 	Success bool `json:"success"`
+}
+
+// DocAggregateRequest defines model for DocAggregateRequest.
+type DocAggregateRequest struct {
+	// Pipeline Aggregation pipeline stages (free-form).
+	Pipeline []interface{} `json:"pipeline"`
+}
+
+// DocAggregateResponse defines model for DocAggregateResponse.
+type DocAggregateResponse struct {
+	QueryTimeMs uint64        `json:"query_time_ms"`
+	Results     []interface{} `json:"results"`
+}
+
+// DocBatchInsertRequest defines model for DocBatchInsertRequest.
+type DocBatchInsertRequest struct {
+	Documents []DocInsertRequest `json:"documents"`
+}
+
+// DocBatchInsertResponse defines model for DocBatchInsertResponse.
+type DocBatchInsertResponse struct {
+	// Failed Count only — per-item failures are not enumerated.
+	Failed   uint64 `json:"failed"`
+	Inserted uint64 `json:"inserted"`
+}
+
+// DocDeleteAck defines model for DocDeleteAck.
+type DocDeleteAck struct {
+	// Id Present on document deletes; absent on collection deletes.
+	Id      *string `json:"id,omitempty"`
+	Success bool    `json:"success"`
+}
+
+// DocIndexDefinition defines model for DocIndexDefinition.
+type DocIndexDefinition struct {
+	// IndexType btree is the only implemented type today.
+	IndexType *string `json:"index_type,omitempty"`
+	Name      *string `json:"name,omitempty"`
+	Path      string  `json:"path"`
+	Sparse    *bool   `json:"sparse,omitempty"`
+	Unique    *bool   `json:"unique,omitempty"`
+}
+
+// DocIndexListResponse defines model for DocIndexListResponse.
+type DocIndexListResponse struct {
+	Indexes []struct {
+		Name   *string `json:"name"`
+		Path   string  `json:"path"`
+		Unique bool    `json:"unique"`
+	} `json:"indexes"`
+}
+
+// DocInsertRequest defines model for DocInsertRequest.
+type DocInsertRequest struct {
+	// Document The document body (free-form JSON).
+	Document interface{} `json:"document"`
+
+	// Id Server-assigned when omitted.
+	Id *string `json:"id,omitempty"`
+}
+
+// DocOpenArray defines model for DocOpenArray.
+type DocOpenArray = []map[string]interface{}
+
+// DocOpenObject Serialized collection info (open field set).
+type DocOpenObject map[string]interface{}
+
+// DocQueryResponse defines model for DocQueryResponse.
+type DocQueryResponse struct {
+	Documents  []DocResponse `json:"documents"`
+	HasMore    bool          `json:"has_more"`
+	TotalCount *uint64       `json:"total_count,omitempty"`
+}
+
+// DocResponse defines model for DocResponse.
+type DocResponse struct {
+	Document interface{} `json:"document"`
+	Id       string      `json:"id"`
+	Version  uint64      `json:"version"`
+}
+
+// DocUpdateRequest defines model for DocUpdateRequest.
+type DocUpdateRequest struct {
+	// ExpectedVersion Optimistic-concurrency guard; rejects stale writes.
+	ExpectedVersion *uint64 `json:"expected_version,omitempty"`
+
+	// Updates Update pipeline steps ({operation, path, value} objects).
+	Updates []interface{} `json:"updates"`
+}
+
+// DocUpdateResponse defines model for DocUpdateResponse.
+type DocUpdateResponse struct {
+	Id         string `json:"id"`
+	NewVersion uint64 `json:"new_version"`
+	Success    bool   `json:"success"`
 }
 
 // EdgeInput defines model for EdgeInput.
@@ -3622,26 +3723,86 @@ type ListDocumentCollectionsParams struct {
 	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
 
-// CreateDocumentCollectionJSONBody defines parameters for CreateDocumentCollection.
-type CreateDocumentCollectionJSONBody map[string]interface{}
-
 // CreateDocumentCollectionParams defines parameters for CreateDocumentCollection.
 type CreateDocumentCollectionParams struct {
 	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
 	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
 
-// QueryDocumentsParams defines parameters for QueryDocuments.
-type QueryDocumentsParams struct {
+// DeleteDocumentCollectionParams defines parameters for DeleteDocumentCollection.
+type DeleteDocumentCollectionParams struct {
 	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
 	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
 
-// InsertDocumentJSONBody defines parameters for InsertDocument.
-type InsertDocumentJSONBody map[string]interface{}
+// GetDocumentCollectionParams defines parameters for GetDocumentCollection.
+type GetDocumentCollectionParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// QueryDocumentsParams defines parameters for QueryDocuments.
+type QueryDocumentsParams struct {
+	// Filter Filter expression (server-parsed).
+	Filter *string `form:"filter,omitempty" json:"filter,omitempty"`
+
+	// Projection Comma-separated field list.
+	Projection *string `form:"projection,omitempty" json:"projection,omitempty"`
+
+	// Limit Defaults to 100.
+	Limit *uint32 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
 
 // InsertDocumentParams defines parameters for InsertDocument.
 type InsertDocumentParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// AggregateDocumentsParams defines parameters for AggregateDocuments.
+type AggregateDocumentsParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// BatchInsertDocumentsParams defines parameters for BatchInsertDocuments.
+type BatchInsertDocumentsParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// DeleteDocumentParams defines parameters for DeleteDocument.
+type DeleteDocumentParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// GetDocumentParams defines parameters for GetDocument.
+type GetDocumentParams struct {
+	// Projection Comma-separated field list.
+	Projection *string `form:"projection,omitempty" json:"projection,omitempty"`
+
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// UpdateDocumentParams defines parameters for UpdateDocument.
+type UpdateDocumentParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// ListDocumentIndexesParams defines parameters for ListDocumentIndexes.
+type ListDocumentIndexesParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// CreateDocumentIndexParams defines parameters for CreateDocumentIndex.
+type CreateDocumentIndexParams struct {
 	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
 	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
@@ -4083,10 +4244,22 @@ type UpdateCollectionSchemaJSONRequestBody = UpdateSchemaRequest
 type SearchRecordsJSONRequestBody = TypedSearchRequest
 
 // CreateDocumentCollectionJSONRequestBody defines body for CreateDocumentCollection for application/json ContentType.
-type CreateDocumentCollectionJSONRequestBody CreateDocumentCollectionJSONBody
+type CreateDocumentCollectionJSONRequestBody = CreateDocumentCollectionRequest
 
 // InsertDocumentJSONRequestBody defines body for InsertDocument for application/json ContentType.
-type InsertDocumentJSONRequestBody InsertDocumentJSONBody
+type InsertDocumentJSONRequestBody = DocInsertRequest
+
+// AggregateDocumentsJSONRequestBody defines body for AggregateDocuments for application/json ContentType.
+type AggregateDocumentsJSONRequestBody = DocAggregateRequest
+
+// BatchInsertDocumentsJSONRequestBody defines body for BatchInsertDocuments for application/json ContentType.
+type BatchInsertDocumentsJSONRequestBody = DocBatchInsertRequest
+
+// UpdateDocumentJSONRequestBody defines body for UpdateDocument for application/json ContentType.
+type UpdateDocumentJSONRequestBody = DocUpdateRequest
+
+// CreateDocumentIndexJSONRequestBody defines body for CreateDocumentIndex for application/json ContentType.
+type CreateDocumentIndexJSONRequestBody = DocIndexDefinition
 
 // CreateGraphJSONRequestBody defines body for CreateGraph for application/json ContentType.
 type CreateGraphJSONRequestBody = CreateGraphRequest
@@ -5894,38 +6067,134 @@ type ClientInterface interface {
 	// Corresponds with GET /api/v2/document-collections (the `ListDocumentCollections` operationId).
 	ListDocumentCollections(ctx context.Context, params *ListDocumentCollectionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateDocumentCollectionWithBody Create a document collection.
+	// CreateDocumentCollectionWithBody Create a document collection (with optional indexes).
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /api/v2/document-collections (the `CreateDocumentCollection` operationId).
 	CreateDocumentCollectionWithBody(ctx context.Context, params *CreateDocumentCollectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateDocumentCollection Create a document collection.
+	// CreateDocumentCollection Create a document collection (with optional indexes).
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /api/v2/document-collections (the `CreateDocumentCollection` operationId).
 	CreateDocumentCollection(ctx context.Context, params *CreateDocumentCollectionParams, body CreateDocumentCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// QueryDocuments Query documents.
+	// DeleteDocumentCollection Delete a document collection.
+	//
+	// Corresponds with DELETE /api/v2/document-collections/{collection} (the `DeleteDocumentCollection` operationId).
+	DeleteDocumentCollection(ctx context.Context, collection string, params *DeleteDocumentCollectionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetDocumentCollection Get one collection's info.
+	//
+	// 404 when the collection does not exist. The body is an open
+	// object (the serialized collection info).
+	//
+	// Corresponds with GET /api/v2/document-collections/{collection} (the `GetDocumentCollection` operationId).
+	GetDocumentCollection(ctx context.Context, collection string, params *GetDocumentCollectionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// QueryDocuments Query documents (filter/projection/limit).
 	//
 	// Corresponds with GET /api/v2/document-collections/{collection}/documents (the `QueryDocuments` operationId).
 	QueryDocuments(ctx context.Context, collection string, params *QueryDocumentsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// InsertDocumentWithBody Insert a document.
+	// InsertDocumentWithBody Insert one document.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /api/v2/document-collections/{collection}/documents (the `InsertDocument` operationId).
 	InsertDocumentWithBody(ctx context.Context, collection string, params *InsertDocumentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// InsertDocument Insert a document.
+	// InsertDocument Insert one document.
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /api/v2/document-collections/{collection}/documents (the `InsertDocument` operationId).
 	InsertDocument(ctx context.Context, collection string, params *InsertDocumentParams, body InsertDocumentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AggregateDocumentsWithBody Run an aggregation pipeline.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/document-collections/{collection}/documents/aggregate (the `AggregateDocuments` operationId).
+	AggregateDocumentsWithBody(ctx context.Context, collection string, params *AggregateDocumentsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AggregateDocuments Run an aggregation pipeline.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/document-collections/{collection}/documents/aggregate (the `AggregateDocuments` operationId).
+	AggregateDocuments(ctx context.Context, collection string, params *AggregateDocumentsParams, body AggregateDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BatchInsertDocumentsWithBody Insert multiple documents (per-item partial success).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/document-collections/{collection}/documents/batch (the `BatchInsertDocuments` operationId).
+	BatchInsertDocumentsWithBody(ctx context.Context, collection string, params *BatchInsertDocumentsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BatchInsertDocuments Insert multiple documents (per-item partial success).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/document-collections/{collection}/documents/batch (the `BatchInsertDocuments` operationId).
+	BatchInsertDocuments(ctx context.Context, collection string, params *BatchInsertDocumentsParams, body BatchInsertDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteDocument Delete one document.
+	//
+	// Corresponds with DELETE /api/v2/document-collections/{collection}/documents/{id} (the `DeleteDocument` operationId).
+	DeleteDocument(ctx context.Context, collection string, id string, params *DeleteDocumentParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetDocument Get one document.
+	//
+	// Corresponds with GET /api/v2/document-collections/{collection}/documents/{id} (the `GetDocument` operationId).
+	GetDocument(ctx context.Context, collection string, id string, params *GetDocumentParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateDocumentWithBody Apply an update pipeline to a document.
+	//
+	// Optimistic concurrency: `expected_version` rejects stale writes.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /api/v2/document-collections/{collection}/documents/{id} (the `UpdateDocument` operationId).
+	UpdateDocumentWithBody(ctx context.Context, collection string, id string, params *UpdateDocumentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateDocument Apply an update pipeline to a document.
+	//
+	// Optimistic concurrency: `expected_version` rejects stale writes.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /api/v2/document-collections/{collection}/documents/{id} (the `UpdateDocument` operationId).
+	UpdateDocument(ctx context.Context, collection string, id string, params *UpdateDocumentParams, body UpdateDocumentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListDocumentIndexes List the collection's indexes.
+	//
+	// Corresponds with GET /api/v2/document-collections/{collection}/indexes (the `ListDocumentIndexes` operationId).
+	ListDocumentIndexes(ctx context.Context, collection string, params *ListDocumentIndexesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateDocumentIndexWithBody Create an index on an existing collection.
+	//
+	// HONEST ALWAYS-400: creating indexes on existing collections is
+	// not supported — specify `indexes` when creating the collection.
+	// The 400 body says exactly this.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/document-collections/{collection}/indexes (the `CreateDocumentIndex` operationId).
+	CreateDocumentIndexWithBody(ctx context.Context, collection string, params *CreateDocumentIndexParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateDocumentIndex Create an index on an existing collection.
+	//
+	// HONEST ALWAYS-400: creating indexes on existing collections is
+	// not supported — specify `indexes` when creating the collection.
+	// The 400 body says exactly this.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/document-collections/{collection}/indexes (the `CreateDocumentIndex` operationId).
+	CreateDocumentIndex(ctx context.Context, collection string, params *CreateDocumentIndexParams, body CreateDocumentIndexJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListGraphs List graph collections.
 	//
@@ -8189,7 +8458,7 @@ func (c *Client) ListDocumentCollections(ctx context.Context, params *ListDocume
 	return c.Client.Do(req)
 }
 
-// CreateDocumentCollectionWithBody Create a document collection.
+// CreateDocumentCollectionWithBody Create a document collection (with optional indexes).
 //
 // Takes any type of body and a specified content type.
 //
@@ -8206,7 +8475,7 @@ func (c *Client) CreateDocumentCollectionWithBody(ctx context.Context, params *C
 	return c.Client.Do(req)
 }
 
-// CreateDocumentCollection Create a document collection.
+// CreateDocumentCollection Create a document collection (with optional indexes).
 //
 // Takes a body of the `application/json` content type.
 //
@@ -8223,7 +8492,40 @@ func (c *Client) CreateDocumentCollection(ctx context.Context, params *CreateDoc
 	return c.Client.Do(req)
 }
 
-// QueryDocuments Query documents.
+// DeleteDocumentCollection Delete a document collection.
+//
+// Corresponds with DELETE /api/v2/document-collections/{collection} (the `DeleteDocumentCollection` operationId).
+func (c *Client) DeleteDocumentCollection(ctx context.Context, collection string, params *DeleteDocumentCollectionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteDocumentCollectionRequest(c.Server, collection, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetDocumentCollection Get one collection's info.
+//
+// 404 when the collection does not exist. The body is an open
+// object (the serialized collection info).
+//
+// Corresponds with GET /api/v2/document-collections/{collection} (the `GetDocumentCollection` operationId).
+func (c *Client) GetDocumentCollection(ctx context.Context, collection string, params *GetDocumentCollectionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetDocumentCollectionRequest(c.Server, collection, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// QueryDocuments Query documents (filter/projection/limit).
 //
 // Corresponds with GET /api/v2/document-collections/{collection}/documents (the `QueryDocuments` operationId).
 func (c *Client) QueryDocuments(ctx context.Context, collection string, params *QueryDocumentsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8238,7 +8540,7 @@ func (c *Client) QueryDocuments(ctx context.Context, collection string, params *
 	return c.Client.Do(req)
 }
 
-// InsertDocumentWithBody Insert a document.
+// InsertDocumentWithBody Insert one document.
 //
 // Takes any type of body and a specified content type.
 //
@@ -8255,13 +8557,206 @@ func (c *Client) InsertDocumentWithBody(ctx context.Context, collection string, 
 	return c.Client.Do(req)
 }
 
-// InsertDocument Insert a document.
+// InsertDocument Insert one document.
 //
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /api/v2/document-collections/{collection}/documents (the `InsertDocument` operationId).
 func (c *Client) InsertDocument(ctx context.Context, collection string, params *InsertDocumentParams, body InsertDocumentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewInsertDocumentRequest(c.Server, collection, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AggregateDocumentsWithBody Run an aggregation pipeline.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/document-collections/{collection}/documents/aggregate (the `AggregateDocuments` operationId).
+func (c *Client) AggregateDocumentsWithBody(ctx context.Context, collection string, params *AggregateDocumentsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAggregateDocumentsRequestWithBody(c.Server, collection, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AggregateDocuments Run an aggregation pipeline.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/document-collections/{collection}/documents/aggregate (the `AggregateDocuments` operationId).
+func (c *Client) AggregateDocuments(ctx context.Context, collection string, params *AggregateDocumentsParams, body AggregateDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAggregateDocumentsRequest(c.Server, collection, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// BatchInsertDocumentsWithBody Insert multiple documents (per-item partial success).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/document-collections/{collection}/documents/batch (the `BatchInsertDocuments` operationId).
+func (c *Client) BatchInsertDocumentsWithBody(ctx context.Context, collection string, params *BatchInsertDocumentsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBatchInsertDocumentsRequestWithBody(c.Server, collection, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// BatchInsertDocuments Insert multiple documents (per-item partial success).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/document-collections/{collection}/documents/batch (the `BatchInsertDocuments` operationId).
+func (c *Client) BatchInsertDocuments(ctx context.Context, collection string, params *BatchInsertDocumentsParams, body BatchInsertDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBatchInsertDocumentsRequest(c.Server, collection, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteDocument Delete one document.
+//
+// Corresponds with DELETE /api/v2/document-collections/{collection}/documents/{id} (the `DeleteDocument` operationId).
+func (c *Client) DeleteDocument(ctx context.Context, collection string, id string, params *DeleteDocumentParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteDocumentRequest(c.Server, collection, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetDocument Get one document.
+//
+// Corresponds with GET /api/v2/document-collections/{collection}/documents/{id} (the `GetDocument` operationId).
+func (c *Client) GetDocument(ctx context.Context, collection string, id string, params *GetDocumentParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetDocumentRequest(c.Server, collection, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateDocumentWithBody Apply an update pipeline to a document.
+//
+// Optimistic concurrency: `expected_version` rejects stale writes.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /api/v2/document-collections/{collection}/documents/{id} (the `UpdateDocument` operationId).
+func (c *Client) UpdateDocumentWithBody(ctx context.Context, collection string, id string, params *UpdateDocumentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateDocumentRequestWithBody(c.Server, collection, id, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateDocument Apply an update pipeline to a document.
+//
+// Optimistic concurrency: `expected_version` rejects stale writes.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /api/v2/document-collections/{collection}/documents/{id} (the `UpdateDocument` operationId).
+func (c *Client) UpdateDocument(ctx context.Context, collection string, id string, params *UpdateDocumentParams, body UpdateDocumentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateDocumentRequest(c.Server, collection, id, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListDocumentIndexes List the collection's indexes.
+//
+// Corresponds with GET /api/v2/document-collections/{collection}/indexes (the `ListDocumentIndexes` operationId).
+func (c *Client) ListDocumentIndexes(ctx context.Context, collection string, params *ListDocumentIndexesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListDocumentIndexesRequest(c.Server, collection, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateDocumentIndexWithBody Create an index on an existing collection.
+//
+// HONEST ALWAYS-400: creating indexes on existing collections is
+// not supported — specify `indexes` when creating the collection.
+// The 400 body says exactly this.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/document-collections/{collection}/indexes (the `CreateDocumentIndex` operationId).
+func (c *Client) CreateDocumentIndexWithBody(ctx context.Context, collection string, params *CreateDocumentIndexParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateDocumentIndexRequestWithBody(c.Server, collection, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateDocumentIndex Create an index on an existing collection.
+//
+// HONEST ALWAYS-400: creating indexes on existing collections is
+// not supported — specify `indexes` when creating the collection.
+// The 400 body says exactly this.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/document-collections/{collection}/indexes (the `CreateDocumentIndex` operationId).
+func (c *Client) CreateDocumentIndex(ctx context.Context, collection string, params *CreateDocumentIndexParams, body CreateDocumentIndexJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateDocumentIndexRequest(c.Server, collection, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -12540,6 +13035,104 @@ func NewCreateDocumentCollectionRequestWithBody(server string, params *CreateDoc
 	return req, nil
 }
 
+// NewDeleteDocumentCollectionRequest constructs an http.Request for the DeleteDocumentCollection method
+func NewDeleteDocumentCollectionRequest(server string, collection string, params *DeleteDocumentCollectionParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "collection", collection, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/document-collections/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewGetDocumentCollectionRequest constructs an http.Request for the GetDocumentCollection method
+func NewGetDocumentCollectionRequest(server string, collection string, params *GetDocumentCollectionParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "collection", collection, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/document-collections/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
 // NewQueryDocumentsRequest constructs an http.Request for the QueryDocuments method
 func NewQueryDocumentsRequest(server string, collection string, params *QueryDocumentsParams) (*http.Request, error) {
 	var err error
@@ -12564,6 +13157,57 @@ func NewQueryDocumentsRequest(server string, collection string, params *QueryDoc
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Filter != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "filter", *params.Filter, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Projection != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "projection", *params.Projection, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "uint32"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -12617,6 +13261,449 @@ func NewInsertDocumentRequestWithBody(server string, collection string, params *
 	}
 
 	operationPath := fmt.Sprintf("/api/v2/document-collections/%s/documents", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewAggregateDocumentsRequest calls the generic AggregateDocuments builder with application/json body
+func NewAggregateDocumentsRequest(server string, collection string, params *AggregateDocumentsParams, body AggregateDocumentsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAggregateDocumentsRequestWithBody(server, collection, params, "application/json", bodyReader)
+}
+
+// NewAggregateDocumentsRequestWithBody constructs an http.Request for the AggregateDocuments method, with any body, and a specified content type
+func NewAggregateDocumentsRequestWithBody(server string, collection string, params *AggregateDocumentsParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "collection", collection, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/document-collections/%s/documents/aggregate", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewBatchInsertDocumentsRequest calls the generic BatchInsertDocuments builder with application/json body
+func NewBatchInsertDocumentsRequest(server string, collection string, params *BatchInsertDocumentsParams, body BatchInsertDocumentsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewBatchInsertDocumentsRequestWithBody(server, collection, params, "application/json", bodyReader)
+}
+
+// NewBatchInsertDocumentsRequestWithBody constructs an http.Request for the BatchInsertDocuments method, with any body, and a specified content type
+func NewBatchInsertDocumentsRequestWithBody(server string, collection string, params *BatchInsertDocumentsParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "collection", collection, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/document-collections/%s/documents/batch", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewDeleteDocumentRequest constructs an http.Request for the DeleteDocument method
+func NewDeleteDocumentRequest(server string, collection string, id string, params *DeleteDocumentParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "collection", collection, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/document-collections/%s/documents/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewGetDocumentRequest constructs an http.Request for the GetDocument method
+func NewGetDocumentRequest(server string, collection string, id string, params *GetDocumentParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "collection", collection, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/document-collections/%s/documents/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Projection != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "projection", *params.Projection, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewUpdateDocumentRequest calls the generic UpdateDocument builder with application/json body
+func NewUpdateDocumentRequest(server string, collection string, id string, params *UpdateDocumentParams, body UpdateDocumentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateDocumentRequestWithBody(server, collection, id, params, "application/json", bodyReader)
+}
+
+// NewUpdateDocumentRequestWithBody constructs an http.Request for the UpdateDocument method, with any body, and a specified content type
+func NewUpdateDocumentRequestWithBody(server string, collection string, id string, params *UpdateDocumentParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "collection", collection, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/document-collections/%s/documents/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewListDocumentIndexesRequest constructs an http.Request for the ListDocumentIndexes method
+func NewListDocumentIndexesRequest(server string, collection string, params *ListDocumentIndexesParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "collection", collection, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/document-collections/%s/indexes", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewCreateDocumentIndexRequest calls the generic CreateDocumentIndex builder with application/json body
+func NewCreateDocumentIndexRequest(server string, collection string, params *CreateDocumentIndexParams, body CreateDocumentIndexJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateDocumentIndexRequestWithBody(server, collection, params, "application/json", bodyReader)
+}
+
+// NewCreateDocumentIndexRequestWithBody constructs an http.Request for the CreateDocumentIndex method, with any body, and a specified content type
+func NewCreateDocumentIndexRequestWithBody(server string, collection string, params *CreateDocumentIndexParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "collection", collection, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/document-collections/%s/indexes", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -17029,40 +18116,146 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/v2/document-collections (the `ListDocumentCollections` operationId).
 	ListDocumentCollectionsWithResponse(ctx context.Context, params *ListDocumentCollectionsParams, reqEditors ...RequestEditorFn) (*ListDocumentCollectionsHTTPResp, error)
 
-	// CreateDocumentCollectionWithBodyWithResponse Create a document collection.
+	// CreateDocumentCollectionWithBodyWithResponse Create a document collection (with optional indexes).
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v2/document-collections (the `CreateDocumentCollection` operationId).
 	CreateDocumentCollectionWithBodyWithResponse(ctx context.Context, params *CreateDocumentCollectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDocumentCollectionHTTPResp, error)
 
-	// CreateDocumentCollectionWithResponse Create a document collection.
+	// CreateDocumentCollectionWithResponse Create a document collection (with optional indexes).
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v2/document-collections (the `CreateDocumentCollection` operationId).
 	CreateDocumentCollectionWithResponse(ctx context.Context, params *CreateDocumentCollectionParams, body CreateDocumentCollectionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDocumentCollectionHTTPResp, error)
 
-	// QueryDocumentsWithResponse Query documents.
+	// DeleteDocumentCollectionWithResponse Delete a document collection.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v2/document-collections/{collection} (the `DeleteDocumentCollection` operationId).
+	DeleteDocumentCollectionWithResponse(ctx context.Context, collection string, params *DeleteDocumentCollectionParams, reqEditors ...RequestEditorFn) (*DeleteDocumentCollectionHTTPResp, error)
+
+	// GetDocumentCollectionWithResponse Get one collection's info.
+	//
+	// 404 when the collection does not exist. The body is an open
+	// object (the serialized collection info).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v2/document-collections/{collection} (the `GetDocumentCollection` operationId).
+	GetDocumentCollectionWithResponse(ctx context.Context, collection string, params *GetDocumentCollectionParams, reqEditors ...RequestEditorFn) (*GetDocumentCollectionHTTPResp, error)
+
+	// QueryDocumentsWithResponse Query documents (filter/projection/limit).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /api/v2/document-collections/{collection}/documents (the `QueryDocuments` operationId).
 	QueryDocumentsWithResponse(ctx context.Context, collection string, params *QueryDocumentsParams, reqEditors ...RequestEditorFn) (*QueryDocumentsHTTPResp, error)
 
-	// InsertDocumentWithBodyWithResponse Insert a document.
+	// InsertDocumentWithBodyWithResponse Insert one document.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v2/document-collections/{collection}/documents (the `InsertDocument` operationId).
 	InsertDocumentWithBodyWithResponse(ctx context.Context, collection string, params *InsertDocumentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InsertDocumentHTTPResp, error)
 
-	// InsertDocumentWithResponse Insert a document.
+	// InsertDocumentWithResponse Insert one document.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v2/document-collections/{collection}/documents (the `InsertDocument` operationId).
 	InsertDocumentWithResponse(ctx context.Context, collection string, params *InsertDocumentParams, body InsertDocumentJSONRequestBody, reqEditors ...RequestEditorFn) (*InsertDocumentHTTPResp, error)
+
+	// AggregateDocumentsWithBodyWithResponse Run an aggregation pipeline.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/document-collections/{collection}/documents/aggregate (the `AggregateDocuments` operationId).
+	AggregateDocumentsWithBodyWithResponse(ctx context.Context, collection string, params *AggregateDocumentsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AggregateDocumentsHTTPResp, error)
+
+	// AggregateDocumentsWithResponse Run an aggregation pipeline.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/document-collections/{collection}/documents/aggregate (the `AggregateDocuments` operationId).
+	AggregateDocumentsWithResponse(ctx context.Context, collection string, params *AggregateDocumentsParams, body AggregateDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*AggregateDocumentsHTTPResp, error)
+
+	// BatchInsertDocumentsWithBodyWithResponse Insert multiple documents (per-item partial success).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/document-collections/{collection}/documents/batch (the `BatchInsertDocuments` operationId).
+	BatchInsertDocumentsWithBodyWithResponse(ctx context.Context, collection string, params *BatchInsertDocumentsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BatchInsertDocumentsHTTPResp, error)
+
+	// BatchInsertDocumentsWithResponse Insert multiple documents (per-item partial success).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/document-collections/{collection}/documents/batch (the `BatchInsertDocuments` operationId).
+	BatchInsertDocumentsWithResponse(ctx context.Context, collection string, params *BatchInsertDocumentsParams, body BatchInsertDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*BatchInsertDocumentsHTTPResp, error)
+
+	// DeleteDocumentWithResponse Delete one document.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v2/document-collections/{collection}/documents/{id} (the `DeleteDocument` operationId).
+	DeleteDocumentWithResponse(ctx context.Context, collection string, id string, params *DeleteDocumentParams, reqEditors ...RequestEditorFn) (*DeleteDocumentHTTPResp, error)
+
+	// GetDocumentWithResponse Get one document.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v2/document-collections/{collection}/documents/{id} (the `GetDocument` operationId).
+	GetDocumentWithResponse(ctx context.Context, collection string, id string, params *GetDocumentParams, reqEditors ...RequestEditorFn) (*GetDocumentHTTPResp, error)
+
+	// UpdateDocumentWithBodyWithResponse Apply an update pipeline to a document.
+	//
+	// Optimistic concurrency: `expected_version` rejects stale writes.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/v2/document-collections/{collection}/documents/{id} (the `UpdateDocument` operationId).
+	UpdateDocumentWithBodyWithResponse(ctx context.Context, collection string, id string, params *UpdateDocumentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateDocumentHTTPResp, error)
+
+	// UpdateDocumentWithResponse Apply an update pipeline to a document.
+	//
+	// Optimistic concurrency: `expected_version` rejects stale writes.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/v2/document-collections/{collection}/documents/{id} (the `UpdateDocument` operationId).
+	UpdateDocumentWithResponse(ctx context.Context, collection string, id string, params *UpdateDocumentParams, body UpdateDocumentJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateDocumentHTTPResp, error)
+
+	// ListDocumentIndexesWithResponse List the collection's indexes.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v2/document-collections/{collection}/indexes (the `ListDocumentIndexes` operationId).
+	ListDocumentIndexesWithResponse(ctx context.Context, collection string, params *ListDocumentIndexesParams, reqEditors ...RequestEditorFn) (*ListDocumentIndexesHTTPResp, error)
+
+	// CreateDocumentIndexWithBodyWithResponse Create an index on an existing collection.
+	//
+	// HONEST ALWAYS-400: creating indexes on existing collections is
+	// not supported — specify `indexes` when creating the collection.
+	// The 400 body says exactly this.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/document-collections/{collection}/indexes (the `CreateDocumentIndex` operationId).
+	CreateDocumentIndexWithBodyWithResponse(ctx context.Context, collection string, params *CreateDocumentIndexParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDocumentIndexHTTPResp, error)
+
+	// CreateDocumentIndexWithResponse Create an index on an existing collection.
+	//
+	// HONEST ALWAYS-400: creating indexes on existing collections is
+	// not supported — specify `indexes` when creating the collection.
+	// The 400 body says exactly this.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/document-collections/{collection}/indexes (the `CreateDocumentIndex` operationId).
+	CreateDocumentIndexWithResponse(ctx context.Context, collection string, params *CreateDocumentIndexParams, body CreateDocumentIndexJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDocumentIndexHTTPResp, error)
 
 	// ListGraphsWithResponse List graph collections.
 	//
@@ -20194,12 +21387,19 @@ type ListDocumentCollectionsHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *map[string]interface{}
+	JSON200 *DocOpenArray
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListDocumentCollectionsHTTPResp) GetJSON200() *map[string]interface{} {
+func (r ListDocumentCollectionsHTTPResp) GetJSON200() *DocOpenArray {
 	return r.JSON200
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListDocumentCollectionsHTTPResp) GetJSON500() *InternalError {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -20235,12 +21435,26 @@ type CreateDocumentCollectionHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *map[string]interface{}
+	JSON200 *DocOpenObject
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r CreateDocumentCollectionHTTPResp) GetJSON200() *map[string]interface{} {
+func (r CreateDocumentCollectionHTTPResp) GetJSON200() *DocOpenObject {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateDocumentCollectionHTTPResp) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CreateDocumentCollectionHTTPResp) GetJSON500() *InternalError {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -20272,16 +21486,140 @@ func (r CreateDocumentCollectionHTTPResp) ContentType() string {
 	return ""
 }
 
+type DeleteDocumentCollectionHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DocDeleteAck
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DeleteDocumentCollectionHTTPResp) GetJSON200() *DocDeleteAck {
+	return r.JSON200
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteDocumentCollectionHTTPResp) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteDocumentCollectionHTTPResp) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteDocumentCollectionHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteDocumentCollectionHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteDocumentCollectionHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteDocumentCollectionHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetDocumentCollectionHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DocOpenObject
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetDocumentCollectionHTTPResp) GetJSON200() *DocOpenObject {
+	return r.JSON200
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetDocumentCollectionHTTPResp) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetDocumentCollectionHTTPResp) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetDocumentCollectionHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetDocumentCollectionHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetDocumentCollectionHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetDocumentCollectionHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type QueryDocumentsHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *map[string]interface{}
+	JSON200 *DocQueryResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r QueryDocumentsHTTPResp) GetJSON200() *map[string]interface{} {
+func (r QueryDocumentsHTTPResp) GetJSON200() *DocQueryResponse {
 	return r.JSON200
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r QueryDocumentsHTTPResp) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r QueryDocumentsHTTPResp) GetJSON500() *InternalError {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -20317,19 +21655,33 @@ type InsertDocumentHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *map[string]interface{}
+	JSON200 *DocResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r InsertDocumentHTTPResp) GetJSON200() *map[string]interface{} {
+func (r InsertDocumentHTTPResp) GetJSON200() *DocResponse {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r InsertDocumentHTTPResp) GetJSON400() *BadRequest {
+	return r.JSON400
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r InsertDocumentHTTPResp) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r InsertDocumentHTTPResp) GetJSON500() *InternalError {
+	return r.JSON500
 }
 
 // GetBody returns the raw response body bytes
@@ -20355,6 +21707,398 @@ func (r InsertDocumentHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r InsertDocumentHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AggregateDocumentsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DocAggregateResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AggregateDocumentsHTTPResp) GetJSON200() *DocAggregateResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r AggregateDocumentsHTTPResp) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r AggregateDocumentsHTTPResp) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r AggregateDocumentsHTTPResp) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r AggregateDocumentsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AggregateDocumentsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AggregateDocumentsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AggregateDocumentsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type BatchInsertDocumentsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DocBatchInsertResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r BatchInsertDocumentsHTTPResp) GetJSON200() *DocBatchInsertResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r BatchInsertDocumentsHTTPResp) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r BatchInsertDocumentsHTTPResp) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r BatchInsertDocumentsHTTPResp) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r BatchInsertDocumentsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r BatchInsertDocumentsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BatchInsertDocumentsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r BatchInsertDocumentsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteDocumentHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DocDeleteAck
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DeleteDocumentHTTPResp) GetJSON200() *DocDeleteAck {
+	return r.JSON200
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteDocumentHTTPResp) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteDocumentHTTPResp) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteDocumentHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteDocumentHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteDocumentHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteDocumentHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetDocumentHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DocResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetDocumentHTTPResp) GetJSON200() *DocResponse {
+	return r.JSON200
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetDocumentHTTPResp) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetDocumentHTTPResp) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetDocumentHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetDocumentHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetDocumentHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetDocumentHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateDocumentHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DocUpdateResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateDocumentHTTPResp) GetJSON200() *DocUpdateResponse {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UpdateDocumentHTTPResp) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r UpdateDocumentHTTPResp) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateDocumentHTTPResp) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateDocumentHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateDocumentHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateDocumentHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateDocumentHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListDocumentIndexesHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DocIndexListResponse
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListDocumentIndexesHTTPResp) GetJSON200() *DocIndexListResponse {
+	return r.JSON200
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListDocumentIndexesHTTPResp) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ListDocumentIndexesHTTPResp) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListDocumentIndexesHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListDocumentIndexesHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListDocumentIndexesHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListDocumentIndexesHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateDocumentIndexHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateDocumentIndexHTTPResp) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateDocumentIndexHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateDocumentIndexHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateDocumentIndexHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateDocumentIndexHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -24941,7 +26685,7 @@ func (c *ClientWithResponses) ListDocumentCollectionsWithResponse(ctx context.Co
 	return ParseListDocumentCollectionsHTTPResp(rsp)
 }
 
-// CreateDocumentCollectionWithBodyWithResponse Create a document collection.
+// CreateDocumentCollectionWithBodyWithResponse Create a document collection (with optional indexes).
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -24954,7 +26698,7 @@ func (c *ClientWithResponses) CreateDocumentCollectionWithBodyWithResponse(ctx c
 	return ParseCreateDocumentCollectionHTTPResp(rsp)
 }
 
-// CreateDocumentCollectionWithResponse Create a document collection.
+// CreateDocumentCollectionWithResponse Create a document collection (with optional indexes).
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -24967,7 +26711,36 @@ func (c *ClientWithResponses) CreateDocumentCollectionWithResponse(ctx context.C
 	return ParseCreateDocumentCollectionHTTPResp(rsp)
 }
 
-// QueryDocumentsWithResponse Query documents.
+// DeleteDocumentCollectionWithResponse Delete a document collection.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v2/document-collections/{collection} (the `DeleteDocumentCollection` operationId).
+func (c *ClientWithResponses) DeleteDocumentCollectionWithResponse(ctx context.Context, collection string, params *DeleteDocumentCollectionParams, reqEditors ...RequestEditorFn) (*DeleteDocumentCollectionHTTPResp, error) {
+	rsp, err := c.DeleteDocumentCollection(ctx, collection, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteDocumentCollectionHTTPResp(rsp)
+}
+
+// GetDocumentCollectionWithResponse Get one collection's info.
+//
+// 404 when the collection does not exist. The body is an open
+// object (the serialized collection info).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v2/document-collections/{collection} (the `GetDocumentCollection` operationId).
+func (c *ClientWithResponses) GetDocumentCollectionWithResponse(ctx context.Context, collection string, params *GetDocumentCollectionParams, reqEditors ...RequestEditorFn) (*GetDocumentCollectionHTTPResp, error) {
+	rsp, err := c.GetDocumentCollection(ctx, collection, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetDocumentCollectionHTTPResp(rsp)
+}
+
+// QueryDocumentsWithResponse Query documents (filter/projection/limit).
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -24980,7 +26753,7 @@ func (c *ClientWithResponses) QueryDocumentsWithResponse(ctx context.Context, co
 	return ParseQueryDocumentsHTTPResp(rsp)
 }
 
-// InsertDocumentWithBodyWithResponse Insert a document.
+// InsertDocumentWithBodyWithResponse Insert one document.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -24993,7 +26766,7 @@ func (c *ClientWithResponses) InsertDocumentWithBodyWithResponse(ctx context.Con
 	return ParseInsertDocumentHTTPResp(rsp)
 }
 
-// InsertDocumentWithResponse Insert a document.
+// InsertDocumentWithResponse Insert one document.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -25004,6 +26777,161 @@ func (c *ClientWithResponses) InsertDocumentWithResponse(ctx context.Context, co
 		return nil, err
 	}
 	return ParseInsertDocumentHTTPResp(rsp)
+}
+
+// AggregateDocumentsWithBodyWithResponse Run an aggregation pipeline.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/document-collections/{collection}/documents/aggregate (the `AggregateDocuments` operationId).
+func (c *ClientWithResponses) AggregateDocumentsWithBodyWithResponse(ctx context.Context, collection string, params *AggregateDocumentsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AggregateDocumentsHTTPResp, error) {
+	rsp, err := c.AggregateDocumentsWithBody(ctx, collection, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAggregateDocumentsHTTPResp(rsp)
+}
+
+// AggregateDocumentsWithResponse Run an aggregation pipeline.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/document-collections/{collection}/documents/aggregate (the `AggregateDocuments` operationId).
+func (c *ClientWithResponses) AggregateDocumentsWithResponse(ctx context.Context, collection string, params *AggregateDocumentsParams, body AggregateDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*AggregateDocumentsHTTPResp, error) {
+	rsp, err := c.AggregateDocuments(ctx, collection, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAggregateDocumentsHTTPResp(rsp)
+}
+
+// BatchInsertDocumentsWithBodyWithResponse Insert multiple documents (per-item partial success).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/document-collections/{collection}/documents/batch (the `BatchInsertDocuments` operationId).
+func (c *ClientWithResponses) BatchInsertDocumentsWithBodyWithResponse(ctx context.Context, collection string, params *BatchInsertDocumentsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BatchInsertDocumentsHTTPResp, error) {
+	rsp, err := c.BatchInsertDocumentsWithBody(ctx, collection, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBatchInsertDocumentsHTTPResp(rsp)
+}
+
+// BatchInsertDocumentsWithResponse Insert multiple documents (per-item partial success).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/document-collections/{collection}/documents/batch (the `BatchInsertDocuments` operationId).
+func (c *ClientWithResponses) BatchInsertDocumentsWithResponse(ctx context.Context, collection string, params *BatchInsertDocumentsParams, body BatchInsertDocumentsJSONRequestBody, reqEditors ...RequestEditorFn) (*BatchInsertDocumentsHTTPResp, error) {
+	rsp, err := c.BatchInsertDocuments(ctx, collection, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBatchInsertDocumentsHTTPResp(rsp)
+}
+
+// DeleteDocumentWithResponse Delete one document.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v2/document-collections/{collection}/documents/{id} (the `DeleteDocument` operationId).
+func (c *ClientWithResponses) DeleteDocumentWithResponse(ctx context.Context, collection string, id string, params *DeleteDocumentParams, reqEditors ...RequestEditorFn) (*DeleteDocumentHTTPResp, error) {
+	rsp, err := c.DeleteDocument(ctx, collection, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteDocumentHTTPResp(rsp)
+}
+
+// GetDocumentWithResponse Get one document.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v2/document-collections/{collection}/documents/{id} (the `GetDocument` operationId).
+func (c *ClientWithResponses) GetDocumentWithResponse(ctx context.Context, collection string, id string, params *GetDocumentParams, reqEditors ...RequestEditorFn) (*GetDocumentHTTPResp, error) {
+	rsp, err := c.GetDocument(ctx, collection, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetDocumentHTTPResp(rsp)
+}
+
+// UpdateDocumentWithBodyWithResponse Apply an update pipeline to a document.
+//
+// Optimistic concurrency: `expected_version` rejects stale writes.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/v2/document-collections/{collection}/documents/{id} (the `UpdateDocument` operationId).
+func (c *ClientWithResponses) UpdateDocumentWithBodyWithResponse(ctx context.Context, collection string, id string, params *UpdateDocumentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateDocumentHTTPResp, error) {
+	rsp, err := c.UpdateDocumentWithBody(ctx, collection, id, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateDocumentHTTPResp(rsp)
+}
+
+// UpdateDocumentWithResponse Apply an update pipeline to a document.
+//
+// Optimistic concurrency: `expected_version` rejects stale writes.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/v2/document-collections/{collection}/documents/{id} (the `UpdateDocument` operationId).
+func (c *ClientWithResponses) UpdateDocumentWithResponse(ctx context.Context, collection string, id string, params *UpdateDocumentParams, body UpdateDocumentJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateDocumentHTTPResp, error) {
+	rsp, err := c.UpdateDocument(ctx, collection, id, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateDocumentHTTPResp(rsp)
+}
+
+// ListDocumentIndexesWithResponse List the collection's indexes.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v2/document-collections/{collection}/indexes (the `ListDocumentIndexes` operationId).
+func (c *ClientWithResponses) ListDocumentIndexesWithResponse(ctx context.Context, collection string, params *ListDocumentIndexesParams, reqEditors ...RequestEditorFn) (*ListDocumentIndexesHTTPResp, error) {
+	rsp, err := c.ListDocumentIndexes(ctx, collection, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListDocumentIndexesHTTPResp(rsp)
+}
+
+// CreateDocumentIndexWithBodyWithResponse Create an index on an existing collection.
+//
+// HONEST ALWAYS-400: creating indexes on existing collections is
+// not supported — specify `indexes` when creating the collection.
+// The 400 body says exactly this.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/document-collections/{collection}/indexes (the `CreateDocumentIndex` operationId).
+func (c *ClientWithResponses) CreateDocumentIndexWithBodyWithResponse(ctx context.Context, collection string, params *CreateDocumentIndexParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateDocumentIndexHTTPResp, error) {
+	rsp, err := c.CreateDocumentIndexWithBody(ctx, collection, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateDocumentIndexHTTPResp(rsp)
+}
+
+// CreateDocumentIndexWithResponse Create an index on an existing collection.
+//
+// HONEST ALWAYS-400: creating indexes on existing collections is
+// not supported — specify `indexes` when creating the collection.
+// The 400 body says exactly this.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/document-collections/{collection}/indexes (the `CreateDocumentIndex` operationId).
+func (c *ClientWithResponses) CreateDocumentIndexWithResponse(ctx context.Context, collection string, params *CreateDocumentIndexParams, body CreateDocumentIndexJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateDocumentIndexHTTPResp, error) {
+	rsp, err := c.CreateDocumentIndex(ctx, collection, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateDocumentIndexHTTPResp(rsp)
 }
 
 // ListGraphsWithResponse List graph collections.
@@ -28188,11 +30116,18 @@ func ParseListDocumentCollectionsHTTPResp(rsp *http.Response) (*ListDocumentColl
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest map[string]interface{}
+		var dest DocOpenArray
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -28214,11 +30149,105 @@ func ParseCreateDocumentCollectionHTTPResp(rsp *http.Response) (*CreateDocumentC
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest map[string]interface{}
+		var dest DocOpenObject
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteDocumentCollectionHTTPResp parses an HTTP response from a DeleteDocumentCollectionWithResponse call
+func ParseDeleteDocumentCollectionHTTPResp(rsp *http.Response) (*DeleteDocumentCollectionHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteDocumentCollectionHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DocDeleteAck
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetDocumentCollectionHTTPResp parses an HTTP response from a GetDocumentCollectionWithResponse call
+func ParseGetDocumentCollectionHTTPResp(rsp *http.Response) (*GetDocumentCollectionHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetDocumentCollectionHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DocOpenObject
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -28240,11 +30269,25 @@ func ParseQueryDocumentsHTTPResp(rsp *http.Response) (*QueryDocumentsHTTPResp, e
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest map[string]interface{}
+		var dest DocQueryResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -28266,7 +30309,148 @@ func ParseInsertDocumentHTTPResp(rsp *http.Response) (*InsertDocumentHTTPResp, e
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest map[string]interface{}
+		var dest DocResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAggregateDocumentsHTTPResp parses an HTTP response from a AggregateDocumentsWithResponse call
+func ParseAggregateDocumentsHTTPResp(rsp *http.Response) (*AggregateDocumentsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AggregateDocumentsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DocAggregateResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseBatchInsertDocumentsHTTPResp parses an HTTP response from a BatchInsertDocumentsWithResponse call
+func ParseBatchInsertDocumentsHTTPResp(rsp *http.Response) (*BatchInsertDocumentsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BatchInsertDocumentsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DocBatchInsertResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteDocumentHTTPResp parses an HTTP response from a DeleteDocumentWithResponse call
+func ParseDeleteDocumentHTTPResp(rsp *http.Response) (*DeleteDocumentHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteDocumentHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DocDeleteAck
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -28278,6 +30462,166 @@ func ParseInsertDocumentHTTPResp(rsp *http.Response) (*InsertDocumentHTTPResp, e
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetDocumentHTTPResp parses an HTTP response from a GetDocumentWithResponse call
+func ParseGetDocumentHTTPResp(rsp *http.Response) (*GetDocumentHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetDocumentHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DocResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateDocumentHTTPResp parses an HTTP response from a UpdateDocumentWithResponse call
+func ParseUpdateDocumentHTTPResp(rsp *http.Response) (*UpdateDocumentHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateDocumentHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DocUpdateResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListDocumentIndexesHTTPResp parses an HTTP response from a ListDocumentIndexesWithResponse call
+func ParseListDocumentIndexesHTTPResp(rsp *http.Response) (*ListDocumentIndexesHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListDocumentIndexesHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DocIndexListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateDocumentIndexHTTPResp parses an HTTP response from a CreateDocumentIndexWithResponse call
+func ParseCreateDocumentIndexHTTPResp(rsp *http.Response) (*CreateDocumentIndexHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateDocumentIndexHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	}
 

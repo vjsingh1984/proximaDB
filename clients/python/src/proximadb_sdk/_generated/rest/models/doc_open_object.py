@@ -13,12 +13,12 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="InsertDocumentResponse200")
+T = TypeVar("T", bound="DocOpenObject")
 
 
 @_attrs_define
-class InsertDocumentResponse200:
-    """ """
+class DocOpenObject:
+    """Serialized collection info (open field set)."""
 
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -32,10 +32,10 @@ class InsertDocumentResponse200:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        insert_document_response_200 = cls()
+        doc_open_object = cls()
 
-        insert_document_response_200.additional_properties = d
-        return insert_document_response_200
+        doc_open_object.additional_properties = d
+        return doc_open_object
 
     @property
     def additional_keys(self) -> list[str]:

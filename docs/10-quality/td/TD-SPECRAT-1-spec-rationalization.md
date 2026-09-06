@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Waves 1-7 landed; wave 8 (rank + census resolution) landing — the program census closes here
+| Status | Waves 1-8 landed; wave 9 (document CRUD) landing
 | Severity | Medium — ~100 route literals across ~15 areas are live on the wire but invisible to every SDK
 | Component | `src/network/rest/openapi_supplement.yaml`; `docs/openapi/proximadb-openapi.yaml`; `clients/*` (regenerated)
 | Relates to | [[TD-SSO-3]] (the census that surfaced the gap); TD-126 (spec-from-code); ADR-041
@@ -339,7 +339,7 @@ Rationalization notes:
   `/aggregate`. Pre-existing, not introduced here — the published spec
   is what makes the divergence visible; the facade fix is a follow-up.
 
-== Wave 8: rank search + program census resolution (this PR)
+== Wave 8: rank search + program census resolution (landed)
 
 **Exposed (1 path / 1 operation; spec 79 → 80):**
 `POST /api/v2/rank/search` — the multi-phase ranking pipeline
@@ -414,3 +414,27 @@ expose/defer/never disposition):
 
 The enterprise external-catalog wave remains additionally, pending a
 product decision.
+
+== Wave 9: document CRUD (this PR)
+
+**Exposed (7 paths / 13 operations; spec 80 → 85 — 2 paths were reworked free-form entries, 5 are new):** the complete
+`/api/v2/document-collections*` surface (api-crate `document.rs`):
+collection create/list/info/delete, document insert/query/get/update
+(PATCH, optimistic `expected_version`)/delete, batch insert, aggregate,
+index create/list. The two pre-wave-9 free-form passthrough entries
+were reworked to the real handler DTOs.
+
+Rationalization notes:
+
+* Errors carry the CANONICAL envelope (RestError →
+  {error:{type,message,code}}) — the shared BadRequest/NotFound/
+  InternalError components apply, unlike the graph surface's private
+  envelope.
+* `createDocumentIndex` is an HONEST always-400 (indexes on existing
+  collections are unsupported — set them at creation). It fails loudly
+  with an actionable message, so it is EXPOSED with the limitation
+  documented (stub rule: honest errors are exposable; fabricated
+  success is not).
+* Batch insert reports COUNTS only (per-item failures not enumerated).
+* Collection info bodies are open objects (serialized port records).
+* No per-route permission gate; extractor rejections plain text.

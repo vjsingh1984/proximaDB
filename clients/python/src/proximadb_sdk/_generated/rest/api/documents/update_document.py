@@ -11,13 +11,17 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.doc_open_array_item import DocOpenArrayItem
+from ...models.doc_update_request import DocUpdateRequest
+from ...models.doc_update_response import DocUpdateResponse
 from ...models.error_response import ErrorResponse
 from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
+    collection: str,
+    id: str,
     *,
+    body: DocUpdateRequest,
     x_tenant_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
@@ -25,9 +29,16 @@ def _get_kwargs(
         headers["X-Tenant-ID"] = x_tenant_id
 
     _kwargs: dict[str, Any] = {
-        "method": "get",
-        "url": "/api/v2/document-collections",
+        "method": "patch",
+        "url": "/api/v2/document-collections/{collection}/documents/{id}".format(
+            collection=quote(str(collection), safe=""),
+            id=quote(str(id), safe=""),
+        ),
     }
+
+    _kwargs["json"] = body.to_dict()
+
+    headers["Content-Type"] = "application/json"
 
     _kwargs["headers"] = headers
     return _kwargs
@@ -35,18 +46,21 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorResponse | list[DocOpenArrayItem] | None:
+) -> DocUpdateResponse | ErrorResponse | None:
     if response.status_code == 200:
-        response_200 = []
-        _response_200 = response.json()
-        for componentsschemas_doc_open_array_item_data in _response_200:
-            componentsschemas_doc_open_array_item = DocOpenArrayItem.from_dict(
-                componentsschemas_doc_open_array_item_data
-            )
-
-            response_200.append(componentsschemas_doc_open_array_item)
+        response_200 = DocUpdateResponse.from_dict(response.json())
 
         return response_200
+
+    if response.status_code == 400:
+        response_400 = ErrorResponse.from_dict(response.json())
+
+        return response_400
+
+    if response.status_code == 404:
+        response_404 = ErrorResponse.from_dict(response.json())
+
+        return response_404
 
     if response.status_code == 500:
         response_500 = ErrorResponse.from_dict(response.json())
@@ -61,7 +75,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorResponse | list[DocOpenArrayItem]]:
+) -> Response[DocUpdateResponse | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -71,24 +85,35 @@ def _build_response(
 
 
 def sync_detailed(
+    collection: str,
+    id: str,
     *,
     client: AuthenticatedClient | Client,
+    body: DocUpdateRequest,
     x_tenant_id: str | Unset = UNSET,
-) -> Response[ErrorResponse | list[DocOpenArrayItem]]:
-    """List document collections.
+) -> Response[DocUpdateResponse | ErrorResponse]:
+    """Apply an update pipeline to a document.
+
+     Optimistic concurrency: `expected_version` rejects stale writes.
 
     Args:
+        collection (str):
+        id (str):
         x_tenant_id (str | Unset):
+        body (DocUpdateRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | list[DocOpenArrayItem]]
+        Response[DocUpdateResponse | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
+        collection=collection,
+        id=id,
+        body=body,
         x_tenant_id=x_tenant_id,
     )
 
@@ -100,48 +125,70 @@ def sync_detailed(
 
 
 def sync(
+    collection: str,
+    id: str,
     *,
     client: AuthenticatedClient | Client,
+    body: DocUpdateRequest,
     x_tenant_id: str | Unset = UNSET,
-) -> ErrorResponse | list[DocOpenArrayItem] | None:
-    """List document collections.
+) -> DocUpdateResponse | ErrorResponse | None:
+    """Apply an update pipeline to a document.
+
+     Optimistic concurrency: `expected_version` rejects stale writes.
 
     Args:
+        collection (str):
+        id (str):
         x_tenant_id (str | Unset):
+        body (DocUpdateRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | list[DocOpenArrayItem]
+        DocUpdateResponse | ErrorResponse
     """
 
     return sync_detailed(
+        collection=collection,
+        id=id,
         client=client,
+        body=body,
         x_tenant_id=x_tenant_id,
     ).parsed
 
 
 async def asyncio_detailed(
+    collection: str,
+    id: str,
     *,
     client: AuthenticatedClient | Client,
+    body: DocUpdateRequest,
     x_tenant_id: str | Unset = UNSET,
-) -> Response[ErrorResponse | list[DocOpenArrayItem]]:
-    """List document collections.
+) -> Response[DocUpdateResponse | ErrorResponse]:
+    """Apply an update pipeline to a document.
+
+     Optimistic concurrency: `expected_version` rejects stale writes.
 
     Args:
+        collection (str):
+        id (str):
         x_tenant_id (str | Unset):
+        body (DocUpdateRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorResponse | list[DocOpenArrayItem]]
+        Response[DocUpdateResponse | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
+        collection=collection,
+        id=id,
+        body=body,
         x_tenant_id=x_tenant_id,
     )
 
@@ -151,26 +198,37 @@ async def asyncio_detailed(
 
 
 async def asyncio(
+    collection: str,
+    id: str,
     *,
     client: AuthenticatedClient | Client,
+    body: DocUpdateRequest,
     x_tenant_id: str | Unset = UNSET,
-) -> ErrorResponse | list[DocOpenArrayItem] | None:
-    """List document collections.
+) -> DocUpdateResponse | ErrorResponse | None:
+    """Apply an update pipeline to a document.
+
+     Optimistic concurrency: `expected_version` rejects stale writes.
 
     Args:
+        collection (str):
+        id (str):
         x_tenant_id (str | Unset):
+        body (DocUpdateRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorResponse | list[DocOpenArrayItem]
+        DocUpdateResponse | ErrorResponse
     """
 
     return (
         await asyncio_detailed(
+            collection=collection,
+            id=id,
             client=client,
+            body=body,
             x_tenant_id=x_tenant_id,
         )
     ).parsed

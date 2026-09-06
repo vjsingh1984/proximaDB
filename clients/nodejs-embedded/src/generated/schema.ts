@@ -1225,9 +1225,33 @@ export interface paths {
         /** List document collections. */
         get: operations["listDocumentCollections"];
         put?: never;
-        /** Create a document collection. */
+        /** Create a document collection (with optional indexes). */
         post: operations["createDocumentCollection"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/document-collections/{collection}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Get one collection's info.
+         * @description 404 when the collection does not exist. The body is an open
+         *     object (the serialized collection info).
+         */
+        get: operations["getDocumentCollection"];
+        put?: never;
+        post?: never;
+        /** Delete a document collection. */
+        delete: operations["deleteDocumentCollection"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1242,11 +1266,99 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** Query documents. */
+        /** Query documents (filter/projection/limit). */
         get: operations["queryDocuments"];
         put?: never;
-        /** Insert a document. */
+        /** Insert one document. */
         post: operations["insertDocument"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/document-collections/{collection}/documents/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Get one document. */
+        get: operations["getDocument"];
+        put?: never;
+        post?: never;
+        /** Delete one document. */
+        delete: operations["deleteDocument"];
+        options?: never;
+        head?: never;
+        /**
+         * Apply an update pipeline to a document.
+         * @description Optimistic concurrency: `expected_version` rejects stale writes.
+         */
+        patch: operations["updateDocument"];
+        trace?: never;
+    };
+    "/api/v2/document-collections/{collection}/documents/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Insert multiple documents (per-item partial success). */
+        post: operations["batchInsertDocuments"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/document-collections/{collection}/documents/aggregate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run an aggregation pipeline. */
+        post: operations["aggregateDocuments"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/document-collections/{collection}/indexes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection: string;
+            };
+            cookie?: never;
+        };
+        /** List the collection's indexes. */
+        get: operations["listDocumentIndexes"];
+        put?: never;
+        /**
+         * Create an index on an existing collection.
+         * @description HONEST ALWAYS-400: creating indexes on existing collections is
+         *     not supported — specify `indexes` when creating the collection.
+         *     The 400 body says exactly this.
+         */
+        post: operations["createDocumentIndex"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4610,6 +4722,94 @@ export interface components {
             /** Format: uint32 */
             rank_profile_version?: number | null;
         };
+        /** @description Serialized collection info (open field set). */
+        DocOpenObject: {
+            [key: string]: unknown;
+        };
+        DocOpenArray: {
+            [key: string]: unknown;
+        }[];
+        DocDeleteAck: {
+            success: boolean;
+            /** @description Present on document deletes; absent on collection deletes. */
+            id?: string;
+        };
+        DocIndexDefinition: {
+            name?: string | null;
+            path: string;
+            /**
+             * @description btree is the only implemented type today.
+             * @default btree
+             */
+            index_type: string;
+            unique?: boolean;
+            sparse?: boolean;
+        };
+        CreateDocumentCollectionRequest: {
+            name: string;
+            indexes?: components["schemas"]["DocIndexDefinition"][];
+        };
+        DocInsertRequest: {
+            /** @description Server-assigned when omitted. */
+            id?: string | null;
+            /** @description The document body (free-form JSON). */
+            document: unknown;
+        };
+        DocResponse: {
+            id: string;
+            document: unknown;
+            /** Format: uint64 */
+            version: number;
+        };
+        DocQueryResponse: {
+            documents: components["schemas"]["DocResponse"][];
+            /** Format: uint64 */
+            total_count?: number | null;
+            has_more: boolean;
+        };
+        DocUpdateRequest: {
+            /** @description Update pipeline steps ({operation, path, value} objects). */
+            updates: unknown[];
+            /**
+             * Format: uint64
+             * @description Optimistic-concurrency guard; rejects stale writes.
+             */
+            expected_version?: number | null;
+        };
+        DocUpdateResponse: {
+            success: boolean;
+            id: string;
+            /** Format: uint64 */
+            new_version: number;
+        };
+        DocBatchInsertRequest: {
+            documents: components["schemas"]["DocInsertRequest"][];
+        };
+        DocBatchInsertResponse: {
+            /** Format: uint64 */
+            inserted: number;
+            /**
+             * Format: uint64
+             * @description Count only — per-item failures are not enumerated.
+             */
+            failed: number;
+        };
+        DocAggregateRequest: {
+            /** @description Aggregation pipeline stages (free-form). */
+            pipeline: unknown[];
+        };
+        DocAggregateResponse: {
+            results: unknown[];
+            /** Format: uint64 */
+            query_time_ms: number;
+        };
+        DocIndexListResponse: {
+            indexes: {
+                name: string | null;
+                path: string;
+                unique: boolean;
+            }[];
+        };
     };
     responses: {
         /** @description Invalid request. */
@@ -7101,17 +7301,16 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Collections. */
+            /** @description Collections (open array). */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DocOpenArray"];
                 };
             };
+            500: components["responses"]["InternalError"];
         };
     };
     createDocumentCollection: {
@@ -7126,26 +7325,24 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    [key: string]: unknown;
-                };
+                "application/json": components["schemas"]["CreateDocumentCollectionRequest"];
             };
         };
         responses: {
-            /** @description Created. */
+            /** @description Created (open object — the serialized collection info). */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DocOpenObject"];
                 };
             };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
         };
     };
-    queryDocuments: {
+    getDocumentCollection: {
         parameters: {
             query?: never;
             header?: {
@@ -7159,17 +7356,78 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Documents. */
+            /** @description Collection info. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DocOpenObject"];
                 };
             };
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteDocumentCollection: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                collection: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deletion acknowledged (success flag). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocDeleteAck"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    queryDocuments: {
+        parameters: {
+            query?: {
+                /** @description Filter expression (server-parsed). */
+                filter?: string;
+                /** @description Comma-separated field list. */
+                projection?: string;
+                /** @description Defaults to 100. */
+                limit?: number;
+            };
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                collection: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Matching documents. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocQueryResponse"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
         };
     };
     insertDocument: {
@@ -7186,24 +7444,226 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    [key: string]: unknown;
-                };
+                "application/json": components["schemas"]["DocInsertRequest"];
             };
         };
         responses: {
-            /** @description Inserted. */
+            /** @description The stored document (with its version). */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DocResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getDocument: {
+        parameters: {
+            query?: {
+                /** @description Comma-separated field list. */
+                projection?: string;
+            };
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                collection: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The document. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocResponse"];
                 };
             };
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteDocument: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                collection: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deletion acknowledged (success + id). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocDeleteAck"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateDocument: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                collection: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DocUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Update outcome (success, id, new_version). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocUpdateResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    batchInsertDocuments: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                collection: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DocBatchInsertRequest"];
+            };
+        };
+        responses: {
+            /** @description Counts (inserted + failed; failures counted, not enumerated). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocBatchInsertResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    aggregateDocuments: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                collection: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DocAggregateRequest"];
+            };
+        };
+        responses: {
+            /** @description Aggregation results (free-form) + timing. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocAggregateResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listDocumentIndexes: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                collection: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Index definitions (name, path, unique). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocIndexListResponse"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createDocumentIndex: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant. */
+                "X-Tenant-ID"?: string;
+            };
+            path: {
+                collection: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DocIndexDefinition"];
+            };
+        };
+        responses: {
+            400: components["responses"]["BadRequest"];
         };
     };
     ingestLog: {
