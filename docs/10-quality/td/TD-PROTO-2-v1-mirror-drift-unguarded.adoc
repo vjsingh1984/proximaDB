@@ -500,15 +500,19 @@ addressed in the same PR:**
   depth-2 rule via a NullValue sentinel — `a.b = null` and
   `a.b IS NULL` agree, and the triple-nested child special-case
   collapsed to the same sentinel.
-* graph_schema's Object/Array arms lower canonically via the shared
-  `sql_val_to_json` (serde_json::to_string on the prost struct emitted
-  the proto serde ENVELOPE — `{"fields":{…}}` — unmatchable by the
-  exact-string entity filter and divergent from the JSONB arm).
-* The v2 seam's null detection is parse-based (" null" is valid JSON
-  text and was stored as a string property).
-* The legacy vector-search executor no longer collapses nulls/bytes to
-  String("") — nulls stay null, bytes stay binary, objects lower
-  canonically.
+* `graph_schema` lowers its legacy `SqlValue` compatibility input to
+  `ProximaValue` first, then projects structured values as natural JSON
+  text. Directly serializing the prost wrapper emitted
+  `{"fields":{…}}`, which was unmatchable by the exact-string entity
+  filter. JSON null remains a present property rather than being skipped.
+* The v2 entity seam delegates `TypedValue -> ProximaValue ->
+  PropertyValue`, preserving arrays/maps/null and rejecting malformed JSON
+  before graph mutation. The reverse path uses the same canonical adapters
+  instead of dropping null/structures or truncating vectors to one float.
+* The legacy vector-search executor now delegates its entire `SqlValue ->
+  ProximaValue` boundary conversion. Arrays no longer fall through to
+  `String("")`, object children retain nulls, and bytes/JSONB keep their
+  canonical types.
 * HELIX/SWIFT extraction keeps unset-oneof keys as JSON null instead of
   dropping them (per-seam null accounting).
 * The last two hand-rolled root-crate REST converters (canonical
@@ -677,6 +681,32 @@ Known divergence deliberately left to the backlog: the JSONB *stringifying*
 surfaces (REST row builders, Arrow/observability stringifiers) each follow
 their local BytesValue convention (hex / per-byte arrays / placeholders); see
 the ledger + follow-ups.
+
+**Round 19 (2026-09-05, entity-boundary review) — degradation contract
+pinned + narrated:**
+
+* The v2 entity boundary now routes through the canonical model
+  (`TypedValue → ProximaValue → graph PropertyValue`, and reverse). The
+  graph property model is deliberately neutral (string/int/double/bool/
+  bytes/array/object/vector) — richer variants cannot carry their type
+  marker through it without a graph-format change (which would require
+  the #8 mixed-read migration discipline). The exact read-back
+  degradation is therefore a CONTRACT, now pinned by
+  `graph_boundary_degradation_table_is_pinned`: Uuid/Ulid → BinaryValue
+  (value bytes survive), Timestamp/TimestampTz/Date/Time → IntegerValue,
+  Decimal/Symbol/SparseVector → TextValue (canonical JSON for sparse).
+  Mixed-read note: a 16-byte blob stored by v0.3.0 decoded as UuidValue
+  under the old heuristic; it now decodes as BinaryValue.
+* The write side now FAILS LOUD on genuinely-malformed input (UUID of
+  ≠16 bytes, IsNull(false), out-of-range Int8/Uint8, undecodable JSONB)
+  — requests v0.3.0 silently degraded now return invalid_argument. The
+  old silent-drop behavior was the silent-Ok(failure) anti-pattern.
+* SparseVector joins the canonical-text contract (sorted keys, round 18
+  rule applied at the last unsorted seam).
+* MapValue round-trips as StructValue (the graph model does not
+  distinguish Map from Struct — the write-side lowering comment states
+  this); nodes carrying present nulls are now emitted as IsNull(true)
+  instead of omitted (rounds 11-12 rule at the read boundary).
 
 == Not in scope
 

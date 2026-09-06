@@ -34,8 +34,11 @@
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 
+use proximadb_data_model::ProximaValue;
+use proximadb_records::conversions::{proxima_to_json, sql_value_to_proxima};
+
 use crate::graph::{Edge, Node, PropertyValue, property_value};
-use crate::proto::proximadb_v1::{EmbeddingVersion, Entity, Relation, sql_value};
+use crate::proto::proximadb_v1::{EmbeddingVersion, Entity, Relation};
 
 /// Special property keys for storing SKS metadata in Orion nodes
 const TYPED_METADATA_KEY: &str = "__typed_metadata";
@@ -63,22 +66,44 @@ pub(crate) fn canonical_json_string(value: &serde_json::Value) -> String {
                 entries.sort_by(|a, b| a.0.cmp(&b.0));
                 entries.into_iter().collect()
             }
+            serde_json::Value::Array(values) => {
+                serde_json::Value::Array(values.iter().map(sort_rec).collect())
+            }
             _ => v.clone(),
         }
     }
     sort_rec(value).to_string()
 }
 
-/// JSON document → property value. A JSON null stays the property model's
-/// null form (matched on the PARSED value, not a serialized-text compare —
-/// round 19: the string compare silently depended on the renderer).
-fn json_text_property(json: &serde_json::Value) -> Option<property_value::Value> {
-    match json {
-        serde_json::Value::Null => None,
-        _ => Some(property_value::Value::StringValue(canonical_json_string(
-            json,
-        ))),
-    }
+/// Project a canonical value into the direct graph-property subset used by
+/// legacy entity metadata filtering. Structured values use sorted-key JSON
+/// text because this legacy filter compares strings exactly. JSON null remains
+/// a present property with an unset inner oneof. Values outside the historical
+/// direct-property subset remain available in the compatibility blob only.
+fn proxima_value_to_direct_property(value: &ProximaValue) -> Option<PropertyValue> {
+    let value = match value {
+        ProximaValue::String(value) => Some(property_value::Value::StringValue(value.clone())),
+        ProximaValue::Float64(value) => Some(property_value::Value::DoubleValue(*value)),
+        ProximaValue::Int64(value) => Some(property_value::Value::IntValue(*value)),
+        ProximaValue::Boolean(value) => Some(property_value::Value::BoolValue(*value)),
+        ProximaValue::Json(_)
+        | ProximaValue::Jsonb(_)
+        | ProximaValue::Array(_)
+        | ProximaValue::Map(_)
+        | ProximaValue::Struct(_)
+        | ProximaValue::SparseVector { .. } => {
+            let json = proxima_to_json(value);
+            if json.is_null() {
+                None
+            } else {
+                Some(property_value::Value::StringValue(canonical_json_string(
+                    &json,
+                )))
+            }
+        }
+        _ => return None,
+    };
+    Some(PropertyValue { value })
 }
 
 impl EntityNodeMapper {
@@ -119,51 +144,9 @@ impl EntityNodeMapper {
             // Also store individual fields as direct node properties for efficient filtering
             // This enables matches_metadata_filter to work without deserializing JSON
             for (key, sql_value) in &entity.flexible_metadata {
-                if let Some(ref value) = sql_value.value {
-                    let prop_value = match value {
-                        sql_value::Value::StringValue(s) => {
-                            Some(property_value::Value::StringValue(s.clone()))
-                        }
-                        sql_value::Value::NumberValue(n) => {
-                            Some(property_value::Value::DoubleValue(*n))
-                        }
-                        sql_value::Value::Int64Value(i) => {
-                            Some(property_value::Value::IntValue(*i))
-                        }
-                        sql_value::Value::BoolValue(b) => {
-                            Some(property_value::Value::BoolValue(*b))
-                        }
-                        // Round 13: JSON(B)/array/object flexible-metadata
-                        // fields lower to canonical JSON text — the wildcard
-                        // made them unfilterable (matches_metadata_filter
-                        // reads only direct properties, never the blob).
-                        sql_value::Value::JsonbValue(bytes) => {
-                            // Undecodable bytes would render as quoted-hex
-                            // junk — drop the property instead (develop's
-                            // behavior for corrupt input).
-                            match proximadb_data_model::ProximaValue::from_jsonb_slice(bytes) {
-                                Ok(json) => json_text_property(&json),
-                                Err(_) => None,
-                            }
-                        }
-                        // Canonical JSON lowering: the shared root-crate
-                        // converter (NOT serde_json::to_string on the prost
-                        // struct — that emits the proto envelope — and NOT the
-                        // search-types twin, which renders bytes differently),
-                        // then SORTED to a stable key order: SqlObject.fields
-                        // is a HashMap, so unsorted text varies per write and
-                        // exact-string property filters would flake (round 17).
-                        sql_value::Value::ObjectValue(_) | sql_value::Value::ArrayValue(_) => {
-                            let json = crate::storage::formats::arrow_conversion::sql_value_to_json(
-                                sql_value,
-                            );
-                            json_text_property(&json)
-                        }
-                        _ => None, // bytes and nulls stay blob-only
-                    };
-                    if let Some(pv) = prop_value {
-                        properties.insert(key.clone(), PropertyValue { value: Some(pv) });
-                    }
+                let canonical = sql_value_to_proxima(sql_value);
+                if let Some(property) = proxima_value_to_direct_property(&canonical) {
+                    properties.insert(key.clone(), property);
                 }
             }
         }
@@ -388,7 +371,90 @@ impl RelationEdgeMapper {
 mod tests {
     use super::*;
     use crate::proto::proximadb_v1::Modality;
-    use crate::proto::proximadb_v1::{TypedField, TypedMetadata, typed_field};
+    use crate::proto::proximadb_v1::{
+        SqlArray, SqlObject, SqlValue, TypedField, TypedMetadata, sql_value, typed_field,
+    };
+
+    #[test]
+    fn canonical_json_sorts_objects_nested_inside_arrays() {
+        let left = serde_json::json!([{"z": 1, "a": {"y": 2, "b": 3}}]);
+        let right = serde_json::json!([{"a": {"b": 3, "y": 2}, "z": 1}]);
+
+        assert_eq!(canonical_json_string(&left), canonical_json_string(&right));
+    }
+
+    #[test]
+    fn flexible_structured_metadata_uses_canonical_json_and_preserves_null() {
+        let json_null = proximadb_data_model::ProximaValue::to_jsonb_vec(&serde_json::Value::Null)
+            .expect("encode JSON null test value");
+        let entity = Entity {
+            id: "entity-structured".to_string(),
+            collection_id: "collection".to_string(),
+            embeddings: Vec::new(),
+            typed_metadata: None,
+            flexible_metadata: HashMap::from([
+                (
+                    "document".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::ObjectValue(SqlObject {
+                            fields: HashMap::from([(
+                                "rank".to_string(),
+                                SqlValue {
+                                    value: Some(sql_value::Value::Int64Value(7)),
+                                },
+                            )]),
+                        })),
+                    },
+                ),
+                (
+                    "tags".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::ArrayValue(SqlArray {
+                            values: vec![SqlValue {
+                                value: Some(sql_value::Value::StringValue("red".to_string())),
+                            }],
+                        })),
+                    },
+                ),
+                (
+                    "deleted_value".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::JsonbValue(json_null)),
+                    },
+                ),
+            ]),
+            provenance: None,
+            temporal: None,
+            relations: Vec::new(),
+        };
+
+        let node = EntityNodeMapper
+            .entity_to_node(&entity)
+            .expect("convert structured entity");
+
+        assert_eq!(
+            node.properties.get("document"),
+            Some(&PropertyValue {
+                value: Some(property_value::Value::StringValue(
+                    serde_json::json!({"rank": 7}).to_string(),
+                )),
+            }),
+            "proto wrapper fields must not leak into canonical JSON text"
+        );
+        assert_eq!(
+            node.properties.get("tags"),
+            Some(&PropertyValue {
+                value: Some(property_value::Value::StringValue(
+                    serde_json::json!(["red"]).to_string(),
+                )),
+            })
+        );
+        assert_eq!(
+            node.properties.get("deleted_value"),
+            Some(&PropertyValue { value: None }),
+            "JSON null is a present null property, not an absent field"
+        );
+    }
 
     #[test]
     fn test_entity_node_round_trip() {
