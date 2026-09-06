@@ -638,7 +638,14 @@ dead-end — serde_json's `Value::get` behaves as the explicit match), so
 delegation is behavior-preserving; the walker's lifetime signature split
 (root `<'a>` vs segments `<'p>`) so callers with borrowed path strings
 compile without contortions. Future traversal rules (array-index segments,
-escape handling) now land in ONE place across filter/auth/plan resolution.
+escape handling) now land in ONE place across filter/auth/plan resolution —
+with two enumerated exceptions (round-20 review): `proximadb-query
+joins.rs extract_nested_json` (join-key resolution — same walker plus
+leaf stringification, still hand-rolled; delegation needs a
+`&[&str] -> Option<String>` shim) and `cdc/outbound/router.rs` (CDC
+routing — hand-rolled WITH array-index support, deliberately not
+consolidated: adding index segments to `json_get_path` later must
+consciously decide whether CDC folds in).
 * Tracked: JSON string-document spelling divergence between the v2
   entity seam (unwrapped inner text) and adjacency/graph_schema
   (quoted canonical text); the extraction twin blocks (helix/swift,
