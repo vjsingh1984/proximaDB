@@ -222,6 +222,12 @@ pub mod conformance_tests {
         datasets: std::sync::Mutex<Vec<(String, RunDatasetInput)>>,
     }
 
+    impl Default for InMemoryRunStore {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
     impl InMemoryRunStore {
         pub fn new() -> Self {
             Self {
