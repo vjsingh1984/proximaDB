@@ -6,36 +6,50 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="InsertDocumentBody")
+T = TypeVar("T", bound="DocAggregateRequest")
 
 
 @_attrs_define
-class InsertDocumentBody:
-    """ """
+class DocAggregateRequest:
+    """
+    Attributes:
+        pipeline (list[Any]): Aggregation pipeline stages (free-form).
+    """
 
+    pipeline: list[Any]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        pipeline = self.pipeline
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
+        field_dict.update(
+            {
+                "pipeline": pipeline,
+            }
+        )
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        insert_document_body = cls()
+        pipeline = cast(list[Any], d.pop("pipeline"))
 
-        insert_document_body.additional_properties = d
-        return insert_document_body
+        doc_aggregate_request = cls(
+            pipeline=pipeline,
+        )
+
+        doc_aggregate_request.additional_properties = d
+        return doc_aggregate_request
 
     @property
     def additional_keys(self) -> list[str]:

@@ -6,36 +6,73 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="CreateDocumentCollectionBody")
+T = TypeVar("T", bound="DocIndexListResponseIndexesItem")
 
 
 @_attrs_define
-class CreateDocumentCollectionBody:
-    """ """
+class DocIndexListResponseIndexesItem:
+    """
+    Attributes:
+        name (None | str):
+        path (str):
+        unique (bool):
+    """
 
+    name: None | str
+    path: str
+    unique: bool
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        name: None | str
+        name = self.name
+
+        path = self.path
+
+        unique = self.unique
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
+        field_dict.update(
+            {
+                "name": name,
+                "path": path,
+                "unique": unique,
+            }
+        )
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        create_document_collection_body = cls()
 
-        create_document_collection_body.additional_properties = d
-        return create_document_collection_body
+        def _parse_name(data: object) -> None | str:
+            if data is None:
+                return data
+            return cast(None | str, data)
+
+        name = _parse_name(d.pop("name"))
+
+        path = d.pop("path")
+
+        unique = d.pop("unique")
+
+        doc_index_list_response_indexes_item = cls(
+            name=name,
+            path=path,
+            unique=unique,
+        )
+
+        doc_index_list_response_indexes_item.additional_properties = d
+        return doc_index_list_response_indexes_item
 
     @property
     def additional_keys(self) -> list[str]:

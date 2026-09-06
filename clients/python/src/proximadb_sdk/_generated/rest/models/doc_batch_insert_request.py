@@ -6,36 +6,66 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar
+from typing import TYPE_CHECKING, Any, BinaryIO, Generator, TextIO, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="ListDocumentCollectionsResponse200")
+if TYPE_CHECKING:
+    from ..models.doc_insert_request import DocInsertRequest
+
+
+T = TypeVar("T", bound="DocBatchInsertRequest")
 
 
 @_attrs_define
-class ListDocumentCollectionsResponse200:
-    """ """
+class DocBatchInsertRequest:
+    """
+    Attributes:
+        documents (list[DocInsertRequest]):
+    """
 
+    documents: list[DocInsertRequest]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.doc_insert_request import DocInsertRequest
+
+        documents = []
+        for documents_item_data in self.documents:
+            documents_item = documents_item_data.to_dict()
+            documents.append(documents_item)
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
+        field_dict.update(
+            {
+                "documents": documents,
+            }
+        )
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        d = dict(src_dict)
-        list_document_collections_response_200 = cls()
+        from ..models.doc_insert_request import DocInsertRequest
 
-        list_document_collections_response_200.additional_properties = d
-        return list_document_collections_response_200
+        d = dict(src_dict)
+        documents = []
+        _documents = d.pop("documents")
+        for documents_item_data in _documents:
+            documents_item = DocInsertRequest.from_dict(documents_item_data)
+
+            documents.append(documents_item)
+
+        doc_batch_insert_request = cls(
+            documents=documents,
+        )
+
+        doc_batch_insert_request.additional_properties = d
+        return doc_batch_insert_request
 
     @property
     def additional_keys(self) -> list[str]:

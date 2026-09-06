@@ -11,15 +11,16 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.create_document_collection_request import CreateDocumentCollectionRequest
-from ...models.doc_create_collection_response import DocCreateCollectionResponse
+from ...models.doc_aggregate_request import DocAggregateRequest
+from ...models.doc_aggregate_response import DocAggregateResponse
 from ...models.error_response import ErrorResponse
 from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
+    collection: str,
     *,
-    body: CreateDocumentCollectionRequest,
+    body: DocAggregateRequest,
     x_tenant_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
@@ -28,7 +29,9 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/api/v2/document-collections",
+        "url": "/api/v2/document-collections/{collection}/documents/aggregate".format(
+            collection=quote(str(collection), safe=""),
+        ),
     }
 
     _kwargs["json"] = body.to_dict()
@@ -41,9 +44,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> DocCreateCollectionResponse | ErrorResponse | None:
+) -> DocAggregateResponse | ErrorResponse | None:
     if response.status_code == 200:
-        response_200 = DocCreateCollectionResponse.from_dict(response.json())
+        response_200 = DocAggregateResponse.from_dict(response.json())
 
         return response_200
 
@@ -65,7 +68,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[DocCreateCollectionResponse | ErrorResponse]:
+) -> Response[DocAggregateResponse | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -75,26 +78,29 @@ def _build_response(
 
 
 def sync_detailed(
+    collection: str,
     *,
     client: AuthenticatedClient | Client,
-    body: CreateDocumentCollectionRequest,
+    body: DocAggregateRequest,
     x_tenant_id: str | Unset = UNSET,
-) -> Response[DocCreateCollectionResponse | ErrorResponse]:
-    """Create a document collection (with optional indexes).
+) -> Response[DocAggregateResponse | ErrorResponse]:
+    """Run an aggregation pipeline.
 
     Args:
+        collection (str):
         x_tenant_id (str | Unset):
-        body (CreateDocumentCollectionRequest):
+        body (DocAggregateRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[DocCreateCollectionResponse | ErrorResponse]
+        Response[DocAggregateResponse | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
+        collection=collection,
         body=body,
         x_tenant_id=x_tenant_id,
     )
@@ -107,26 +113,29 @@ def sync_detailed(
 
 
 def sync(
+    collection: str,
     *,
     client: AuthenticatedClient | Client,
-    body: CreateDocumentCollectionRequest,
+    body: DocAggregateRequest,
     x_tenant_id: str | Unset = UNSET,
-) -> DocCreateCollectionResponse | ErrorResponse | None:
-    """Create a document collection (with optional indexes).
+) -> DocAggregateResponse | ErrorResponse | None:
+    """Run an aggregation pipeline.
 
     Args:
+        collection (str):
         x_tenant_id (str | Unset):
-        body (CreateDocumentCollectionRequest):
+        body (DocAggregateRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        DocCreateCollectionResponse | ErrorResponse
+        DocAggregateResponse | ErrorResponse
     """
 
     return sync_detailed(
+        collection=collection,
         client=client,
         body=body,
         x_tenant_id=x_tenant_id,
@@ -134,26 +143,29 @@ def sync(
 
 
 async def asyncio_detailed(
+    collection: str,
     *,
     client: AuthenticatedClient | Client,
-    body: CreateDocumentCollectionRequest,
+    body: DocAggregateRequest,
     x_tenant_id: str | Unset = UNSET,
-) -> Response[DocCreateCollectionResponse | ErrorResponse]:
-    """Create a document collection (with optional indexes).
+) -> Response[DocAggregateResponse | ErrorResponse]:
+    """Run an aggregation pipeline.
 
     Args:
+        collection (str):
         x_tenant_id (str | Unset):
-        body (CreateDocumentCollectionRequest):
+        body (DocAggregateRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[DocCreateCollectionResponse | ErrorResponse]
+        Response[DocAggregateResponse | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
+        collection=collection,
         body=body,
         x_tenant_id=x_tenant_id,
     )
@@ -164,27 +176,30 @@ async def asyncio_detailed(
 
 
 async def asyncio(
+    collection: str,
     *,
     client: AuthenticatedClient | Client,
-    body: CreateDocumentCollectionRequest,
+    body: DocAggregateRequest,
     x_tenant_id: str | Unset = UNSET,
-) -> DocCreateCollectionResponse | ErrorResponse | None:
-    """Create a document collection (with optional indexes).
+) -> DocAggregateResponse | ErrorResponse | None:
+    """Run an aggregation pipeline.
 
     Args:
+        collection (str):
         x_tenant_id (str | Unset):
-        body (CreateDocumentCollectionRequest):
+        body (DocAggregateRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        DocCreateCollectionResponse | ErrorResponse
+        DocAggregateResponse | ErrorResponse
     """
 
     return (
         await asyncio_detailed(
+            collection=collection,
             client=client,
             body=body,
             x_tenant_id=x_tenant_id,

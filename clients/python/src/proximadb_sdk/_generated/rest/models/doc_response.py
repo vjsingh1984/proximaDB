@@ -13,29 +13,59 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="CreateDocumentCollectionResponse200")
+T = TypeVar("T", bound="DocResponse")
 
 
 @_attrs_define
-class CreateDocumentCollectionResponse200:
-    """ """
+class DocResponse:
+    """
+    Attributes:
+        id (str):
+        document (Any):
+        version (int):
+    """
 
+    id: str
+    document: Any
+    version: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        id = self.id
+
+        document = self.document
+
+        version = self.version
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
+        field_dict.update(
+            {
+                "id": id,
+                "document": document,
+                "version": version,
+            }
+        )
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        create_document_collection_response_200 = cls()
+        id = d.pop("id")
 
-        create_document_collection_response_200.additional_properties = d
-        return create_document_collection_response_200
+        document = d.pop("document")
+
+        version = d.pop("version")
+
+        doc_response = cls(
+            id=id,
+            document=document,
+            version=version,
+        )
+
+        doc_response.additional_properties = d
+        return doc_response
 
     @property
     def additional_keys(self) -> list[str]:

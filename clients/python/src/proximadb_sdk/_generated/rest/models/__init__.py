@@ -110,8 +110,7 @@ from .collection_v2_response import CollectionV2Response
 from .collection_v2_summary import CollectionV2Summary
 from .create_collection_v2_request import CreateCollectionV2Request
 from .create_collection_v2_response import CreateCollectionV2Response
-from .create_document_collection_body import CreateDocumentCollectionBody
-from .create_document_collection_response_200 import CreateDocumentCollectionResponse200
+from .create_document_collection_request import CreateDocumentCollectionRequest
 from .create_edge_request import CreateEdgeRequest
 from .create_graph_request import CreateGraphRequest
 from .create_model_registry_request import CreateModelRegistryRequest
@@ -122,6 +121,22 @@ from .create_observability_namespace_response import (
 )
 from .delete_collection_v2_response import DeleteCollectionV2Response
 from .delete_record_v2_response import DeleteRecordV2Response
+from .doc_aggregate_request import DocAggregateRequest
+from .doc_aggregate_response import DocAggregateResponse
+from .doc_batch_insert_request import DocBatchInsertRequest
+from .doc_batch_insert_response import DocBatchInsertResponse
+from .doc_collection_list_response import DocCollectionListResponse
+from .doc_create_collection_response import DocCreateCollectionResponse
+from .doc_delete_ack import DocDeleteAck
+from .doc_index_definition import DocIndexDefinition
+from .doc_index_list_response import DocIndexListResponse
+from .doc_index_list_response_indexes_item import DocIndexListResponseIndexesItem
+from .doc_insert_request import DocInsertRequest
+from .doc_open_object import DocOpenObject
+from .doc_query_response import DocQueryResponse
+from .doc_response import DocResponse
+from .doc_update_request import DocUpdateRequest
+from .doc_update_response import DocUpdateResponse
 from .edge_input import EdgeInput
 from .edge_input_properties import EdgeInputProperties
 from .entity_dto import EntityDto
@@ -202,15 +217,12 @@ from .ingest_documents_response import IngestDocumentsResponse
 from .ingest_log_body import IngestLogBody
 from .ingest_log_response_200 import IngestLogResponse200
 from .ingested_record import IngestedRecord
-from .insert_document_body import InsertDocumentBody
-from .insert_document_response_200 import InsertDocumentResponse200
 from .insert_error import InsertError
 from .insert_records_request import InsertRecordsRequest
 from .insert_records_response import InsertRecordsResponse
 from .ivf_config_input import IvfConfigInput
 from .ivf_config_output import IvfConfigOutput
 from .list_collections_v2_response import ListCollectionsV2Response
-from .list_document_collections_response_200 import ListDocumentCollectionsResponse200
 from .list_model_registries_response import ListModelRegistriesResponse
 from .log_entry_input import LogEntryInput
 from .log_entry_input_fields import LogEntryInputFields
@@ -251,7 +263,6 @@ from .proxima_record_input import ProximaRecordInput
 from .proxima_record_input_props_type_0 import ProximaRecordInputPropsType0
 from .quantization_config_input import QuantizationConfigInput
 from .quantization_config_output import QuantizationConfigOutput
-from .query_documents_response_200 import QueryDocumentsResponse200
 from .query_language import QueryLanguage
 from .query_logs_body import QueryLogsBody
 from .query_logs_response_200 import QueryLogsResponse200
@@ -429,8 +440,7 @@ __all__ = (
     "CollectionV2Summary",
     "CreateCollectionV2Request",
     "CreateCollectionV2Response",
-    "CreateDocumentCollectionBody",
-    "CreateDocumentCollectionResponse200",
+    "CreateDocumentCollectionRequest",
     "CreateEdgeRequest",
     "CreateGraphRequest",
     "CreateModelRegistryRequest",
@@ -439,6 +449,22 @@ __all__ = (
     "CreateObservabilityNamespaceResponse",
     "DeleteCollectionV2Response",
     "DeleteRecordV2Response",
+    "DocAggregateRequest",
+    "DocAggregateResponse",
+    "DocBatchInsertRequest",
+    "DocBatchInsertResponse",
+    "DocCollectionListResponse",
+    "DocCreateCollectionResponse",
+    "DocDeleteAck",
+    "DocIndexDefinition",
+    "DocIndexListResponse",
+    "DocIndexListResponseIndexesItem",
+    "DocInsertRequest",
+    "DocOpenObject",
+    "DocQueryResponse",
+    "DocResponse",
+    "DocUpdateRequest",
+    "DocUpdateResponse",
     "EdgeInput",
     "EdgeInputProperties",
     "EntityDto",
@@ -517,15 +543,12 @@ __all__ = (
     "IngestedRecord",
     "IngestLogBody",
     "IngestLogResponse200",
-    "InsertDocumentBody",
-    "InsertDocumentResponse200",
     "InsertError",
     "InsertRecordsRequest",
     "InsertRecordsResponse",
     "IvfConfigInput",
     "IvfConfigOutput",
     "ListCollectionsV2Response",
-    "ListDocumentCollectionsResponse200",
     "ListModelRegistriesResponse",
     "LogEntryInput",
     "LogEntryInputFields",
@@ -566,7 +589,6 @@ __all__ = (
     "ProximaRecordInputPropsType0",
     "QuantizationConfigInput",
     "QuantizationConfigOutput",
-    "QueryDocumentsResponse200",
     "QueryLanguage",
     "QueryLogsBody",
     "QueryLogsResponse200",

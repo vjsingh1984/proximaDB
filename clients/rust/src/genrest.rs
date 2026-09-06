@@ -4434,6 +4434,41 @@ pub mod types {
             Default::default()
         }
     }
+    ///`CreateDocumentCollectionRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "name"
+    ///  ],
+    ///  "properties": {
+    ///    "indexes": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/DocIndexDefinition"
+    ///      }
+    ///    },
+    ///    "name": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct CreateDocumentCollectionRequest {
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub indexes: ::std::vec::Vec<DocIndexDefinition>,
+        pub name: ::std::string::String,
+    }
+    impl CreateDocumentCollectionRequest {
+        pub fn builder() -> builder::CreateDocumentCollectionRequest {
+            Default::default()
+        }
+    }
     ///`CreateEdgeGraphId`
     ///
     /// <details><summary>JSON schema</summary>
@@ -5260,6 +5295,609 @@ pub mod types {
     }
     impl DeleteRecordV2Response {
         pub fn builder() -> builder::DeleteRecordV2Response {
+            Default::default()
+        }
+    }
+    ///`DocAggregateRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "pipeline"
+    ///  ],
+    ///  "properties": {
+    ///    "pipeline": {
+    ///      "description": "Aggregation pipeline stages (free-form).",
+    ///      "type": "array",
+    ///      "items": {}
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct DocAggregateRequest {
+        ///Aggregation pipeline stages (free-form).
+        pub pipeline: ::std::vec::Vec<::serde_json::Value>,
+    }
+    impl DocAggregateRequest {
+        pub fn builder() -> builder::DocAggregateRequest {
+            Default::default()
+        }
+    }
+    ///`DocAggregateResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "query_time_ms",
+    ///    "results"
+    ///  ],
+    ///  "properties": {
+    ///    "query_time_ms": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "results": {
+    ///      "type": "array",
+    ///      "items": {}
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct DocAggregateResponse {
+        pub query_time_ms: u64,
+        pub results: ::std::vec::Vec<::serde_json::Value>,
+    }
+    impl DocAggregateResponse {
+        pub fn builder() -> builder::DocAggregateResponse {
+            Default::default()
+        }
+    }
+    ///`DocBatchInsertRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "documents"
+    ///  ],
+    ///  "properties": {
+    ///    "documents": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/DocInsertRequest"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct DocBatchInsertRequest {
+        pub documents: ::std::vec::Vec<DocInsertRequest>,
+    }
+    impl DocBatchInsertRequest {
+        pub fn builder() -> builder::DocBatchInsertRequest {
+            Default::default()
+        }
+    }
+    ///`DocBatchInsertResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "failed",
+    ///    "inserted"
+    ///  ],
+    ///  "properties": {
+    ///    "failed": {
+    ///      "description": "Count only — per-item failures are not enumerated.",
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "inserted": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct DocBatchInsertResponse {
+        ///Count only — per-item failures are not enumerated.
+        pub failed: u64,
+        pub inserted: u64,
+    }
+    impl DocBatchInsertResponse {
+        pub fn builder() -> builder::DocBatchInsertResponse {
+            Default::default()
+        }
+    }
+    ///`DocCollectionListResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "collections"
+    ///  ],
+    ///  "properties": {
+    ///    "collections": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/DocOpenObject"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct DocCollectionListResponse {
+        pub collections: ::std::vec::Vec<DocOpenObject>,
+    }
+    impl DocCollectionListResponse {
+        pub fn builder() -> builder::DocCollectionListResponse {
+            Default::default()
+        }
+    }
+    ///`DocCreateCollectionResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "collection",
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "collection": {
+    ///      "$ref": "#/components/schemas/DocOpenObject"
+    ///    },
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct DocCreateCollectionResponse {
+        pub collection: DocOpenObject,
+        pub success: bool,
+    }
+    impl DocCreateCollectionResponse {
+        pub fn builder() -> builder::DocCreateCollectionResponse {
+            Default::default()
+        }
+    }
+    ///`DocDeleteAck`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "id": {
+    ///      "description": "Present on document deletes; absent on collection deletes.",
+    ///      "type": "string"
+    ///    },
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct DocDeleteAck {
+        ///Present on document deletes; absent on collection deletes.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub id: ::std::option::Option<::std::string::String>,
+        pub success: bool,
+    }
+    impl DocDeleteAck {
+        pub fn builder() -> builder::DocDeleteAck {
+            Default::default()
+        }
+    }
+    ///`DocIndexDefinition`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "path"
+    ///  ],
+    ///  "properties": {
+    ///    "index_type": {
+    ///      "description": "btree | hash | inverted | fulltext | geo (unknown values\nfall back to btree).\n",
+    ///      "default": "btree",
+    ///      "type": "string"
+    ///    },
+    ///    "name": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "path": {
+    ///      "type": "string"
+    ///    },
+    ///    "sparse": {
+    ///      "default": false,
+    ///      "type": "boolean"
+    ///    },
+    ///    "unique": {
+    ///      "default": false,
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct DocIndexDefinition {
+        /// btree | hash | inverted | fulltext | geo (unknown values
+        /// fall back to btree).
+        #[serde(default = "defaults::doc_index_definition_index_type")]
+        pub index_type: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub name: ::std::option::Option<::std::string::String>,
+        pub path: ::std::string::String,
+        #[serde(default)]
+        pub sparse: bool,
+        #[serde(default)]
+        pub unique: bool,
+    }
+    impl DocIndexDefinition {
+        pub fn builder() -> builder::DocIndexDefinition {
+            Default::default()
+        }
+    }
+    ///`DocIndexListResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "indexes"
+    ///  ],
+    ///  "properties": {
+    ///    "indexes": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "object",
+    ///        "required": [
+    ///          "name",
+    ///          "path",
+    ///          "unique"
+    ///        ],
+    ///        "properties": {
+    ///          "name": {
+    ///            "type": [
+    ///              "string",
+    ///              "null"
+    ///            ]
+    ///          },
+    ///          "path": {
+    ///            "type": "string"
+    ///          },
+    ///          "unique": {
+    ///            "type": "boolean"
+    ///          }
+    ///        }
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct DocIndexListResponse {
+        pub indexes: ::std::vec::Vec<DocIndexListResponseIndexesItem>,
+    }
+    impl DocIndexListResponse {
+        pub fn builder() -> builder::DocIndexListResponse {
+            Default::default()
+        }
+    }
+    ///`DocIndexListResponseIndexesItem`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "name",
+    ///    "path",
+    ///    "unique"
+    ///  ],
+    ///  "properties": {
+    ///    "name": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "path": {
+    ///      "type": "string"
+    ///    },
+    ///    "unique": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct DocIndexListResponseIndexesItem {
+        pub name: ::std::option::Option<::std::string::String>,
+        pub path: ::std::string::String,
+        pub unique: bool,
+    }
+    impl DocIndexListResponseIndexesItem {
+        pub fn builder() -> builder::DocIndexListResponseIndexesItem {
+            Default::default()
+        }
+    }
+    ///`DocInsertRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "document"
+    ///  ],
+    ///  "properties": {
+    ///    "document": {
+    ///      "description": "The document body (free-form JSON)."
+    ///    },
+    ///    "id": {
+    ///      "description": "Server-assigned when omitted.",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct DocInsertRequest {
+        ///The document body (free-form JSON).
+        pub document: ::serde_json::Value,
+        ///Server-assigned when omitted.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub id: ::std::option::Option<::std::string::String>,
+    }
+    impl DocInsertRequest {
+        pub fn builder() -> builder::DocInsertRequest {
+            Default::default()
+        }
+    }
+    ///Serialized collection info (open field set).
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Serialized collection info (open field set).",
+    ///  "type": "object",
+    ///  "additionalProperties": true
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    #[serde(transparent)]
+    pub struct DocOpenObject(pub ::serde_json::Map<::std::string::String, ::serde_json::Value>);
+    impl ::std::ops::Deref for DocOpenObject {
+        type Target = ::serde_json::Map<::std::string::String, ::serde_json::Value>;
+        fn deref(&self) -> &::serde_json::Map<::std::string::String, ::serde_json::Value> {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<DocOpenObject>
+        for ::serde_json::Map<::std::string::String, ::serde_json::Value>
+    {
+        fn from(value: DocOpenObject) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json::Value>>
+        for DocOpenObject
+    {
+        fn from(value: ::serde_json::Map<::std::string::String, ::serde_json::Value>) -> Self {
+            Self(value)
+        }
+    }
+    ///`DocQueryResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "documents",
+    ///    "has_more"
+    ///  ],
+    ///  "properties": {
+    ///    "documents": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/DocResponse"
+    ///      }
+    ///    },
+    ///    "has_more": {
+    ///      "type": "boolean"
+    ///    },
+    ///    "total_count": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct DocQueryResponse {
+        pub documents: ::std::vec::Vec<DocResponse>,
+        pub has_more: bool,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub total_count: ::std::option::Option<u64>,
+    }
+    impl DocQueryResponse {
+        pub fn builder() -> builder::DocQueryResponse {
+            Default::default()
+        }
+    }
+    ///`DocResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "document",
+    ///    "id",
+    ///    "version"
+    ///  ],
+    ///  "properties": {
+    ///    "document": {},
+    ///    "id": {
+    ///      "type": "string"
+    ///    },
+    ///    "version": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct DocResponse {
+        pub document: ::serde_json::Value,
+        pub id: ::std::string::String,
+        pub version: u64,
+    }
+    impl DocResponse {
+        pub fn builder() -> builder::DocResponse {
+            Default::default()
+        }
+    }
+    ///`DocUpdateRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "updates"
+    ///  ],
+    ///  "properties": {
+    ///    "expected_version": {
+    ///      "description": "Optimistic-concurrency guard; rejects stale writes.",
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    },
+    ///    "updates": {
+    ///      "description": "Update pipeline steps ({operation, path, value} objects).",
+    ///      "type": "array",
+    ///      "items": {}
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct DocUpdateRequest {
+        ///Optimistic-concurrency guard; rejects stale writes.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub expected_version: ::std::option::Option<u64>,
+        ///Update pipeline steps ({operation, path, value} objects).
+        pub updates: ::std::vec::Vec<::serde_json::Value>,
+    }
+    impl DocUpdateRequest {
+        pub fn builder() -> builder::DocUpdateRequest {
+            Default::default()
+        }
+    }
+    ///`DocUpdateResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "id",
+    ///    "new_version",
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "id": {
+    ///      "type": "string"
+    ///    },
+    ///    "new_version": {
+    ///      "type": "integer",
+    ///      "format": "uint64"
+    ///    },
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct DocUpdateResponse {
+        pub id: ::std::string::String,
+        pub new_version: u64,
+        pub success: bool,
+    }
+    impl DocUpdateResponse {
+        pub fn builder() -> builder::DocUpdateResponse {
             Default::default()
         }
     }
@@ -20646,6 +21284,67 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct CreateDocumentCollectionRequest {
+            indexes: ::std::result::Result<
+                ::std::vec::Vec<super::DocIndexDefinition>,
+                ::std::string::String,
+            >,
+            name: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for CreateDocumentCollectionRequest {
+            fn default() -> Self {
+                Self {
+                    indexes: Ok(Default::default()),
+                    name: Err("no value supplied for name".to_string()),
+                }
+            }
+        }
+        impl CreateDocumentCollectionRequest {
+            pub fn indexes<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::DocIndexDefinition>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.indexes = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for indexes: {e}"));
+                self
+            }
+            pub fn name<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.name = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for name: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<CreateDocumentCollectionRequest>
+            for super::CreateDocumentCollectionRequest
+        {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: CreateDocumentCollectionRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    indexes: value.indexes?,
+                    name: value.name?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::CreateDocumentCollectionRequest>
+            for CreateDocumentCollectionRequest
+        {
+            fn from(value: super::CreateDocumentCollectionRequest) -> Self {
+                Self {
+                    indexes: Ok(value.indexes),
+                    name: Ok(value.name),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct CreateEdgeRequest {
             edge: ::std::result::Result<super::EdgeInput, ::std::string::String>,
         }
@@ -21098,6 +21797,886 @@ pub mod types {
                 Self {
                     id: Ok(value.id),
                     processing_time_us: Ok(value.processing_time_us),
+                    success: Ok(value.success),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct DocAggregateRequest {
+            pipeline:
+                ::std::result::Result<::std::vec::Vec<::serde_json::Value>, ::std::string::String>,
+        }
+        impl ::std::default::Default for DocAggregateRequest {
+            fn default() -> Self {
+                Self {
+                    pipeline: Err("no value supplied for pipeline".to_string()),
+                }
+            }
+        }
+        impl DocAggregateRequest {
+            pub fn pipeline<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::serde_json::Value>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.pipeline = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for pipeline: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<DocAggregateRequest> for super::DocAggregateRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: DocAggregateRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    pipeline: value.pipeline?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::DocAggregateRequest> for DocAggregateRequest {
+            fn from(value: super::DocAggregateRequest) -> Self {
+                Self {
+                    pipeline: Ok(value.pipeline),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct DocAggregateResponse {
+            query_time_ms: ::std::result::Result<u64, ::std::string::String>,
+            results:
+                ::std::result::Result<::std::vec::Vec<::serde_json::Value>, ::std::string::String>,
+        }
+        impl ::std::default::Default for DocAggregateResponse {
+            fn default() -> Self {
+                Self {
+                    query_time_ms: Err("no value supplied for query_time_ms".to_string()),
+                    results: Err("no value supplied for results".to_string()),
+                }
+            }
+        }
+        impl DocAggregateResponse {
+            pub fn query_time_ms<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.query_time_ms = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for query_time_ms: {e}"));
+                self
+            }
+            pub fn results<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::serde_json::Value>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.results = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for results: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<DocAggregateResponse> for super::DocAggregateResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: DocAggregateResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    query_time_ms: value.query_time_ms?,
+                    results: value.results?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::DocAggregateResponse> for DocAggregateResponse {
+            fn from(value: super::DocAggregateResponse) -> Self {
+                Self {
+                    query_time_ms: Ok(value.query_time_ms),
+                    results: Ok(value.results),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct DocBatchInsertRequest {
+            documents: ::std::result::Result<
+                ::std::vec::Vec<super::DocInsertRequest>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for DocBatchInsertRequest {
+            fn default() -> Self {
+                Self {
+                    documents: Err("no value supplied for documents".to_string()),
+                }
+            }
+        }
+        impl DocBatchInsertRequest {
+            pub fn documents<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::DocInsertRequest>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.documents = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for documents: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<DocBatchInsertRequest> for super::DocBatchInsertRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: DocBatchInsertRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    documents: value.documents?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::DocBatchInsertRequest> for DocBatchInsertRequest {
+            fn from(value: super::DocBatchInsertRequest) -> Self {
+                Self {
+                    documents: Ok(value.documents),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct DocBatchInsertResponse {
+            failed: ::std::result::Result<u64, ::std::string::String>,
+            inserted: ::std::result::Result<u64, ::std::string::String>,
+        }
+        impl ::std::default::Default for DocBatchInsertResponse {
+            fn default() -> Self {
+                Self {
+                    failed: Err("no value supplied for failed".to_string()),
+                    inserted: Err("no value supplied for inserted".to_string()),
+                }
+            }
+        }
+        impl DocBatchInsertResponse {
+            pub fn failed<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.failed = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for failed: {e}"));
+                self
+            }
+            pub fn inserted<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.inserted = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for inserted: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<DocBatchInsertResponse> for super::DocBatchInsertResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: DocBatchInsertResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    failed: value.failed?,
+                    inserted: value.inserted?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::DocBatchInsertResponse> for DocBatchInsertResponse {
+            fn from(value: super::DocBatchInsertResponse) -> Self {
+                Self {
+                    failed: Ok(value.failed),
+                    inserted: Ok(value.inserted),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct DocCollectionListResponse {
+            collections:
+                ::std::result::Result<::std::vec::Vec<super::DocOpenObject>, ::std::string::String>,
+        }
+        impl ::std::default::Default for DocCollectionListResponse {
+            fn default() -> Self {
+                Self {
+                    collections: Err("no value supplied for collections".to_string()),
+                }
+            }
+        }
+        impl DocCollectionListResponse {
+            pub fn collections<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::DocOpenObject>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.collections = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for collections: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<DocCollectionListResponse> for super::DocCollectionListResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: DocCollectionListResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    collections: value.collections?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::DocCollectionListResponse> for DocCollectionListResponse {
+            fn from(value: super::DocCollectionListResponse) -> Self {
+                Self {
+                    collections: Ok(value.collections),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct DocCreateCollectionResponse {
+            collection: ::std::result::Result<super::DocOpenObject, ::std::string::String>,
+            success: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for DocCreateCollectionResponse {
+            fn default() -> Self {
+                Self {
+                    collection: Err("no value supplied for collection".to_string()),
+                    success: Err("no value supplied for success".to_string()),
+                }
+            }
+        }
+        impl DocCreateCollectionResponse {
+            pub fn collection<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::DocOpenObject>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.collection = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for collection: {e}"));
+                self
+            }
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<DocCreateCollectionResponse> for super::DocCreateCollectionResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: DocCreateCollectionResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    collection: value.collection?,
+                    success: value.success?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::DocCreateCollectionResponse> for DocCreateCollectionResponse {
+            fn from(value: super::DocCreateCollectionResponse) -> Self {
+                Self {
+                    collection: Ok(value.collection),
+                    success: Ok(value.success),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct DocDeleteAck {
+            id: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            success: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for DocDeleteAck {
+            fn default() -> Self {
+                Self {
+                    id: Ok(Default::default()),
+                    success: Err("no value supplied for success".to_string()),
+                }
+            }
+        }
+        impl DocDeleteAck {
+            pub fn id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for id: {e}"));
+                self
+            }
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<DocDeleteAck> for super::DocDeleteAck {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: DocDeleteAck,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    id: value.id?,
+                    success: value.success?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::DocDeleteAck> for DocDeleteAck {
+            fn from(value: super::DocDeleteAck) -> Self {
+                Self {
+                    id: Ok(value.id),
+                    success: Ok(value.success),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct DocIndexDefinition {
+            index_type: ::std::result::Result<::std::string::String, ::std::string::String>,
+            name: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            path: ::std::result::Result<::std::string::String, ::std::string::String>,
+            sparse: ::std::result::Result<bool, ::std::string::String>,
+            unique: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for DocIndexDefinition {
+            fn default() -> Self {
+                Self {
+                    index_type: Ok(super::defaults::doc_index_definition_index_type()),
+                    name: Ok(Default::default()),
+                    path: Err("no value supplied for path".to_string()),
+                    sparse: Ok(Default::default()),
+                    unique: Ok(Default::default()),
+                }
+            }
+        }
+        impl DocIndexDefinition {
+            pub fn index_type<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.index_type = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for index_type: {e}"));
+                self
+            }
+            pub fn name<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.name = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for name: {e}"));
+                self
+            }
+            pub fn path<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.path = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for path: {e}"));
+                self
+            }
+            pub fn sparse<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.sparse = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for sparse: {e}"));
+                self
+            }
+            pub fn unique<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.unique = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for unique: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<DocIndexDefinition> for super::DocIndexDefinition {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: DocIndexDefinition,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    index_type: value.index_type?,
+                    name: value.name?,
+                    path: value.path?,
+                    sparse: value.sparse?,
+                    unique: value.unique?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::DocIndexDefinition> for DocIndexDefinition {
+            fn from(value: super::DocIndexDefinition) -> Self {
+                Self {
+                    index_type: Ok(value.index_type),
+                    name: Ok(value.name),
+                    path: Ok(value.path),
+                    sparse: Ok(value.sparse),
+                    unique: Ok(value.unique),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct DocIndexListResponse {
+            indexes: ::std::result::Result<
+                ::std::vec::Vec<super::DocIndexListResponseIndexesItem>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for DocIndexListResponse {
+            fn default() -> Self {
+                Self {
+                    indexes: Err("no value supplied for indexes".to_string()),
+                }
+            }
+        }
+        impl DocIndexListResponse {
+            pub fn indexes<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::DocIndexListResponseIndexesItem>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.indexes = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for indexes: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<DocIndexListResponse> for super::DocIndexListResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: DocIndexListResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    indexes: value.indexes?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::DocIndexListResponse> for DocIndexListResponse {
+            fn from(value: super::DocIndexListResponse) -> Self {
+                Self {
+                    indexes: Ok(value.indexes),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct DocIndexListResponseIndexesItem {
+            name: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            path: ::std::result::Result<::std::string::String, ::std::string::String>,
+            unique: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for DocIndexListResponseIndexesItem {
+            fn default() -> Self {
+                Self {
+                    name: Err("no value supplied for name".to_string()),
+                    path: Err("no value supplied for path".to_string()),
+                    unique: Err("no value supplied for unique".to_string()),
+                }
+            }
+        }
+        impl DocIndexListResponseIndexesItem {
+            pub fn name<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.name = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for name: {e}"));
+                self
+            }
+            pub fn path<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.path = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for path: {e}"));
+                self
+            }
+            pub fn unique<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.unique = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for unique: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<DocIndexListResponseIndexesItem>
+            for super::DocIndexListResponseIndexesItem
+        {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: DocIndexListResponseIndexesItem,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    name: value.name?,
+                    path: value.path?,
+                    unique: value.unique?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::DocIndexListResponseIndexesItem>
+            for DocIndexListResponseIndexesItem
+        {
+            fn from(value: super::DocIndexListResponseIndexesItem) -> Self {
+                Self {
+                    name: Ok(value.name),
+                    path: Ok(value.path),
+                    unique: Ok(value.unique),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct DocInsertRequest {
+            document: ::std::result::Result<::serde_json::Value, ::std::string::String>,
+            id: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for DocInsertRequest {
+            fn default() -> Self {
+                Self {
+                    document: Err("no value supplied for document".to_string()),
+                    id: Ok(Default::default()),
+                }
+            }
+        }
+        impl DocInsertRequest {
+            pub fn document<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::serde_json::Value>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.document = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for document: {e}"));
+                self
+            }
+            pub fn id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for id: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<DocInsertRequest> for super::DocInsertRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: DocInsertRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    document: value.document?,
+                    id: value.id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::DocInsertRequest> for DocInsertRequest {
+            fn from(value: super::DocInsertRequest) -> Self {
+                Self {
+                    document: Ok(value.document),
+                    id: Ok(value.id),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct DocQueryResponse {
+            documents:
+                ::std::result::Result<::std::vec::Vec<super::DocResponse>, ::std::string::String>,
+            has_more: ::std::result::Result<bool, ::std::string::String>,
+            total_count: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+        }
+        impl ::std::default::Default for DocQueryResponse {
+            fn default() -> Self {
+                Self {
+                    documents: Err("no value supplied for documents".to_string()),
+                    has_more: Err("no value supplied for has_more".to_string()),
+                    total_count: Ok(Default::default()),
+                }
+            }
+        }
+        impl DocQueryResponse {
+            pub fn documents<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::DocResponse>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.documents = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for documents: {e}"));
+                self
+            }
+            pub fn has_more<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.has_more = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for has_more: {e}"));
+                self
+            }
+            pub fn total_count<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.total_count = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for total_count: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<DocQueryResponse> for super::DocQueryResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: DocQueryResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    documents: value.documents?,
+                    has_more: value.has_more?,
+                    total_count: value.total_count?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::DocQueryResponse> for DocQueryResponse {
+            fn from(value: super::DocQueryResponse) -> Self {
+                Self {
+                    documents: Ok(value.documents),
+                    has_more: Ok(value.has_more),
+                    total_count: Ok(value.total_count),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct DocResponse {
+            document: ::std::result::Result<::serde_json::Value, ::std::string::String>,
+            id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            version: ::std::result::Result<u64, ::std::string::String>,
+        }
+        impl ::std::default::Default for DocResponse {
+            fn default() -> Self {
+                Self {
+                    document: Err("no value supplied for document".to_string()),
+                    id: Err("no value supplied for id".to_string()),
+                    version: Err("no value supplied for version".to_string()),
+                }
+            }
+        }
+        impl DocResponse {
+            pub fn document<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::serde_json::Value>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.document = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for document: {e}"));
+                self
+            }
+            pub fn id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for id: {e}"));
+                self
+            }
+            pub fn version<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.version = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for version: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<DocResponse> for super::DocResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: DocResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    document: value.document?,
+                    id: value.id?,
+                    version: value.version?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::DocResponse> for DocResponse {
+            fn from(value: super::DocResponse) -> Self {
+                Self {
+                    document: Ok(value.document),
+                    id: Ok(value.id),
+                    version: Ok(value.version),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct DocUpdateRequest {
+            expected_version:
+                ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            updates:
+                ::std::result::Result<::std::vec::Vec<::serde_json::Value>, ::std::string::String>,
+        }
+        impl ::std::default::Default for DocUpdateRequest {
+            fn default() -> Self {
+                Self {
+                    expected_version: Ok(Default::default()),
+                    updates: Err("no value supplied for updates".to_string()),
+                }
+            }
+        }
+        impl DocUpdateRequest {
+            pub fn expected_version<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.expected_version = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for expected_version: {e}")
+                });
+                self
+            }
+            pub fn updates<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::serde_json::Value>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.updates = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for updates: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<DocUpdateRequest> for super::DocUpdateRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: DocUpdateRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    expected_version: value.expected_version?,
+                    updates: value.updates?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::DocUpdateRequest> for DocUpdateRequest {
+            fn from(value: super::DocUpdateRequest) -> Self {
+                Self {
+                    expected_version: Ok(value.expected_version),
+                    updates: Ok(value.updates),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct DocUpdateResponse {
+            id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            new_version: ::std::result::Result<u64, ::std::string::String>,
+            success: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for DocUpdateResponse {
+            fn default() -> Self {
+                Self {
+                    id: Err("no value supplied for id".to_string()),
+                    new_version: Err("no value supplied for new_version".to_string()),
+                    success: Err("no value supplied for success".to_string()),
+                }
+            }
+        }
+        impl DocUpdateResponse {
+            pub fn id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for id: {e}"));
+                self
+            }
+            pub fn new_version<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.new_version = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for new_version: {e}"));
+                self
+            }
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<DocUpdateResponse> for super::DocUpdateResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: DocUpdateResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    id: value.id?,
+                    new_version: value.new_version?,
+                    success: value.success?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::DocUpdateResponse> for DocUpdateResponse {
+            fn from(value: super::DocUpdateResponse) -> Self {
+                Self {
+                    id: Ok(value.id),
+                    new_version: Ok(value.new_version),
                     success: Ok(value.success),
                 }
             }
@@ -35182,6 +36761,9 @@ pub mod types {
         {
             T::try_from(V).unwrap()
         }
+        pub(super) fn doc_index_definition_index_type() -> ::std::string::String {
+            "btree".to_string()
+        }
         pub(super) fn graph_query_request_language() -> ::std::string::String {
             "native".to_string()
         }
@@ -36291,7 +37873,7 @@ impl Client {
     pub fn list_document_collections(&self) -> builder::ListDocumentCollections<'_> {
         builder::ListDocumentCollections::new(self)
     }
-    /// Create a document collection
+    /// Create a document collection (with optional indexes)
     ///
     /// Sends a `POST` request to `/api/v2/document-collections`
     ///
@@ -36308,16 +37890,60 @@ impl Client {
     pub fn create_document_collection(&self) -> builder::CreateDocumentCollection<'_> {
         builder::CreateDocumentCollection::new(self)
     }
-    /// Query documents
+    /// Get one collection's info
     ///
-    /// Sends a `GET` request to `/api/v2/document-collections/{collection}/documents`
+    /// 404 when the collection does not exist. The body is an open
+    /// object (the serialized collection info).
+    ///
+    ///
+    /// Sends a `GET` request to `/api/v2/document-collections/{collection}`
     ///
     /// Arguments:
     /// - `collection`
     /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
     /// ```text
+    /// let response = client.get_document_collection()
+    /// .collection(collection)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn get_document_collection(&self) -> builder::GetDocumentCollection<'_> {
+        builder::GetDocumentCollection::new(self)
+    }
+    /// Delete a document collection
+    ///
+    /// Sends a `DELETE` request to `/api/v2/document-collections/{collection}`
+    ///
+    /// Arguments:
+    /// - `collection`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.delete_document_collection()
+    /// .collection(collection)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn delete_document_collection(&self) -> builder::DeleteDocumentCollection<'_> {
+        builder::DeleteDocumentCollection::new(self)
+    }
+    /// Query documents (filter/projection/limit)
+    ///
+    /// Sends a `GET` request to `/api/v2/document-collections/{collection}/documents`
+    ///
+    /// Arguments:
+    /// - `collection`
+    /// - `filter`: Filter expression (server-parsed).
+    /// - `limit`: Defaults to 100.
+    /// - `projection`: Comma-separated field list.
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
     /// let response = client.query_documents()
     /// .collection(collection)
+    /// .filter(filter)
+    /// .limit(limit)
+    /// .projection(projection)
     /// .x_tenant_id(x_tenant_id)
     /// .send()
     /// .await;
@@ -36325,7 +37951,7 @@ impl Client {
     pub fn query_documents(&self) -> builder::QueryDocuments<'_> {
         builder::QueryDocuments::new(self)
     }
-    /// Insert a document
+    /// Insert one document
     ///
     /// Sends a `POST` request to `/api/v2/document-collections/{collection}/documents`
     ///
@@ -36343,6 +37969,149 @@ impl Client {
     /// ```
     pub fn insert_document(&self) -> builder::InsertDocument<'_> {
         builder::InsertDocument::new(self)
+    }
+    /// Run an aggregation pipeline
+    ///
+    /// Sends a `POST` request to `/api/v2/document-collections/{collection}/documents/aggregate`
+    ///
+    /// Arguments:
+    /// - `collection`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.aggregate_documents()
+    /// .collection(collection)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn aggregate_documents(&self) -> builder::AggregateDocuments<'_> {
+        builder::AggregateDocuments::new(self)
+    }
+    /// Insert multiple documents (per-item partial success)
+    ///
+    /// Sends a `POST` request to `/api/v2/document-collections/{collection}/documents/batch`
+    ///
+    /// Arguments:
+    /// - `collection`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.batch_insert_documents()
+    /// .collection(collection)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn batch_insert_documents(&self) -> builder::BatchInsertDocuments<'_> {
+        builder::BatchInsertDocuments::new(self)
+    }
+    /// Get one document
+    ///
+    /// Sends a `GET` request to `/api/v2/document-collections/{collection}/documents/{id}`
+    ///
+    /// Arguments:
+    /// - `collection`
+    /// - `id`
+    /// - `projection`: Comma-separated field list.
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.get_document()
+    /// .collection(collection)
+    /// .id(id)
+    /// .projection(projection)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn get_document(&self) -> builder::GetDocument<'_> {
+        builder::GetDocument::new(self)
+    }
+    /// Delete one document
+    ///
+    /// Sends a `DELETE` request to `/api/v2/document-collections/{collection}/documents/{id}`
+    ///
+    /// Arguments:
+    /// - `collection`
+    /// - `id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.delete_document()
+    /// .collection(collection)
+    /// .id(id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn delete_document(&self) -> builder::DeleteDocument<'_> {
+        builder::DeleteDocument::new(self)
+    }
+    /// Apply an update pipeline to a document
+    ///
+    /// Optimistic concurrency: `expected_version` rejects stale writes.
+    ///
+    ///
+    /// Sends a `PATCH` request to `/api/v2/document-collections/{collection}/documents/{id}`
+    ///
+    /// Arguments:
+    /// - `collection`
+    /// - `id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.update_document()
+    /// .collection(collection)
+    /// .id(id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn update_document(&self) -> builder::UpdateDocument<'_> {
+        builder::UpdateDocument::new(self)
+    }
+    /// List the collection's indexes
+    ///
+    /// Sends a `GET` request to `/api/v2/document-collections/{collection}/indexes`
+    ///
+    /// Arguments:
+    /// - `collection`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.list_document_indexes()
+    /// .collection(collection)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn list_document_indexes(&self) -> builder::ListDocumentIndexes<'_> {
+        builder::ListDocumentIndexes::new(self)
+    }
+    /// Create an index on an existing collection
+    ///
+    /// HONEST ALWAYS-400: creating indexes on existing collections is
+    /// not supported — specify `indexes` when creating the collection.
+    /// The 400 body says exactly this.
+    ///
+    ///
+    /// Sends a `POST` request to `/api/v2/document-collections/{collection}/indexes`
+    ///
+    /// Arguments:
+    /// - `collection`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.create_document_index()
+    /// .collection(collection)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn create_document_index(&self) -> builder::CreateDocumentIndex<'_> {
+        builder::CreateDocumentIndex::new(self)
     }
     /// List graph collections
     ///
@@ -41574,10 +43343,8 @@ pub mod builder {
         ///Sends a `GET` request to `/api/v2/document-collections`
         pub async fn send(
             self,
-        ) -> Result<
-            ResponseValue<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
-            Error<()>,
-        > {
+        ) -> Result<ResponseValue<types::DocCollectionListResponse>, Error<types::ErrorResponse>>
+        {
             let Self {
                 client,
                 x_tenant_id,
@@ -41611,6 +43378,9 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 _ => Err(Error::UnexpectedResponse(response)),
             }
         }
@@ -41622,14 +43392,14 @@ pub mod builder {
     pub struct CreateDocumentCollection<'a> {
         client: &'a super::Client,
         x_tenant_id: Result<Option<::std::string::String>, String>,
-        body: Result<::serde_json::Map<::std::string::String, ::serde_json::Value>, String>,
+        body: Result<types::builder::CreateDocumentCollectionRequest, String>,
     }
     impl<'a> CreateDocumentCollection<'a> {
         pub fn new(client: &'a super::Client) -> Self {
             Self {
                 client: client,
                 x_tenant_id: Ok(None),
-                body: Err("body was not initialized".to_string()),
+                body: Ok(::std::default::Default::default()),
             }
         }
         pub fn x_tenant_id<V>(mut self, value: V) -> Self
@@ -41643,30 +43413,43 @@ pub mod builder {
         }
         pub fn body<V>(mut self, value: V) -> Self
         where
-            V: std::convert::TryInto<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+            V: std::convert::TryInto<types::CreateDocumentCollectionRequest>,
+            <V as std::convert::TryInto<types::CreateDocumentCollectionRequest>>::Error:
+                std::fmt::Display,
         {
-            self.body = value
-                .try_into()
-                .map_err(|_| {
-                    "conversion to `:: serde_json :: Map < :: std :: string :: String , :: serde_json :: Value >` for body failed"
-                        .to_string()
-                });
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `CreateDocumentCollectionRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::CreateDocumentCollectionRequest,
+                ) -> types::builder::CreateDocumentCollectionRequest,
+        {
+            self.body = self.body.map(f);
             self
         }
         ///Sends a `POST` request to `/api/v2/document-collections`
         pub async fn send(
             self,
-        ) -> Result<
-            ResponseValue<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
-            Error<()>,
-        > {
+        ) -> Result<ResponseValue<types::DocCreateCollectionResponse>, Error<types::ErrorResponse>>
+        {
             let Self {
                 client,
                 x_tenant_id,
                 body,
             } = self;
             let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
-            let body = body.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| {
+                    types::CreateDocumentCollectionRequest::try_from(v).map_err(|e| e.to_string())
+                })
+                .map_err(Error::InvalidRequest)?;
             let url = format!("{}/api/v2/document-collections", client.baseurl,);
             let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
             header_map.append(
@@ -41696,20 +43479,26 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 _ => Err(Error::UnexpectedResponse(response)),
             }
         }
     }
-    /// Builder for [`Client::query_documents`]
+    /// Builder for [`Client::get_document_collection`]
     ///
-    /// [`Client::query_documents`]: super::Client::query_documents
+    /// [`Client::get_document_collection`]: super::Client::get_document_collection
     #[derive(Debug, Clone)]
-    pub struct QueryDocuments<'a> {
+    pub struct GetDocumentCollection<'a> {
         client: &'a super::Client,
         collection: Result<::std::string::String, String>,
         x_tenant_id: Result<Option<::std::string::String>, String>,
     }
-    impl<'a> QueryDocuments<'a> {
+    impl<'a> GetDocumentCollection<'a> {
         pub fn new(client: &'a super::Client) -> Self {
             Self {
                 client: client,
@@ -41735,13 +43524,10 @@ pub mod builder {
             });
             self
         }
-        ///Sends a `GET` request to `/api/v2/document-collections/{collection}/documents`
+        ///Sends a `GET` request to `/api/v2/document-collections/{collection}`
         pub async fn send(
             self,
-        ) -> Result<
-            ResponseValue<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
-            Error<()>,
-        > {
+        ) -> Result<ResponseValue<types::DocOpenObject>, Error<types::ErrorResponse>> {
             let Self {
                 client,
                 collection,
@@ -41750,7 +43536,7 @@ pub mod builder {
             let collection = collection.map_err(Error::InvalidRequest)?;
             let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
             let url = format!(
-                "{}/api/v2/document-collections/{}/documents",
+                "{}/api/v2/document-collections/{}",
                 client.baseurl,
                 encode_path(&collection.to_string()),
             );
@@ -41773,6 +43559,225 @@ pub mod builder {
                 .headers(header_map)
                 .build()?;
             let info = OperationInfo {
+                operation_id: "get_document_collection",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::delete_document_collection`]
+    ///
+    /// [`Client::delete_document_collection`]: super::Client::delete_document_collection
+    #[derive(Debug, Clone)]
+    pub struct DeleteDocumentCollection<'a> {
+        client: &'a super::Client,
+        collection: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> DeleteDocumentCollection<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                collection: Err("collection was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn collection<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `DELETE` request to `/api/v2/document-collections/{collection}`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::DocDeleteAck>, Error<types::ErrorResponse>> {
+            let Self {
+                client,
+                collection,
+                x_tenant_id,
+            } = self;
+            let collection = collection.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/document-collections/{}",
+                client.baseurl,
+                encode_path(&collection.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .delete(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "delete_document_collection",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::query_documents`]
+    ///
+    /// [`Client::query_documents`]: super::Client::query_documents
+    #[derive(Debug, Clone)]
+    pub struct QueryDocuments<'a> {
+        client: &'a super::Client,
+        collection: Result<::std::string::String, String>,
+        filter: Result<Option<::std::string::String>, String>,
+        limit: Result<Option<u32>, String>,
+        projection: Result<Option<::std::string::String>, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> QueryDocuments<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                collection: Err("collection was not initialized".to_string()),
+                filter: Ok(None),
+                limit: Ok(None),
+                projection: Ok(None),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn collection<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection failed".to_string()
+            });
+            self
+        }
+        pub fn filter<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.filter = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for filter failed".to_string()
+            });
+            self
+        }
+        pub fn limit<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<u32>,
+        {
+            self.limit = value
+                .try_into()
+                .map(Some)
+                .map_err(|_| "conversion to `u32` for limit failed".to_string());
+            self
+        }
+        pub fn projection<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.projection = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for projection failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `GET` request to `/api/v2/document-collections/{collection}/documents`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::DocQueryResponse>, Error<types::ErrorResponse>> {
+            let Self {
+                client,
+                collection,
+                filter,
+                limit,
+                projection,
+                x_tenant_id,
+            } = self;
+            let collection = collection.map_err(Error::InvalidRequest)?;
+            let filter = filter.map_err(Error::InvalidRequest)?;
+            let limit = limit.map_err(Error::InvalidRequest)?;
+            let projection = projection.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/document-collections/{}/documents",
+                client.baseurl,
+                encode_path(&collection.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .get(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .query(&progenitor_client::QueryParam::new("filter", &filter))
+                .query(&progenitor_client::QueryParam::new("limit", &limit))
+                .query(&progenitor_client::QueryParam::new(
+                    "projection",
+                    &projection,
+                ))
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
                 operation_id: "query_documents",
             };
             client.pre(&mut request, &info).await?;
@@ -41781,6 +43786,12 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 _ => Err(Error::UnexpectedResponse(response)),
             }
         }
@@ -41793,7 +43804,7 @@ pub mod builder {
         client: &'a super::Client,
         collection: Result<::std::string::String, String>,
         x_tenant_id: Result<Option<::std::string::String>, String>,
-        body: Result<::serde_json::Map<::std::string::String, ::serde_json::Value>, String>,
+        body: Result<types::builder::DocInsertRequest, String>,
     }
     impl<'a> InsertDocument<'a> {
         pub fn new(client: &'a super::Client) -> Self {
@@ -41801,7 +43812,7 @@ pub mod builder {
                 client: client,
                 collection: Err("collection was not initialized".to_string()),
                 x_tenant_id: Ok(None),
-                body: Err("body was not initialized".to_string()),
+                body: Ok(::std::default::Default::default()),
             }
         }
         pub fn collection<V>(mut self, value: V) -> Self
@@ -41824,23 +43835,28 @@ pub mod builder {
         }
         pub fn body<V>(mut self, value: V) -> Self
         where
-            V: std::convert::TryInto<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+            V: std::convert::TryInto<types::DocInsertRequest>,
+            <V as std::convert::TryInto<types::DocInsertRequest>>::Error: std::fmt::Display,
         {
             self.body = value
                 .try_into()
-                .map_err(|_| {
-                    "conversion to `:: serde_json :: Map < :: std :: string :: String , :: serde_json :: Value >` for body failed"
-                        .to_string()
-                });
+                .map(From::from)
+                .map_err(|s| format!("conversion to `DocInsertRequest` for body failed: {}", s));
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::DocInsertRequest,
+                ) -> types::builder::DocInsertRequest,
+        {
+            self.body = self.body.map(f);
             self
         }
         ///Sends a `POST` request to `/api/v2/document-collections/{collection}/documents`
         pub async fn send(
             self,
-        ) -> Result<
-            ResponseValue<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
-            Error<types::ErrorResponse>,
-        > {
+        ) -> Result<ResponseValue<types::DocResponse>, Error<types::ErrorResponse>> {
             let Self {
                 client,
                 collection,
@@ -41849,7 +43865,9 @@ pub mod builder {
             } = self;
             let collection = collection.map_err(Error::InvalidRequest)?;
             let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
-            let body = body.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::DocInsertRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
             let url = format!(
                 "{}/api/v2/document-collections/{}/documents",
                 client.baseurl,
@@ -41883,7 +43901,786 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::aggregate_documents`]
+    ///
+    /// [`Client::aggregate_documents`]: super::Client::aggregate_documents
+    #[derive(Debug, Clone)]
+    pub struct AggregateDocuments<'a> {
+        client: &'a super::Client,
+        collection: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::DocAggregateRequest, String>,
+    }
+    impl<'a> AggregateDocuments<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                collection: Err("collection was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn collection<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::DocAggregateRequest>,
+            <V as std::convert::TryInto<types::DocAggregateRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value
+                .try_into()
+                .map(From::from)
+                .map_err(|s| format!("conversion to `DocAggregateRequest` for body failed: {}", s));
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::DocAggregateRequest,
+                ) -> types::builder::DocAggregateRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/document-collections/{collection}/documents/aggregate`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::DocAggregateResponse>, Error<types::ErrorResponse>>
+        {
+            let Self {
+                client,
+                collection,
+                x_tenant_id,
+                body,
+            } = self;
+            let collection = collection.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::DocAggregateRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/document-collections/{}/documents/aggregate",
+                client.baseurl,
+                encode_path(&collection.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "aggregate_documents",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::batch_insert_documents`]
+    ///
+    /// [`Client::batch_insert_documents`]: super::Client::batch_insert_documents
+    #[derive(Debug, Clone)]
+    pub struct BatchInsertDocuments<'a> {
+        client: &'a super::Client,
+        collection: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::DocBatchInsertRequest, String>,
+    }
+    impl<'a> BatchInsertDocuments<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                collection: Err("collection was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn collection<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::DocBatchInsertRequest>,
+            <V as std::convert::TryInto<types::DocBatchInsertRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `DocBatchInsertRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::DocBatchInsertRequest,
+                ) -> types::builder::DocBatchInsertRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/document-collections/{collection}/documents/batch`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::DocBatchInsertResponse>, Error<types::ErrorResponse>>
+        {
+            let Self {
+                client,
+                collection,
+                x_tenant_id,
+                body,
+            } = self;
+            let collection = collection.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::DocBatchInsertRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/document-collections/{}/documents/batch",
+                client.baseurl,
+                encode_path(&collection.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "batch_insert_documents",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::get_document`]
+    ///
+    /// [`Client::get_document`]: super::Client::get_document
+    #[derive(Debug, Clone)]
+    pub struct GetDocument<'a> {
+        client: &'a super::Client,
+        collection: Result<::std::string::String, String>,
+        id: Result<::std::string::String, String>,
+        projection: Result<Option<::std::string::String>, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> GetDocument<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                collection: Err("collection was not initialized".to_string()),
+                id: Err("id was not initialized".to_string()),
+                projection: Ok(None),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn collection<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection failed".to_string()
+            });
+            self
+        }
+        pub fn id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for id failed".to_string()
+            });
+            self
+        }
+        pub fn projection<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.projection = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for projection failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `GET` request to `/api/v2/document-collections/{collection}/documents/{id}`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::DocResponse>, Error<types::ErrorResponse>> {
+            let Self {
+                client,
+                collection,
+                id,
+                projection,
+                x_tenant_id,
+            } = self;
+            let collection = collection.map_err(Error::InvalidRequest)?;
+            let id = id.map_err(Error::InvalidRequest)?;
+            let projection = projection.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/document-collections/{}/documents/{}",
+                client.baseurl,
+                encode_path(&collection.to_string()),
+                encode_path(&id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .get(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .query(&progenitor_client::QueryParam::new(
+                    "projection",
+                    &projection,
+                ))
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "get_document",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
                 404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::delete_document`]
+    ///
+    /// [`Client::delete_document`]: super::Client::delete_document
+    #[derive(Debug, Clone)]
+    pub struct DeleteDocument<'a> {
+        client: &'a super::Client,
+        collection: Result<::std::string::String, String>,
+        id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> DeleteDocument<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                collection: Err("collection was not initialized".to_string()),
+                id: Err("id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn collection<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection failed".to_string()
+            });
+            self
+        }
+        pub fn id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `DELETE` request to `/api/v2/document-collections/{collection}/documents/{id}`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::DocDeleteAck>, Error<types::ErrorResponse>> {
+            let Self {
+                client,
+                collection,
+                id,
+                x_tenant_id,
+            } = self;
+            let collection = collection.map_err(Error::InvalidRequest)?;
+            let id = id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/document-collections/{}/documents/{}",
+                client.baseurl,
+                encode_path(&collection.to_string()),
+                encode_path(&id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .delete(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "delete_document",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::update_document`]
+    ///
+    /// [`Client::update_document`]: super::Client::update_document
+    #[derive(Debug, Clone)]
+    pub struct UpdateDocument<'a> {
+        client: &'a super::Client,
+        collection: Result<::std::string::String, String>,
+        id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::DocUpdateRequest, String>,
+    }
+    impl<'a> UpdateDocument<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                collection: Err("collection was not initialized".to_string()),
+                id: Err("id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn collection<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection failed".to_string()
+            });
+            self
+        }
+        pub fn id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::DocUpdateRequest>,
+            <V as std::convert::TryInto<types::DocUpdateRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value
+                .try_into()
+                .map(From::from)
+                .map_err(|s| format!("conversion to `DocUpdateRequest` for body failed: {}", s));
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::DocUpdateRequest,
+                ) -> types::builder::DocUpdateRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `PATCH` request to `/api/v2/document-collections/{collection}/documents/{id}`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::DocUpdateResponse>, Error<types::ErrorResponse>> {
+            let Self {
+                client,
+                collection,
+                id,
+                x_tenant_id,
+                body,
+            } = self;
+            let collection = collection.map_err(Error::InvalidRequest)?;
+            let id = id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::DocUpdateRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/document-collections/{}/documents/{}",
+                client.baseurl,
+                encode_path(&collection.to_string()),
+                encode_path(&id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .patch(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "update_document",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::list_document_indexes`]
+    ///
+    /// [`Client::list_document_indexes`]: super::Client::list_document_indexes
+    #[derive(Debug, Clone)]
+    pub struct ListDocumentIndexes<'a> {
+        client: &'a super::Client,
+        collection: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> ListDocumentIndexes<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                collection: Err("collection was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn collection<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `GET` request to `/api/v2/document-collections/{collection}/indexes`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::DocIndexListResponse>, Error<types::ErrorResponse>>
+        {
+            let Self {
+                client,
+                collection,
+                x_tenant_id,
+            } = self;
+            let collection = collection.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/document-collections/{}/indexes",
+                client.baseurl,
+                encode_path(&collection.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .get(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "list_document_indexes",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::create_document_index`]
+    ///
+    /// [`Client::create_document_index`]: super::Client::create_document_index
+    #[derive(Debug, Clone)]
+    pub struct CreateDocumentIndex<'a> {
+        client: &'a super::Client,
+        collection: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::DocIndexDefinition, String>,
+    }
+    impl<'a> CreateDocumentIndex<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                collection: Err("collection was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn collection<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::DocIndexDefinition>,
+            <V as std::convert::TryInto<types::DocIndexDefinition>>::Error: std::fmt::Display,
+        {
+            self.body = value
+                .try_into()
+                .map(From::from)
+                .map_err(|s| format!("conversion to `DocIndexDefinition` for body failed: {}", s));
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::DocIndexDefinition,
+                ) -> types::builder::DocIndexDefinition,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/document-collections/{collection}/indexes`
+        pub async fn send(self) -> Result<ResponseValue<ByteStream>, Error<types::ErrorResponse>> {
+            let Self {
+                client,
+                collection,
+                x_tenant_id,
+                body,
+            } = self;
+            let collection = collection.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::DocIndexDefinition::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/document-collections/{}/indexes",
+                client.baseurl,
+                encode_path(&collection.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "create_document_index",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200..=299 => Ok(ResponseValue::stream(response)),
+                400u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 _ => Err(Error::UnexpectedResponse(response)),

@@ -923,25 +923,81 @@ paths:
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
-  # ── Document collections (free-form passthrough). ───────────────────────
+  # ── Document collections (TD-SPECRAT-1 wave 9 — real shapes; the
+  # pre-wave-9 free-form entries were reworked to the handler DTOs).
+  # Handlers: crates/platform/proximadb-api/src/rest/canonical/
+  # document.rs, mounted at /api/v2/document-collections. Errors carry
+  # the canonical envelope (RestError → {error:{type,message,code}}).
+  # No per-route permission gate. Extractor rejections are plain text.
+  # create_index is an HONEST always-400 (indexes on existing
+  # collections are unsupported — set them at creation); it fails
+  # loudly, so it is exposable with that limitation documented.
   /api/v2/document-collections:
     post:
       tags: [Documents]
       operationId: createDocumentCollection
-      summary: Create a document collection.
+      summary: Create a document collection (with optional indexes).
       requestBody:
         required: true
         content:
           application/json:
-            schema: { type: object, additionalProperties: true }
+            schema:
+              $ref: "#/components/schemas/CreateDocumentCollectionRequest"
       responses:
-        "200": { description: Created., content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "200":
+          description: Creation ack (success + collection).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocCreateCollectionResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/InternalError" }
     get:
       tags: [Documents]
       operationId: listDocumentCollections
       summary: List document collections.
       responses:
-        "200": { description: Collections., content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "200":
+          description: Collections (an object carrying the array).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocCollectionListResponse"
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v2/document-collections/{collection}:
+    parameters:
+      - name: collection
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Documents]
+      operationId: getDocumentCollection
+      summary: Get one collection's info.
+      description: |
+        404 when the collection does not exist. The body is an open
+        object (the serialized collection info).
+      responses:
+        "200":
+          description: Collection info.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocOpenObject"
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      tags: [Documents]
+      operationId: deleteDocumentCollection
+      summary: Delete a document collection.
+      responses:
+        "200":
+          description: Deletion acknowledged (success flag).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocDeleteAck"
+        "500": { $ref: "#/components/responses/InternalError" }
   /api/v2/document-collections/{collection}/documents:
     parameters:
       - name: collection
@@ -951,21 +1007,206 @@ paths:
     post:
       tags: [Documents]
       operationId: insertDocument
-      summary: Insert a document.
+      summary: Insert one document.
       requestBody:
         required: true
         content:
           application/json:
-            schema: { type: object, additionalProperties: true }
+            schema:
+              $ref: "#/components/schemas/DocInsertRequest"
       responses:
-        "200": { description: Inserted., content: { application/json: { schema: { type: object, additionalProperties: true } } } }
-        "404": { $ref: "#/components/responses/NotFound" }
+        "200":
+          description: The stored document (with its version).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/InternalError" }
     get:
       tags: [Documents]
       operationId: queryDocuments
-      summary: Query documents.
+      summary: Query documents (filter/projection/limit).
+      parameters:
+        - name: filter
+          in: query
+          required: false
+          schema: { type: string }
+          description: Filter expression (server-parsed).
+        - name: projection
+          in: query
+          required: false
+          schema: { type: string }
+          description: Comma-separated field list.
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, format: uint32 }
+          description: Defaults to 100.
       responses:
-        "200": { description: Documents., content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "200":
+          description: Matching documents.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocQueryResponse"
+        "400":
+          description: |
+            Invalid filter JSON (canonical envelope) — the only 400
+            this op can emit; malformed query strings are axum plain
+            text.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v2/document-collections/{collection}/documents/{id}:
+    parameters:
+      - name: collection
+        in: path
+        required: true
+        schema: { type: string }
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Documents]
+      operationId: getDocument
+      summary: Get one document.
+      parameters:
+        - name: projection
+          in: query
+          required: false
+          schema: { type: string }
+          description: Comma-separated field list.
+      responses:
+        "200":
+          description: The document.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocResponse"
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    patch:
+      tags: [Documents]
+      operationId: updateDocument
+      summary: Apply an update pipeline to a document.
+      description: |
+        Optimistic concurrency: `expected_version` rejects stale writes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocUpdateRequest"
+      responses:
+        "200":
+          description: Update outcome (success, id, new_version).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocUpdateResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      tags: [Documents]
+      operationId: deleteDocument
+      summary: Delete one document.
+      responses:
+        "200":
+          description: Deletion acknowledged (success + id).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocDeleteAck"
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v2/document-collections/{collection}/documents/batch:
+    parameters:
+      - name: collection
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Documents]
+      operationId: batchInsertDocuments
+      summary: Insert multiple documents (per-item partial success).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocBatchInsertRequest"
+      responses:
+        "200":
+          description: Counts (inserted + failed; failures counted, not enumerated).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocBatchInsertResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v2/document-collections/{collection}/documents/aggregate:
+    parameters:
+      - name: collection
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Documents]
+      operationId: aggregateDocuments
+      summary: Run an aggregation pipeline.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocAggregateRequest"
+      responses:
+        "200":
+          description: Aggregation results (free-form) + timing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocAggregateResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /api/v2/document-collections/{collection}/indexes:
+    parameters:
+      - name: collection
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Documents]
+      operationId: createDocumentIndex
+      summary: Create an index on an existing collection.
+      description: |
+        HONEST ALWAYS-400: creating indexes on existing collections is
+        not supported — specify `indexes` when creating the collection.
+        The 400 body says exactly this.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocIndexDefinition"
+      responses:
+        "400": { $ref: "#/components/responses/BadRequest" }
+    get:
+      tags: [Documents]
+      operationId: listDocumentIndexes
+      summary: List the collection's indexes.
+      responses:
+        "200":
+          description: Index definitions (name, path, unique).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocIndexListResponse"
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
   # ── Observability (free-form passthrough). ──────────────────────────────
   /api/v2/observability/namespaces/{namespace}/logs:
     parameters:
@@ -3926,3 +4167,154 @@ components:
         rank_profile_version:
           type: [integer, "null"]
           format: uint32
+    DocOpenObject:
+      type: object
+      additionalProperties: true
+      description: Serialized collection info (open field set).
+    DocCollectionListResponse:
+      type: object
+      required: [collections]
+      properties:
+        collections:
+          type: array
+          items: { $ref: "#/components/schemas/DocOpenObject" }
+    DocCreateCollectionResponse:
+      type: object
+      required: [success, collection]
+      properties:
+        success: { type: boolean }
+        collection: { $ref: "#/components/schemas/DocOpenObject" }
+    DocDeleteAck:
+      type: object
+      required: [success]
+      properties:
+        success: { type: boolean }
+        id:
+          type: string
+          description: Present on document deletes; absent on collection deletes.
+    DocIndexDefinition:
+      type: object
+      required: [path]
+      properties:
+        name: { type: [string, "null"] }
+        path: { type: string }
+        index_type:
+          type: string
+          default: btree
+          description: |
+            btree | hash | inverted | fulltext | geo (unknown values
+            fall back to btree).
+        unique:
+          type: boolean
+          default: false
+        sparse:
+          type: boolean
+          default: false
+    CreateDocumentCollectionRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        indexes:
+          type: array
+          items: { $ref: "#/components/schemas/DocIndexDefinition" }
+    DocInsertRequest:
+      type: object
+      required: [document]
+      properties:
+        id:
+          type: [string, "null"]
+          description: Server-assigned when omitted.
+        document:
+          description: The document body (free-form JSON).
+    DocResponse:
+      type: object
+      required: [id, document, version]
+      properties:
+        id: { type: string }
+        document: {}
+        version:
+          type: integer
+          format: uint64
+    DocQueryResponse:
+      type: object
+      required: [documents, has_more]
+      properties:
+        documents:
+          type: array
+          items: { $ref: "#/components/schemas/DocResponse" }
+        total_count:
+          type: [integer, "null"]
+          format: uint64
+        has_more: { type: boolean }
+    DocUpdateRequest:
+      type: object
+      required: [updates]
+      properties:
+        updates:
+          type: array
+          items: {}
+          description: Update pipeline steps ({operation, path, value} objects).
+        expected_version:
+          type: [integer, "null"]
+          format: uint64
+          description: Optimistic-concurrency guard; rejects stale writes.
+    DocUpdateResponse:
+      type: object
+      required: [success, id, new_version]
+      properties:
+        success: { type: boolean }
+        id: { type: string }
+        new_version:
+          type: integer
+          format: uint64
+    DocBatchInsertRequest:
+      type: object
+      required: [documents]
+      properties:
+        documents:
+          type: array
+          items: { $ref: "#/components/schemas/DocInsertRequest" }
+    DocBatchInsertResponse:
+      type: object
+      required: [inserted, failed]
+      properties:
+        inserted:
+          type: integer
+          format: uint64
+        failed:
+          type: integer
+          format: uint64
+          description: Count only — per-item failures are not enumerated.
+    DocAggregateRequest:
+      type: object
+      required: [pipeline]
+      properties:
+        pipeline:
+          type: array
+          items: {}
+          description: Aggregation pipeline stages (free-form).
+    DocAggregateResponse:
+      type: object
+      required: [results, query_time_ms]
+      properties:
+        results:
+          type: array
+          items: {}
+        query_time_ms:
+          type: integer
+          format: uint64
+    DocIndexListResponse:
+      type: object
+      required: [indexes]
+      properties:
+        indexes:
+          type: array
+          items:
+            type: object
+            required: [name, path, unique]
+            properties:
+              name:
+                type: [string, "null"]
+              path: { type: string }
+              unique: { type: boolean }
