@@ -628,6 +628,17 @@ inherent:**
   with no error).
 * Fixed: the Not null-probe resolves once (probe only when the inner
   comparison denied — was double-resolution per record).
+
+**Round 19 follow-up (2026-09-05, PR fix/dot-walker-consolidation):** the
+two unconsolidated dot-path walkers now delegate to the shared
+`json_get_path` — auth `oidc.rs claim_at_path` (OIDC claim traversal) and
+`proximadb-query plan_executor.rs field_value` (join/projection column
+resolution). Identical semantics (object-only segments; non-objects
+dead-end — serde_json's `Value::get` behaves as the explicit match), so
+delegation is behavior-preserving; the walker's lifetime signature split
+(root `<'a>` vs segments `<'p>`) so callers with borrowed path strings
+compile without contortions. Future traversal rules (array-index segments,
+escape handling) now land in ONE place across filter/auth/plan resolution.
 * Tracked: JSON string-document spelling divergence between the v2
   entity seam (unwrapped inner text) and adjacency/graph_schema
   (quoted canonical text); the extraction twin blocks (helix/swift,

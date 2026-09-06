@@ -136,9 +136,9 @@ pub fn evaluate_filter(expr: &FilterExpression, metadata: &HashMap<String, SqlVa
 /// Walk dotted path segments through a JSON document by reference — the
 /// single walker shared by the SqlValue and ProximaTree dot-traversals
 /// (round 8: it was maintained twice in this file).
-pub fn json_get_path<'a>(
+pub fn json_get_path<'a, 'p>(
     root: &'a serde_json::Value,
-    segments: impl Iterator<Item = &'a str>,
+    segments: impl Iterator<Item = &'p str>,
 ) -> Option<&'a serde_json::Value> {
     let mut current = root;
     for segment in segments {
