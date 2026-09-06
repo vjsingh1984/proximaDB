@@ -15929,6 +15929,381 @@ pub mod types {
             Default::default()
         }
     }
+    /// The unified surface's BARE error shape — a plain string under
+    /// `error`, NOT the canonical {error:{type,message,code}} envelope
+    /// other surfaces carry.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "The unified surface's BARE error shape — a plain string under\n`error`, NOT the canonical {error:{type,message,code}} envelope\nother surfaces carry.\n",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "error"
+    ///  ],
+    ///  "properties": {
+    ///    "error": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct UnifiedBareError {
+        pub error: ::std::string::String,
+    }
+    impl UnifiedBareError {
+        pub fn builder() -> builder::UnifiedBareError {
+            Default::default()
+        }
+    }
+    /// Like the federated request, plus an optional row limit the impl
+    /// applies to the distributed result.
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Like the federated request, plus an optional row limit the impl\napplies to the distributed result.\n",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "query"
+    ///  ],
+    ///  "properties": {
+    ///    "limit": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint32"
+    ///    },
+    ///    "parameters": {
+    ///      "type": [
+    ///        "array",
+    ///        "null"
+    ///      ],
+    ///      "items": {}
+    ///    },
+    ///    "query": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct UnifiedDistributedRequest {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub limit: ::std::option::Option<u32>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub parameters: ::std::option::Option<::std::vec::Vec<::serde_json::Value>>,
+        pub query: ::std::string::String,
+    }
+    impl UnifiedDistributedRequest {
+        pub fn builder() -> builder::UnifiedDistributedRequest {
+            Default::default()
+        }
+    }
+    ///`UnifiedExecutePreparedRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "collection": {
+    ///      "type": "string"
+    ///    },
+    ///    "parameters": {
+    ///      "type": [
+    ///        "array",
+    ///        "null"
+    ///      ],
+    ///      "items": {}
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct UnifiedExecutePreparedRequest {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub collection: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub parameters: ::std::option::Option<::std::vec::Vec<::serde_json::Value>>,
+    }
+    impl ::std::default::Default for UnifiedExecutePreparedRequest {
+        fn default() -> Self {
+            Self {
+                collection: Default::default(),
+                parameters: Default::default(),
+            }
+        }
+    }
+    impl UnifiedExecutePreparedRequest {
+        pub fn builder() -> builder::UnifiedExecutePreparedRequest {
+            Default::default()
+        }
+    }
+    ///`UnifiedExecuteRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "query"
+    ///  ],
+    ///  "properties": {
+    ///    "collection": {
+    ///      "type": "string"
+    ///    },
+    ///    "limit": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint32"
+    ///    },
+    ///    "parameters": {
+    ///      "type": [
+    ///        "array",
+    ///        "null"
+    ///      ],
+    ///      "items": {}
+    ///    },
+    ///    "query": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct UnifiedExecuteRequest {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub collection: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub limit: ::std::option::Option<u32>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub parameters: ::std::option::Option<::std::vec::Vec<::serde_json::Value>>,
+        pub query: ::std::string::String,
+    }
+    impl UnifiedExecuteRequest {
+        pub fn builder() -> builder::UnifiedExecuteRequest {
+            Default::default()
+        }
+    }
+    ///`UnifiedExplainRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "query"
+    ///  ],
+    ///  "properties": {
+    ///    "collection": {
+    ///      "type": "string"
+    ///    },
+    ///    "query": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct UnifiedExplainRequest {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub collection: ::std::option::Option<::std::string::String>,
+        pub query: ::std::string::String,
+    }
+    impl UnifiedExplainRequest {
+        pub fn builder() -> builder::UnifiedExplainRequest {
+            Default::default()
+        }
+    }
+    ///`UnifiedFederatedRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "query"
+    ///  ],
+    ///  "properties": {
+    ///    "parameters": {
+    ///      "type": [
+    ///        "array",
+    ///        "null"
+    ///      ],
+    ///      "items": {}
+    ///    },
+    ///    "query": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct UnifiedFederatedRequest {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub parameters: ::std::option::Option<::std::vec::Vec<::serde_json::Value>>,
+        pub query: ::std::string::String,
+    }
+    impl UnifiedFederatedRequest {
+        pub fn builder() -> builder::UnifiedFederatedRequest {
+            Default::default()
+        }
+    }
+    ///Free-form JSON (the port's serde_json::Value rendering).
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "Free-form JSON (the port's serde_json::Value rendering)."
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    #[serde(transparent)]
+    pub struct UnifiedOpenValue(pub ::serde_json::Value);
+    impl ::std::ops::Deref for UnifiedOpenValue {
+        type Target = ::serde_json::Value;
+        fn deref(&self) -> &::serde_json::Value {
+            &self.0
+        }
+    }
+    impl ::std::convert::From<UnifiedOpenValue> for ::serde_json::Value {
+        fn from(value: UnifiedOpenValue) -> Self {
+            value.0
+        }
+    }
+    impl ::std::convert::From<::serde_json::Value> for UnifiedOpenValue {
+        fn from(value: ::serde_json::Value) -> Self {
+            Self(value)
+        }
+    }
+    ///`UnifiedPrepareRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "query"
+    ///  ],
+    ///  "properties": {
+    ///    "cache_results": {
+    ///      "default": false,
+    ///      "type": "boolean"
+    ///    },
+    ///    "name": {
+    ///      "type": "string"
+    ///    },
+    ///    "query": {
+    ///      "type": "string"
+    ///    },
+    ///    "ttl_seconds": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "uint64"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct UnifiedPrepareRequest {
+        #[serde(default)]
+        pub cache_results: bool,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub name: ::std::option::Option<::std::string::String>,
+        pub query: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub ttl_seconds: ::std::option::Option<u64>,
+    }
+    impl UnifiedPrepareRequest {
+        pub fn builder() -> builder::UnifiedPrepareRequest {
+            Default::default()
+        }
+    }
+    ///`UnifiedPrepareResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "statement_id"
+    ///  ],
+    ///  "properties": {
+    ///    "statement_id": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct UnifiedPrepareResponse {
+        pub statement_id: ::std::string::String,
+    }
+    impl UnifiedPrepareResponse {
+        pub fn builder() -> builder::UnifiedPrepareResponse {
+            Default::default()
+        }
+    }
+    ///`UnifiedPreparedStatsRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "statement_ids": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct UnifiedPreparedStatsRequest {
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub statement_ids: ::std::vec::Vec<::std::string::String>,
+    }
+    impl ::std::default::Default for UnifiedPreparedStatsRequest {
+        fn default() -> Self {
+            Self {
+                statement_ids: Default::default(),
+            }
+        }
+    }
+    impl UnifiedPreparedStatsRequest {
+        pub fn builder() -> builder::UnifiedPreparedStatsRequest {
+            Default::default()
+        }
+    }
     ///`UniqueConstraintRequest`
     ///
     /// <details><summary>JSON schema</summary>
@@ -36130,6 +36505,557 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct UnifiedBareError {
+            error: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for UnifiedBareError {
+            fn default() -> Self {
+                Self {
+                    error: Err("no value supplied for error".to_string()),
+                }
+            }
+        }
+        impl UnifiedBareError {
+            pub fn error<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.error = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for error: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<UnifiedBareError> for super::UnifiedBareError {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: UnifiedBareError,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    error: value.error?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::UnifiedBareError> for UnifiedBareError {
+            fn from(value: super::UnifiedBareError) -> Self {
+                Self {
+                    error: Ok(value.error),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct UnifiedDistributedRequest {
+            limit: ::std::result::Result<::std::option::Option<u32>, ::std::string::String>,
+            parameters: ::std::result::Result<
+                ::std::option::Option<::std::vec::Vec<::serde_json::Value>>,
+                ::std::string::String,
+            >,
+            query: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for UnifiedDistributedRequest {
+            fn default() -> Self {
+                Self {
+                    limit: Ok(Default::default()),
+                    parameters: Ok(Default::default()),
+                    query: Err("no value supplied for query".to_string()),
+                }
+            }
+        }
+        impl UnifiedDistributedRequest {
+            pub fn limit<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.limit = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for limit: {e}"));
+                self
+            }
+            pub fn parameters<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::std::option::Option<::std::vec::Vec<::serde_json::Value>>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.parameters = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for parameters: {e}"));
+                self
+            }
+            pub fn query<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.query = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for query: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<UnifiedDistributedRequest> for super::UnifiedDistributedRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: UnifiedDistributedRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    limit: value.limit?,
+                    parameters: value.parameters?,
+                    query: value.query?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::UnifiedDistributedRequest> for UnifiedDistributedRequest {
+            fn from(value: super::UnifiedDistributedRequest) -> Self {
+                Self {
+                    limit: Ok(value.limit),
+                    parameters: Ok(value.parameters),
+                    query: Ok(value.query),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct UnifiedExecutePreparedRequest {
+            collection: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            parameters: ::std::result::Result<
+                ::std::option::Option<::std::vec::Vec<::serde_json::Value>>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for UnifiedExecutePreparedRequest {
+            fn default() -> Self {
+                Self {
+                    collection: Ok(Default::default()),
+                    parameters: Ok(Default::default()),
+                }
+            }
+        }
+        impl UnifiedExecutePreparedRequest {
+            pub fn collection<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.collection = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for collection: {e}"));
+                self
+            }
+            pub fn parameters<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::std::option::Option<::std::vec::Vec<::serde_json::Value>>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.parameters = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for parameters: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<UnifiedExecutePreparedRequest>
+            for super::UnifiedExecutePreparedRequest
+        {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: UnifiedExecutePreparedRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    collection: value.collection?,
+                    parameters: value.parameters?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::UnifiedExecutePreparedRequest> for UnifiedExecutePreparedRequest {
+            fn from(value: super::UnifiedExecutePreparedRequest) -> Self {
+                Self {
+                    collection: Ok(value.collection),
+                    parameters: Ok(value.parameters),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct UnifiedExecuteRequest {
+            collection: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            limit: ::std::result::Result<::std::option::Option<u32>, ::std::string::String>,
+            parameters: ::std::result::Result<
+                ::std::option::Option<::std::vec::Vec<::serde_json::Value>>,
+                ::std::string::String,
+            >,
+            query: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for UnifiedExecuteRequest {
+            fn default() -> Self {
+                Self {
+                    collection: Ok(Default::default()),
+                    limit: Ok(Default::default()),
+                    parameters: Ok(Default::default()),
+                    query: Err("no value supplied for query".to_string()),
+                }
+            }
+        }
+        impl UnifiedExecuteRequest {
+            pub fn collection<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.collection = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for collection: {e}"));
+                self
+            }
+            pub fn limit<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.limit = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for limit: {e}"));
+                self
+            }
+            pub fn parameters<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::std::option::Option<::std::vec::Vec<::serde_json::Value>>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.parameters = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for parameters: {e}"));
+                self
+            }
+            pub fn query<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.query = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for query: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<UnifiedExecuteRequest> for super::UnifiedExecuteRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: UnifiedExecuteRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    collection: value.collection?,
+                    limit: value.limit?,
+                    parameters: value.parameters?,
+                    query: value.query?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::UnifiedExecuteRequest> for UnifiedExecuteRequest {
+            fn from(value: super::UnifiedExecuteRequest) -> Self {
+                Self {
+                    collection: Ok(value.collection),
+                    limit: Ok(value.limit),
+                    parameters: Ok(value.parameters),
+                    query: Ok(value.query),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct UnifiedExplainRequest {
+            collection: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            query: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for UnifiedExplainRequest {
+            fn default() -> Self {
+                Self {
+                    collection: Ok(Default::default()),
+                    query: Err("no value supplied for query".to_string()),
+                }
+            }
+        }
+        impl UnifiedExplainRequest {
+            pub fn collection<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.collection = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for collection: {e}"));
+                self
+            }
+            pub fn query<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.query = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for query: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<UnifiedExplainRequest> for super::UnifiedExplainRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: UnifiedExplainRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    collection: value.collection?,
+                    query: value.query?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::UnifiedExplainRequest> for UnifiedExplainRequest {
+            fn from(value: super::UnifiedExplainRequest) -> Self {
+                Self {
+                    collection: Ok(value.collection),
+                    query: Ok(value.query),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct UnifiedFederatedRequest {
+            parameters: ::std::result::Result<
+                ::std::option::Option<::std::vec::Vec<::serde_json::Value>>,
+                ::std::string::String,
+            >,
+            query: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for UnifiedFederatedRequest {
+            fn default() -> Self {
+                Self {
+                    parameters: Ok(Default::default()),
+                    query: Err("no value supplied for query".to_string()),
+                }
+            }
+        }
+        impl UnifiedFederatedRequest {
+            pub fn parameters<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::std::option::Option<::std::vec::Vec<::serde_json::Value>>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.parameters = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for parameters: {e}"));
+                self
+            }
+            pub fn query<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.query = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for query: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<UnifiedFederatedRequest> for super::UnifiedFederatedRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: UnifiedFederatedRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    parameters: value.parameters?,
+                    query: value.query?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::UnifiedFederatedRequest> for UnifiedFederatedRequest {
+            fn from(value: super::UnifiedFederatedRequest) -> Self {
+                Self {
+                    parameters: Ok(value.parameters),
+                    query: Ok(value.query),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct UnifiedPrepareRequest {
+            cache_results: ::std::result::Result<bool, ::std::string::String>,
+            name: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            query: ::std::result::Result<::std::string::String, ::std::string::String>,
+            ttl_seconds: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+        }
+        impl ::std::default::Default for UnifiedPrepareRequest {
+            fn default() -> Self {
+                Self {
+                    cache_results: Ok(Default::default()),
+                    name: Ok(Default::default()),
+                    query: Err("no value supplied for query".to_string()),
+                    ttl_seconds: Ok(Default::default()),
+                }
+            }
+        }
+        impl UnifiedPrepareRequest {
+            pub fn cache_results<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.cache_results = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for cache_results: {e}"));
+                self
+            }
+            pub fn name<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.name = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for name: {e}"));
+                self
+            }
+            pub fn query<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.query = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for query: {e}"));
+                self
+            }
+            pub fn ttl_seconds<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.ttl_seconds = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for ttl_seconds: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<UnifiedPrepareRequest> for super::UnifiedPrepareRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: UnifiedPrepareRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    cache_results: value.cache_results?,
+                    name: value.name?,
+                    query: value.query?,
+                    ttl_seconds: value.ttl_seconds?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::UnifiedPrepareRequest> for UnifiedPrepareRequest {
+            fn from(value: super::UnifiedPrepareRequest) -> Self {
+                Self {
+                    cache_results: Ok(value.cache_results),
+                    name: Ok(value.name),
+                    query: Ok(value.query),
+                    ttl_seconds: Ok(value.ttl_seconds),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct UnifiedPrepareResponse {
+            statement_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for UnifiedPrepareResponse {
+            fn default() -> Self {
+                Self {
+                    statement_id: Err("no value supplied for statement_id".to_string()),
+                }
+            }
+        }
+        impl UnifiedPrepareResponse {
+            pub fn statement_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.statement_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for statement_id: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<UnifiedPrepareResponse> for super::UnifiedPrepareResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: UnifiedPrepareResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    statement_id: value.statement_id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::UnifiedPrepareResponse> for UnifiedPrepareResponse {
+            fn from(value: super::UnifiedPrepareResponse) -> Self {
+                Self {
+                    statement_id: Ok(value.statement_id),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct UnifiedPreparedStatsRequest {
+            statement_ids: ::std::result::Result<
+                ::std::vec::Vec<::std::string::String>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for UnifiedPreparedStatsRequest {
+            fn default() -> Self {
+                Self {
+                    statement_ids: Ok(Default::default()),
+                }
+            }
+        }
+        impl UnifiedPreparedStatsRequest {
+            pub fn statement_ids<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.statement_ids = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for statement_ids: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<UnifiedPreparedStatsRequest> for super::UnifiedPreparedStatsRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: UnifiedPreparedStatsRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    statement_ids: value.statement_ids?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::UnifiedPreparedStatsRequest> for UnifiedPreparedStatsRequest {
+            fn from(value: super::UnifiedPreparedStatsRequest) -> Self {
+                Self {
+                    statement_ids: Ok(value.statement_ids),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct UniqueConstraintRequest {
             label: ::std::result::Result<::std::string::String, ::std::string::String>,
             property: ::std::result::Result<::std::string::String, ::std::string::String>,
@@ -39362,6 +40288,197 @@ impl Client {
     /// ```
     pub fn query_timeseries(&self) -> builder::QueryTimeseries<'_> {
         builder::QueryTimeseries::new(self)
+    }
+    /// Execute a distributed query
+    ///
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — unified queries run without tenant selection.
+    ///
+    ///
+    /// Sends a `POST` request to `/api/v2/unified/distributed`
+    ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.execute_distributed_query()
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn execute_distributed_query(&self) -> builder::ExecuteDistributedQuery<'_> {
+        builder::ExecuteDistributedQuery::new(self)
+    }
+    /// Execute a unified (UQL) query
+    ///
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — unified queries run without tenant selection.
+    ///
+    ///
+    /// Sends a `POST` request to `/api/v2/unified/execute`
+    ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.execute_unified_query()
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn execute_unified_query(&self) -> builder::ExecuteUnifiedQuery<'_> {
+        builder::ExecuteUnifiedQuery::new(self)
+    }
+    /// Execute a prepared statement with parameters
+    ///
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — unified queries run without tenant selection.
+    ///
+    ///
+    /// Sends a `POST` request to `/api/v2/unified/execute/{statement_id}`
+    ///
+    /// Arguments:
+    /// - `statement_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.execute_prepared_statement()
+    /// .statement_id(statement_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn execute_prepared_statement(&self) -> builder::ExecutePreparedStatement<'_> {
+        builder::ExecutePreparedStatement::new(self)
+    }
+    /// Explain a unified query (plan, no execution)
+    ///
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — unified queries run without tenant selection.
+    ///
+    ///
+    /// Sends a `POST` request to `/api/v2/unified/explain`
+    ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.explain_unified_query()
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn explain_unified_query(&self) -> builder::ExplainUnifiedQuery<'_> {
+        builder::ExplainUnifiedQuery::new(self)
+    }
+    /// Execute a federated query
+    ///
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — unified queries run without tenant selection.
+    ///
+    ///
+    /// Sends a `POST` request to `/api/v2/unified/federated`
+    ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.execute_federated_query()
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn execute_federated_query(&self) -> builder::ExecuteFederatedQuery<'_> {
+        builder::ExecuteFederatedQuery::new(self)
+    }
+    /// Execute a multi-model query (free-form body)
+    ///
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — unified queries run without tenant selection.
+    ///
+    ///
+    /// Sends a `POST` request to `/api/v2/unified/multi-model`
+    ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.execute_multi_model_query()
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn execute_multi_model_query(&self) -> builder::ExecuteMultiModelQuery<'_> {
+        builder::ExecuteMultiModelQuery::new(self)
+    }
+    /// Prepare a statement for repeated execution
+    ///
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — unified queries run without tenant selection.
+    ///
+    ///
+    /// Sends a `POST` request to `/api/v2/unified/prepare`
+    ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.prepare_statement()
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn prepare_statement(&self) -> builder::PrepareStatement<'_> {
+        builder::PrepareStatement::new(self)
+    }
+    /// Prepared-statement execution statistics
+    ///
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — unified queries run without tenant selection.
+    ///
+    ///
+    /// Sends a `POST` request to `/api/v2/unified/prepared/stats`
+    ///
+    /// Arguments:
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// - `body`
+    /// ```text
+    /// let response = client.get_prepared_stats()
+    /// .x_tenant_id(x_tenant_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn get_prepared_stats(&self) -> builder::GetPreparedStats<'_> {
+        builder::GetPreparedStats::new(self)
+    }
+    /// Delete a prepared statement
+    ///
+    /// The optional `X-Tenant-ID` header is not consulted by this
+    /// handler — unified queries run without tenant selection.
+    ///
+    ///
+    /// Sends a `DELETE` request to `/api/v2/unified/prepared/{statement_id}`
+    ///
+    /// Arguments:
+    /// - `statement_id`
+    /// - `x_tenant_id`: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+    /// ```text
+    /// let response = client.delete_prepared_statement()
+    /// .statement_id(statement_id)
+    /// .x_tenant_id(x_tenant_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn delete_prepared_statement(&self) -> builder::DeletePreparedStatement<'_> {
+        builder::DeletePreparedStatement::new(self)
     }
     /// Get server health
     ///
@@ -50972,6 +52089,919 @@ pub mod builder {
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
                 500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::execute_distributed_query`]
+    ///
+    /// [`Client::execute_distributed_query`]: super::Client::execute_distributed_query
+    #[derive(Debug, Clone)]
+    pub struct ExecuteDistributedQuery<'a> {
+        client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::UnifiedDistributedRequest, String>,
+    }
+    impl<'a> ExecuteDistributedQuery<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::UnifiedDistributedRequest>,
+            <V as std::convert::TryInto<types::UnifiedDistributedRequest>>::Error:
+                std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `UnifiedDistributedRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::UnifiedDistributedRequest,
+                ) -> types::builder::UnifiedDistributedRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/unified/distributed`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::UnifiedOpenValue>, Error<types::UnifiedBareError>>
+        {
+            let Self {
+                client,
+                x_tenant_id,
+                body,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| {
+                    types::UnifiedDistributedRequest::try_from(v).map_err(|e| e.to_string())
+                })
+                .map_err(Error::InvalidRequest)?;
+            let url = format!("{}/api/v2/unified/distributed", client.baseurl,);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "execute_distributed_query",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                501u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::execute_unified_query`]
+    ///
+    /// [`Client::execute_unified_query`]: super::Client::execute_unified_query
+    #[derive(Debug, Clone)]
+    pub struct ExecuteUnifiedQuery<'a> {
+        client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::UnifiedExecuteRequest, String>,
+    }
+    impl<'a> ExecuteUnifiedQuery<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::UnifiedExecuteRequest>,
+            <V as std::convert::TryInto<types::UnifiedExecuteRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `UnifiedExecuteRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::UnifiedExecuteRequest,
+                ) -> types::builder::UnifiedExecuteRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/unified/execute`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::UnifiedOpenValue>, Error<types::UnifiedBareError>>
+        {
+            let Self {
+                client,
+                x_tenant_id,
+                body,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::UnifiedExecuteRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!("{}/api/v2/unified/execute", client.baseurl,);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "execute_unified_query",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                501u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::execute_prepared_statement`]
+    ///
+    /// [`Client::execute_prepared_statement`]: super::Client::execute_prepared_statement
+    #[derive(Debug, Clone)]
+    pub struct ExecutePreparedStatement<'a> {
+        client: &'a super::Client,
+        statement_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::UnifiedExecutePreparedRequest, String>,
+    }
+    impl<'a> ExecutePreparedStatement<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                statement_id: Err("statement_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn statement_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.statement_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for statement_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::UnifiedExecutePreparedRequest>,
+            <V as std::convert::TryInto<types::UnifiedExecutePreparedRequest>>::Error:
+                std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `UnifiedExecutePreparedRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::UnifiedExecutePreparedRequest,
+                ) -> types::builder::UnifiedExecutePreparedRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/unified/execute/{statement_id}`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::UnifiedOpenValue>, Error<types::UnifiedBareError>>
+        {
+            let Self {
+                client,
+                statement_id,
+                x_tenant_id,
+                body,
+            } = self;
+            let statement_id = statement_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| {
+                    types::UnifiedExecutePreparedRequest::try_from(v).map_err(|e| e.to_string())
+                })
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/unified/execute/{}",
+                client.baseurl,
+                encode_path(&statement_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "execute_prepared_statement",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                501u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::explain_unified_query`]
+    ///
+    /// [`Client::explain_unified_query`]: super::Client::explain_unified_query
+    #[derive(Debug, Clone)]
+    pub struct ExplainUnifiedQuery<'a> {
+        client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::UnifiedExplainRequest, String>,
+    }
+    impl<'a> ExplainUnifiedQuery<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::UnifiedExplainRequest>,
+            <V as std::convert::TryInto<types::UnifiedExplainRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `UnifiedExplainRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::UnifiedExplainRequest,
+                ) -> types::builder::UnifiedExplainRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/unified/explain`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::UnifiedOpenValue>, Error<types::UnifiedBareError>>
+        {
+            let Self {
+                client,
+                x_tenant_id,
+                body,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::UnifiedExplainRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!("{}/api/v2/unified/explain", client.baseurl,);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "explain_unified_query",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                501u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::execute_federated_query`]
+    ///
+    /// [`Client::execute_federated_query`]: super::Client::execute_federated_query
+    #[derive(Debug, Clone)]
+    pub struct ExecuteFederatedQuery<'a> {
+        client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::UnifiedFederatedRequest, String>,
+    }
+    impl<'a> ExecuteFederatedQuery<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::UnifiedFederatedRequest>,
+            <V as std::convert::TryInto<types::UnifiedFederatedRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `UnifiedFederatedRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::UnifiedFederatedRequest,
+                ) -> types::builder::UnifiedFederatedRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/unified/federated`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::UnifiedOpenValue>, Error<types::UnifiedBareError>>
+        {
+            let Self {
+                client,
+                x_tenant_id,
+                body,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| {
+                    types::UnifiedFederatedRequest::try_from(v).map_err(|e| e.to_string())
+                })
+                .map_err(Error::InvalidRequest)?;
+            let url = format!("{}/api/v2/unified/federated", client.baseurl,);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "execute_federated_query",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                501u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::execute_multi_model_query`]
+    ///
+    /// [`Client::execute_multi_model_query`]: super::Client::execute_multi_model_query
+    #[derive(Debug, Clone)]
+    pub struct ExecuteMultiModelQuery<'a> {
+        client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::UnifiedOpenValue, String>,
+    }
+    impl<'a> ExecuteMultiModelQuery<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+                body: Err("body was not initialized".to_string()),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::UnifiedOpenValue>,
+        {
+            self.body = value
+                .try_into()
+                .map_err(|_| "conversion to `UnifiedOpenValue` for body failed".to_string());
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/unified/multi-model`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::UnifiedOpenValue>, Error<types::UnifiedBareError>>
+        {
+            let Self {
+                client,
+                x_tenant_id,
+                body,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body.map_err(Error::InvalidRequest)?;
+            let url = format!("{}/api/v2/unified/multi-model", client.baseurl,);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "execute_multi_model_query",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                501u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::prepare_statement`]
+    ///
+    /// [`Client::prepare_statement`]: super::Client::prepare_statement
+    #[derive(Debug, Clone)]
+    pub struct PrepareStatement<'a> {
+        client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::UnifiedPrepareRequest, String>,
+    }
+    impl<'a> PrepareStatement<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::UnifiedPrepareRequest>,
+            <V as std::convert::TryInto<types::UnifiedPrepareRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `UnifiedPrepareRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::UnifiedPrepareRequest,
+                ) -> types::builder::UnifiedPrepareRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/unified/prepare`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::UnifiedPrepareResponse>, Error<types::UnifiedBareError>>
+        {
+            let Self {
+                client,
+                x_tenant_id,
+                body,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::UnifiedPrepareRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!("{}/api/v2/unified/prepare", client.baseurl,);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "prepare_statement",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                201u16 => ResponseValue::from_response(response).await,
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                501u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::get_prepared_stats`]
+    ///
+    /// [`Client::get_prepared_stats`]: super::Client::get_prepared_stats
+    #[derive(Debug, Clone)]
+    pub struct GetPreparedStats<'a> {
+        client: &'a super::Client,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+        body: Result<types::builder::UnifiedPreparedStatsRequest, String>,
+    }
+    impl<'a> GetPreparedStats<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                x_tenant_id: Ok(None),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::UnifiedPreparedStatsRequest>,
+            <V as std::convert::TryInto<types::UnifiedPreparedStatsRequest>>::Error:
+                std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `UnifiedPreparedStatsRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::UnifiedPreparedStatsRequest,
+                ) -> types::builder::UnifiedPreparedStatsRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/unified/prepared/stats`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::UnifiedOpenValue>, Error<types::UnifiedBareError>>
+        {
+            let Self {
+                client,
+                x_tenant_id,
+                body,
+            } = self;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| {
+                    types::UnifiedPreparedStatsRequest::try_from(v).map_err(|e| e.to_string())
+                })
+                .map_err(Error::InvalidRequest)?;
+            let url = format!("{}/api/v2/unified/prepared/stats", client.baseurl,);
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "get_prepared_stats",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                501u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::delete_prepared_statement`]
+    ///
+    /// [`Client::delete_prepared_statement`]: super::Client::delete_prepared_statement
+    #[derive(Debug, Clone)]
+    pub struct DeletePreparedStatement<'a> {
+        client: &'a super::Client,
+        statement_id: Result<::std::string::String, String>,
+        x_tenant_id: Result<Option<::std::string::String>, String>,
+    }
+    impl<'a> DeletePreparedStatement<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                statement_id: Err("statement_id was not initialized".to_string()),
+                x_tenant_id: Ok(None),
+            }
+        }
+        pub fn statement_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.statement_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for statement_id failed".to_string()
+            });
+            self
+        }
+        pub fn x_tenant_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.x_tenant_id = value.try_into().map(Some).map_err(|_| {
+                "conversion to `:: std :: string :: String` for x_tenant_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `DELETE` request to `/api/v2/unified/prepared/{statement_id}`
+        pub async fn send(self) -> Result<ResponseValue<()>, Error<types::UnifiedBareError>> {
+            let Self {
+                client,
+                statement_id,
+                x_tenant_id,
+            } = self;
+            let statement_id = statement_id.map_err(Error::InvalidRequest)?;
+            let x_tenant_id = x_tenant_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/unified/prepared/{}",
+                client.baseurl,
+                encode_path(&statement_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            if let Some(value) = x_tenant_id {
+                header_map.append("X-Tenant-ID", value.to_string().try_into()?);
+            }
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .delete(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "delete_prepared_statement",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                204u16 => Ok(ResponseValue::empty(response)),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                501u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 _ => Err(Error::UnexpectedResponse(response)),

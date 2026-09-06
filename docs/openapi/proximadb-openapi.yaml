@@ -2334,6 +2334,392 @@ paths:
         description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
         schema:
           type: string
+  /api/v2/unified/execute:
+    post:
+      tags:
+      - Query
+      operationId: executeUnifiedQuery
+      summary: Execute a unified (UQL) query.
+      description: |
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — unified queries run without tenant selection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnifiedExecuteRequest'
+      responses:
+        '200':
+          description: Query result (free-form — the port's JSON rendering).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedOpenValue'
+        '400':
+          description: Empty query — the BARE error shape (a plain string under error).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedBareError'
+        '500':
+          description: Port error — the BARE error shape (a plain string under error).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedBareError'
+        '501':
+          description: The port returned not-implemented (non-default constructions).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedBareError'
+      parameters:
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
+  /api/v2/unified/multi-model:
+    post:
+      tags:
+      - Query
+      operationId: executeMultiModelQuery
+      summary: Execute a multi-model query (free-form body).
+      description: |
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — unified queries run without tenant selection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnifiedOpenValue'
+      responses:
+        '200':
+          description: Query result (free-form).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedOpenValue'
+        '500':
+          description: Port error — the BARE error shape (a plain string under error).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedBareError'
+        '501':
+          description: The port returned not-implemented (non-default constructions).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedBareError'
+      parameters:
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
+  /api/v2/unified/federated:
+    post:
+      tags:
+      - Query
+      operationId: executeFederatedQuery
+      summary: Execute a federated query.
+      description: |
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — unified queries run without tenant selection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnifiedFederatedRequest'
+      responses:
+        '200':
+          description: Query result (free-form).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedOpenValue'
+        '400':
+          description: Empty query — the BARE error shape (a plain string under error).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedBareError'
+        '500':
+          description: Port error — the BARE error shape (a plain string under error).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedBareError'
+        '501':
+          description: The port returned not-implemented (non-default constructions).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedBareError'
+      parameters:
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
+  /api/v2/unified/distributed:
+    post:
+      tags:
+      - Query
+      operationId: executeDistributedQuery
+      summary: Execute a distributed query.
+      description: |
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — unified queries run without tenant selection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnifiedDistributedRequest'
+      responses:
+        '200':
+          description: Query result (free-form).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedOpenValue'
+        '500':
+          description: Port error — the BARE error shape (a plain string under error).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedBareError'
+        '501':
+          description: The port returned not-implemented (non-default constructions).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedBareError'
+      parameters:
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
+  /api/v2/unified/explain:
+    post:
+      tags:
+      - Query
+      operationId: explainUnifiedQuery
+      summary: Explain a unified query (plan, no execution).
+      description: |
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — unified queries run without tenant selection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnifiedExplainRequest'
+      responses:
+        '200':
+          description: The plan (free-form).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedOpenValue'
+        '500':
+          description: Port error — the BARE error shape (a plain string under error).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedBareError'
+        '501':
+          description: The port returned not-implemented (non-default constructions).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedBareError'
+      parameters:
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
+  /api/v2/unified/prepare:
+    post:
+      tags:
+      - Query
+      operationId: prepareStatement
+      summary: Prepare a statement for repeated execution.
+      description: |
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — unified queries run without tenant selection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnifiedPrepareRequest'
+      responses:
+        '201':
+          description: Prepared — the statement id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedPrepareResponse'
+        '500':
+          description: Port error — the BARE error shape (a plain string under error).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedBareError'
+        '501':
+          description: The port returned not-implemented (non-default constructions).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedBareError'
+      parameters:
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
+  /api/v2/unified/execute/{statement_id}:
+    parameters:
+    - name: statement_id
+      in: path
+      required: true
+      schema:
+        type: string
+    post:
+      tags:
+      - Query
+      operationId: executePreparedStatement
+      summary: Execute a prepared statement with parameters.
+      description: |
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — unified queries run without tenant selection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnifiedExecutePreparedRequest'
+      responses:
+        '200':
+          description: Query result (free-form).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedOpenValue'
+        '500':
+          description: Port error — the BARE error shape (a plain string under error).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedBareError'
+        '501':
+          description: The port returned not-implemented (non-default constructions).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedBareError'
+      parameters:
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
+  /api/v2/unified/prepared/{statement_id}:
+    parameters:
+    - name: statement_id
+      in: path
+      required: true
+      schema:
+        type: string
+    delete:
+      tags:
+      - Query
+      operationId: deletePreparedStatement
+      summary: Delete a prepared statement.
+      description: |
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — unified queries run without tenant selection.
+      responses:
+        '204':
+          description: |
+            Deleted. NOTE an unknown (or already-deleted) statement id
+            is a 500 with the bare error shape — not a 204 and not a
+            404; an expired-but-not-evicted id may still 204.
+        '500':
+          description: Port error — the BARE error shape (a plain string under error).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedBareError'
+        '501':
+          description: The port returned not-implemented (non-default constructions).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedBareError'
+      parameters:
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
+  /api/v2/unified/prepared/stats:
+    post:
+      tags:
+      - Query
+      operationId: getPreparedStats
+      summary: Prepared-statement execution statistics.
+      description: |
+        The optional `X-Tenant-ID` header is not consulted by this
+        handler — unified queries run without tenant selection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnifiedPreparedStatsRequest'
+      responses:
+        '200':
+          description: Stats (free-form).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedOpenValue'
+        '500':
+          description: Port error — the BARE error shape (a plain string under error).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedBareError'
+        '501':
+          description: The port returned not-implemented (non-default constructions).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedBareError'
+      parameters:
+      - name: X-Tenant-ID
+        in: header
+        required: false
+        description: Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+        schema:
+          type: string
   /api/v2/rank/search:
     post:
       tags:
@@ -9508,6 +9894,120 @@ components:
                 type: string
               unique:
                 type: boolean
+    UnifiedOpenValue:
+      description: Free-form JSON (the port's serde_json::Value rendering).
+    UnifiedBareError:
+      type: object
+      required:
+      - error
+      description: |
+        The unified surface's BARE error shape — a plain string under
+        `error`, NOT the canonical {error:{type,message,code}} envelope
+        other surfaces carry.
+      properties:
+        error:
+          type: string
+    UnifiedExecuteRequest:
+      type: object
+      required:
+      - query
+      properties:
+        query:
+          type: string
+        parameters:
+          type:
+          - array
+          - 'null'
+          items: {}
+        collection:
+          type: string
+        limit:
+          type:
+          - integer
+          - 'null'
+          format: uint32
+    UnifiedFederatedRequest:
+      type: object
+      required:
+      - query
+      properties:
+        query:
+          type: string
+        parameters:
+          type:
+          - array
+          - 'null'
+          items: {}
+    UnifiedExplainRequest:
+      type: object
+      required:
+      - query
+      properties:
+        query:
+          type: string
+        collection:
+          type: string
+    UnifiedPrepareRequest:
+      type: object
+      required:
+      - query
+      properties:
+        query:
+          type: string
+        name:
+          type: string
+        cache_results:
+          type: boolean
+          default: false
+        ttl_seconds:
+          type:
+          - integer
+          - 'null'
+          format: uint64
+    UnifiedPrepareResponse:
+      type: object
+      required:
+      - statement_id
+      properties:
+        statement_id:
+          type: string
+    UnifiedExecutePreparedRequest:
+      type: object
+      properties:
+        parameters:
+          type:
+          - array
+          - 'null'
+          items: {}
+        collection:
+          type: string
+    UnifiedPreparedStatsRequest:
+      type: object
+      properties:
+        statement_ids:
+          type: array
+          items:
+            type: string
+    UnifiedDistributedRequest:
+      type: object
+      required:
+      - query
+      description: |
+        Like the federated request, plus an optional row limit the impl
+        applies to the distributed result.
+      properties:
+        query:
+          type: string
+        parameters:
+          type:
+          - array
+          - 'null'
+          items: {}
+        limit:
+          type:
+          - integer
+          - 'null'
+          format: uint32
   securitySchemes:
     bearerAuth:
       type: http

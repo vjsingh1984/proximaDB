@@ -3260,6 +3260,68 @@ type TypedSearchResult struct {
 	Vector *[]float32 `json:"vector,omitempty"`
 }
 
+// UnifiedBareError The unified surface's BARE error shape — a plain string under
+// `error`, NOT the canonical {error:{type,message,code}} envelope
+// other surfaces carry.
+type UnifiedBareError struct {
+	Error string `json:"error"`
+}
+
+// UnifiedDistributedRequest Like the federated request, plus an optional row limit the impl
+// applies to the distributed result.
+type UnifiedDistributedRequest struct {
+	Limit      *uint32        `json:"limit,omitempty"`
+	Parameters *[]interface{} `json:"parameters,omitempty"`
+	Query      string         `json:"query"`
+}
+
+// UnifiedExecutePreparedRequest defines model for UnifiedExecutePreparedRequest.
+type UnifiedExecutePreparedRequest struct {
+	Collection *string        `json:"collection,omitempty"`
+	Parameters *[]interface{} `json:"parameters,omitempty"`
+}
+
+// UnifiedExecuteRequest defines model for UnifiedExecuteRequest.
+type UnifiedExecuteRequest struct {
+	Collection *string        `json:"collection,omitempty"`
+	Limit      *uint32        `json:"limit,omitempty"`
+	Parameters *[]interface{} `json:"parameters,omitempty"`
+	Query      string         `json:"query"`
+}
+
+// UnifiedExplainRequest defines model for UnifiedExplainRequest.
+type UnifiedExplainRequest struct {
+	Collection *string `json:"collection,omitempty"`
+	Query      string  `json:"query"`
+}
+
+// UnifiedFederatedRequest defines model for UnifiedFederatedRequest.
+type UnifiedFederatedRequest struct {
+	Parameters *[]interface{} `json:"parameters,omitempty"`
+	Query      string         `json:"query"`
+}
+
+// UnifiedOpenValue Free-form JSON (the port's serde_json::Value rendering).
+type UnifiedOpenValue = interface{}
+
+// UnifiedPrepareRequest defines model for UnifiedPrepareRequest.
+type UnifiedPrepareRequest struct {
+	CacheResults *bool   `json:"cache_results,omitempty"`
+	Name         *string `json:"name,omitempty"`
+	Query        string  `json:"query"`
+	TtlSeconds   *uint64 `json:"ttl_seconds,omitempty"`
+}
+
+// UnifiedPrepareResponse defines model for UnifiedPrepareResponse.
+type UnifiedPrepareResponse struct {
+	StatementId string `json:"statement_id"`
+}
+
+// UnifiedPreparedStatsRequest defines model for UnifiedPreparedStatsRequest.
+type UnifiedPreparedStatsRequest struct {
+	StatementIds *[]string `json:"statement_ids,omitempty"`
+}
+
 // UniqueConstraintRequest defines model for UniqueConstraintRequest.
 type UniqueConstraintRequest struct {
 	Label    string `json:"label"`
@@ -4190,6 +4252,60 @@ type QueryTimeseriesParams struct {
 	XTenantID *string `json:"X-Tenant-ID,omitempty"`
 }
 
+// ExecuteDistributedQueryParams defines parameters for ExecuteDistributedQuery.
+type ExecuteDistributedQueryParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// ExecuteUnifiedQueryParams defines parameters for ExecuteUnifiedQuery.
+type ExecuteUnifiedQueryParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// ExecutePreparedStatementParams defines parameters for ExecutePreparedStatement.
+type ExecutePreparedStatementParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// ExplainUnifiedQueryParams defines parameters for ExplainUnifiedQuery.
+type ExplainUnifiedQueryParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// ExecuteFederatedQueryParams defines parameters for ExecuteFederatedQuery.
+type ExecuteFederatedQueryParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// ExecuteMultiModelQueryParams defines parameters for ExecuteMultiModelQuery.
+type ExecuteMultiModelQueryParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// PrepareStatementParams defines parameters for PrepareStatement.
+type PrepareStatementParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// GetPreparedStatsParams defines parameters for GetPreparedStats.
+type GetPreparedStatsParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
+// DeletePreparedStatementParams defines parameters for DeletePreparedStatement.
+type DeletePreparedStatementParams struct {
+	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
+	XTenantID *string `json:"X-Tenant-ID,omitempty"`
+}
+
 // GetHealthParams defines parameters for GetHealth.
 type GetHealthParams struct {
 	// XTenantID Optional explicit tenant selector. Applied only when there is no authenticated tenant context — a JWT tenant claim takes precedence, and a header that disagrees with the authenticated tenant is rejected. Absent ⇒ the default tenant. Tenant isolation is structural on the server; this header only selects the tenant.
@@ -4393,6 +4509,30 @@ type IngestTimeseriesJSONRequestBody = TsIngestRequest
 
 // QueryTimeseriesJSONRequestBody defines body for QueryTimeseries for application/json ContentType.
 type QueryTimeseriesJSONRequestBody = TsQueryRequest
+
+// ExecuteDistributedQueryJSONRequestBody defines body for ExecuteDistributedQuery for application/json ContentType.
+type ExecuteDistributedQueryJSONRequestBody = UnifiedDistributedRequest
+
+// ExecuteUnifiedQueryJSONRequestBody defines body for ExecuteUnifiedQuery for application/json ContentType.
+type ExecuteUnifiedQueryJSONRequestBody = UnifiedExecuteRequest
+
+// ExecutePreparedStatementJSONRequestBody defines body for ExecutePreparedStatement for application/json ContentType.
+type ExecutePreparedStatementJSONRequestBody = UnifiedExecutePreparedRequest
+
+// ExplainUnifiedQueryJSONRequestBody defines body for ExplainUnifiedQuery for application/json ContentType.
+type ExplainUnifiedQueryJSONRequestBody = UnifiedExplainRequest
+
+// ExecuteFederatedQueryJSONRequestBody defines body for ExecuteFederatedQuery for application/json ContentType.
+type ExecuteFederatedQueryJSONRequestBody = UnifiedFederatedRequest
+
+// ExecuteMultiModelQueryJSONRequestBody defines body for ExecuteMultiModelQuery for application/json ContentType.
+type ExecuteMultiModelQueryJSONRequestBody = UnifiedOpenValue
+
+// PrepareStatementJSONRequestBody defines body for PrepareStatement for application/json ContentType.
+type PrepareStatementJSONRequestBody = UnifiedPrepareRequest
+
+// GetPreparedStatsJSONRequestBody defines body for GetPreparedStats for application/json ContentType.
+type GetPreparedStatsJSONRequestBody = UnifiedPreparedStatsRequest
 
 // Getter for additional properties for CapabilitiesResponse. Returns the specified
 // element and whether it was found
@@ -7136,6 +7276,174 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/query (the `QueryTimeseries` operationId).
 	QueryTimeseries(ctx context.Context, collectionId string, params *QueryTimeseriesParams, body QueryTimeseriesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExecuteDistributedQueryWithBody Execute a distributed query.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/unified/distributed (the `ExecuteDistributedQuery` operationId).
+	ExecuteDistributedQueryWithBody(ctx context.Context, params *ExecuteDistributedQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExecuteDistributedQuery Execute a distributed query.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/unified/distributed (the `ExecuteDistributedQuery` operationId).
+	ExecuteDistributedQuery(ctx context.Context, params *ExecuteDistributedQueryParams, body ExecuteDistributedQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExecuteUnifiedQueryWithBody Execute a unified (UQL) query.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/unified/execute (the `ExecuteUnifiedQuery` operationId).
+	ExecuteUnifiedQueryWithBody(ctx context.Context, params *ExecuteUnifiedQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExecuteUnifiedQuery Execute a unified (UQL) query.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/unified/execute (the `ExecuteUnifiedQuery` operationId).
+	ExecuteUnifiedQuery(ctx context.Context, params *ExecuteUnifiedQueryParams, body ExecuteUnifiedQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExecutePreparedStatementWithBody Execute a prepared statement with parameters.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/unified/execute/{statement_id} (the `ExecutePreparedStatement` operationId).
+	ExecutePreparedStatementWithBody(ctx context.Context, statementId string, params *ExecutePreparedStatementParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExecutePreparedStatement Execute a prepared statement with parameters.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/unified/execute/{statement_id} (the `ExecutePreparedStatement` operationId).
+	ExecutePreparedStatement(ctx context.Context, statementId string, params *ExecutePreparedStatementParams, body ExecutePreparedStatementJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExplainUnifiedQueryWithBody Explain a unified query (plan, no execution).
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/unified/explain (the `ExplainUnifiedQuery` operationId).
+	ExplainUnifiedQueryWithBody(ctx context.Context, params *ExplainUnifiedQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExplainUnifiedQuery Explain a unified query (plan, no execution).
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/unified/explain (the `ExplainUnifiedQuery` operationId).
+	ExplainUnifiedQuery(ctx context.Context, params *ExplainUnifiedQueryParams, body ExplainUnifiedQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExecuteFederatedQueryWithBody Execute a federated query.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/unified/federated (the `ExecuteFederatedQuery` operationId).
+	ExecuteFederatedQueryWithBody(ctx context.Context, params *ExecuteFederatedQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExecuteFederatedQuery Execute a federated query.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/unified/federated (the `ExecuteFederatedQuery` operationId).
+	ExecuteFederatedQuery(ctx context.Context, params *ExecuteFederatedQueryParams, body ExecuteFederatedQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExecuteMultiModelQueryWithBody Execute a multi-model query (free-form body).
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/unified/multi-model (the `ExecuteMultiModelQuery` operationId).
+	ExecuteMultiModelQueryWithBody(ctx context.Context, params *ExecuteMultiModelQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExecuteMultiModelQuery Execute a multi-model query (free-form body).
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/unified/multi-model (the `ExecuteMultiModelQuery` operationId).
+	ExecuteMultiModelQuery(ctx context.Context, params *ExecuteMultiModelQueryParams, body ExecuteMultiModelQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PrepareStatementWithBody Prepare a statement for repeated execution.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/unified/prepare (the `PrepareStatement` operationId).
+	PrepareStatementWithBody(ctx context.Context, params *PrepareStatementParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PrepareStatement Prepare a statement for repeated execution.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/unified/prepare (the `PrepareStatement` operationId).
+	PrepareStatement(ctx context.Context, params *PrepareStatementParams, body PrepareStatementJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPreparedStatsWithBody Prepared-statement execution statistics.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v2/unified/prepared/stats (the `GetPreparedStats` operationId).
+	GetPreparedStatsWithBody(ctx context.Context, params *GetPreparedStatsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPreparedStats Prepared-statement execution statistics.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v2/unified/prepared/stats (the `GetPreparedStats` operationId).
+	GetPreparedStats(ctx context.Context, params *GetPreparedStatsParams, body GetPreparedStatsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeletePreparedStatement Delete a prepared statement.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Corresponds with DELETE /api/v2/unified/prepared/{statement_id} (the `DeletePreparedStatement` operationId).
+	DeletePreparedStatement(ctx context.Context, statementId string, params *DeletePreparedStatementParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetHealth Get server health.
 	//
@@ -10698,6 +11006,344 @@ func (c *Client) QueryTimeseriesWithBody(ctx context.Context, collectionId strin
 // Corresponds with POST /api/v2/timeseries/collections/{collection_id}/query (the `QueryTimeseries` operationId).
 func (c *Client) QueryTimeseries(ctx context.Context, collectionId string, params *QueryTimeseriesParams, body QueryTimeseriesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewQueryTimeseriesRequest(c.Server, collectionId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExecuteDistributedQueryWithBody Execute a distributed query.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/unified/distributed (the `ExecuteDistributedQuery` operationId).
+func (c *Client) ExecuteDistributedQueryWithBody(ctx context.Context, params *ExecuteDistributedQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExecuteDistributedQueryRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExecuteDistributedQuery Execute a distributed query.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/unified/distributed (the `ExecuteDistributedQuery` operationId).
+func (c *Client) ExecuteDistributedQuery(ctx context.Context, params *ExecuteDistributedQueryParams, body ExecuteDistributedQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExecuteDistributedQueryRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExecuteUnifiedQueryWithBody Execute a unified (UQL) query.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/unified/execute (the `ExecuteUnifiedQuery` operationId).
+func (c *Client) ExecuteUnifiedQueryWithBody(ctx context.Context, params *ExecuteUnifiedQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExecuteUnifiedQueryRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExecuteUnifiedQuery Execute a unified (UQL) query.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/unified/execute (the `ExecuteUnifiedQuery` operationId).
+func (c *Client) ExecuteUnifiedQuery(ctx context.Context, params *ExecuteUnifiedQueryParams, body ExecuteUnifiedQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExecuteUnifiedQueryRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExecutePreparedStatementWithBody Execute a prepared statement with parameters.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/unified/execute/{statement_id} (the `ExecutePreparedStatement` operationId).
+func (c *Client) ExecutePreparedStatementWithBody(ctx context.Context, statementId string, params *ExecutePreparedStatementParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExecutePreparedStatementRequestWithBody(c.Server, statementId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExecutePreparedStatement Execute a prepared statement with parameters.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/unified/execute/{statement_id} (the `ExecutePreparedStatement` operationId).
+func (c *Client) ExecutePreparedStatement(ctx context.Context, statementId string, params *ExecutePreparedStatementParams, body ExecutePreparedStatementJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExecutePreparedStatementRequest(c.Server, statementId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExplainUnifiedQueryWithBody Explain a unified query (plan, no execution).
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/unified/explain (the `ExplainUnifiedQuery` operationId).
+func (c *Client) ExplainUnifiedQueryWithBody(ctx context.Context, params *ExplainUnifiedQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExplainUnifiedQueryRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExplainUnifiedQuery Explain a unified query (plan, no execution).
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/unified/explain (the `ExplainUnifiedQuery` operationId).
+func (c *Client) ExplainUnifiedQuery(ctx context.Context, params *ExplainUnifiedQueryParams, body ExplainUnifiedQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExplainUnifiedQueryRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExecuteFederatedQueryWithBody Execute a federated query.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/unified/federated (the `ExecuteFederatedQuery` operationId).
+func (c *Client) ExecuteFederatedQueryWithBody(ctx context.Context, params *ExecuteFederatedQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExecuteFederatedQueryRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExecuteFederatedQuery Execute a federated query.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/unified/federated (the `ExecuteFederatedQuery` operationId).
+func (c *Client) ExecuteFederatedQuery(ctx context.Context, params *ExecuteFederatedQueryParams, body ExecuteFederatedQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExecuteFederatedQueryRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExecuteMultiModelQueryWithBody Execute a multi-model query (free-form body).
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/unified/multi-model (the `ExecuteMultiModelQuery` operationId).
+func (c *Client) ExecuteMultiModelQueryWithBody(ctx context.Context, params *ExecuteMultiModelQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExecuteMultiModelQueryRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExecuteMultiModelQuery Execute a multi-model query (free-form body).
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/unified/multi-model (the `ExecuteMultiModelQuery` operationId).
+func (c *Client) ExecuteMultiModelQuery(ctx context.Context, params *ExecuteMultiModelQueryParams, body ExecuteMultiModelQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExecuteMultiModelQueryRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PrepareStatementWithBody Prepare a statement for repeated execution.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/unified/prepare (the `PrepareStatement` operationId).
+func (c *Client) PrepareStatementWithBody(ctx context.Context, params *PrepareStatementParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPrepareStatementRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PrepareStatement Prepare a statement for repeated execution.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/unified/prepare (the `PrepareStatement` operationId).
+func (c *Client) PrepareStatement(ctx context.Context, params *PrepareStatementParams, body PrepareStatementJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPrepareStatementRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetPreparedStatsWithBody Prepared-statement execution statistics.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v2/unified/prepared/stats (the `GetPreparedStats` operationId).
+func (c *Client) GetPreparedStatsWithBody(ctx context.Context, params *GetPreparedStatsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPreparedStatsRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetPreparedStats Prepared-statement execution statistics.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v2/unified/prepared/stats (the `GetPreparedStats` operationId).
+func (c *Client) GetPreparedStats(ctx context.Context, params *GetPreparedStatsParams, body GetPreparedStatsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPreparedStatsRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeletePreparedStatement Delete a prepared statement.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Corresponds with DELETE /api/v2/unified/prepared/{statement_id} (the `DeletePreparedStatement` operationId).
+func (c *Client) DeletePreparedStatement(ctx context.Context, statementId string, params *DeletePreparedStatementParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeletePreparedStatementRequest(c.Server, statementId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -17137,6 +17783,502 @@ func NewQueryTimeseriesRequestWithBody(server string, collectionId string, param
 	return req, nil
 }
 
+// NewExecuteDistributedQueryRequest calls the generic ExecuteDistributedQuery builder with application/json body
+func NewExecuteDistributedQueryRequest(server string, params *ExecuteDistributedQueryParams, body ExecuteDistributedQueryJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewExecuteDistributedQueryRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewExecuteDistributedQueryRequestWithBody constructs an http.Request for the ExecuteDistributedQuery method, with any body, and a specified content type
+func NewExecuteDistributedQueryRequestWithBody(server string, params *ExecuteDistributedQueryParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/unified/distributed")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewExecuteUnifiedQueryRequest calls the generic ExecuteUnifiedQuery builder with application/json body
+func NewExecuteUnifiedQueryRequest(server string, params *ExecuteUnifiedQueryParams, body ExecuteUnifiedQueryJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewExecuteUnifiedQueryRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewExecuteUnifiedQueryRequestWithBody constructs an http.Request for the ExecuteUnifiedQuery method, with any body, and a specified content type
+func NewExecuteUnifiedQueryRequestWithBody(server string, params *ExecuteUnifiedQueryParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/unified/execute")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewExecutePreparedStatementRequest calls the generic ExecutePreparedStatement builder with application/json body
+func NewExecutePreparedStatementRequest(server string, statementId string, params *ExecutePreparedStatementParams, body ExecutePreparedStatementJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewExecutePreparedStatementRequestWithBody(server, statementId, params, "application/json", bodyReader)
+}
+
+// NewExecutePreparedStatementRequestWithBody constructs an http.Request for the ExecutePreparedStatement method, with any body, and a specified content type
+func NewExecutePreparedStatementRequestWithBody(server string, statementId string, params *ExecutePreparedStatementParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "statement_id", statementId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/unified/execute/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewExplainUnifiedQueryRequest calls the generic ExplainUnifiedQuery builder with application/json body
+func NewExplainUnifiedQueryRequest(server string, params *ExplainUnifiedQueryParams, body ExplainUnifiedQueryJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewExplainUnifiedQueryRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewExplainUnifiedQueryRequestWithBody constructs an http.Request for the ExplainUnifiedQuery method, with any body, and a specified content type
+func NewExplainUnifiedQueryRequestWithBody(server string, params *ExplainUnifiedQueryParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/unified/explain")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewExecuteFederatedQueryRequest calls the generic ExecuteFederatedQuery builder with application/json body
+func NewExecuteFederatedQueryRequest(server string, params *ExecuteFederatedQueryParams, body ExecuteFederatedQueryJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewExecuteFederatedQueryRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewExecuteFederatedQueryRequestWithBody constructs an http.Request for the ExecuteFederatedQuery method, with any body, and a specified content type
+func NewExecuteFederatedQueryRequestWithBody(server string, params *ExecuteFederatedQueryParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/unified/federated")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewExecuteMultiModelQueryRequest calls the generic ExecuteMultiModelQuery builder with application/json body
+func NewExecuteMultiModelQueryRequest(server string, params *ExecuteMultiModelQueryParams, body ExecuteMultiModelQueryJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewExecuteMultiModelQueryRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewExecuteMultiModelQueryRequestWithBody constructs an http.Request for the ExecuteMultiModelQuery method, with any body, and a specified content type
+func NewExecuteMultiModelQueryRequestWithBody(server string, params *ExecuteMultiModelQueryParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/unified/multi-model")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewPrepareStatementRequest calls the generic PrepareStatement builder with application/json body
+func NewPrepareStatementRequest(server string, params *PrepareStatementParams, body PrepareStatementJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPrepareStatementRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewPrepareStatementRequestWithBody constructs an http.Request for the PrepareStatement method, with any body, and a specified content type
+func NewPrepareStatementRequestWithBody(server string, params *PrepareStatementParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/unified/prepare")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewGetPreparedStatsRequest calls the generic GetPreparedStats builder with application/json body
+func NewGetPreparedStatsRequest(server string, params *GetPreparedStatsParams, body GetPreparedStatsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewGetPreparedStatsRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewGetPreparedStatsRequestWithBody constructs an http.Request for the GetPreparedStats method, with any body, and a specified content type
+func NewGetPreparedStatsRequestWithBody(server string, params *GetPreparedStatsParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/unified/prepared/stats")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewDeletePreparedStatementRequest constructs an http.Request for the DeletePreparedStatement method
+func NewDeletePreparedStatementRequest(server string, statementId string, params *DeletePreparedStatementParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "statement_id", statementId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/unified/prepared/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XTenantID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Tenant-ID", *params.XTenantID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Tenant-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
 // NewGetHealthRequest constructs an http.Request for the GetHealth method
 func NewGetHealthRequest(server string, params *GetHealthParams) (*http.Request, error) {
 	var err error
@@ -19239,6 +20381,176 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v2/timeseries/collections/{collection_id}/query (the `QueryTimeseries` operationId).
 	QueryTimeseriesWithResponse(ctx context.Context, collectionId string, params *QueryTimeseriesParams, body QueryTimeseriesJSONRequestBody, reqEditors ...RequestEditorFn) (*QueryTimeseriesHTTPResp, error)
+
+	// ExecuteDistributedQueryWithBodyWithResponse Execute a distributed query.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/unified/distributed (the `ExecuteDistributedQuery` operationId).
+	ExecuteDistributedQueryWithBodyWithResponse(ctx context.Context, params *ExecuteDistributedQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecuteDistributedQueryHTTPResp, error)
+
+	// ExecuteDistributedQueryWithResponse Execute a distributed query.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/unified/distributed (the `ExecuteDistributedQuery` operationId).
+	ExecuteDistributedQueryWithResponse(ctx context.Context, params *ExecuteDistributedQueryParams, body ExecuteDistributedQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*ExecuteDistributedQueryHTTPResp, error)
+
+	// ExecuteUnifiedQueryWithBodyWithResponse Execute a unified (UQL) query.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/unified/execute (the `ExecuteUnifiedQuery` operationId).
+	ExecuteUnifiedQueryWithBodyWithResponse(ctx context.Context, params *ExecuteUnifiedQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecuteUnifiedQueryHTTPResp, error)
+
+	// ExecuteUnifiedQueryWithResponse Execute a unified (UQL) query.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/unified/execute (the `ExecuteUnifiedQuery` operationId).
+	ExecuteUnifiedQueryWithResponse(ctx context.Context, params *ExecuteUnifiedQueryParams, body ExecuteUnifiedQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*ExecuteUnifiedQueryHTTPResp, error)
+
+	// ExecutePreparedStatementWithBodyWithResponse Execute a prepared statement with parameters.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/unified/execute/{statement_id} (the `ExecutePreparedStatement` operationId).
+	ExecutePreparedStatementWithBodyWithResponse(ctx context.Context, statementId string, params *ExecutePreparedStatementParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecutePreparedStatementHTTPResp, error)
+
+	// ExecutePreparedStatementWithResponse Execute a prepared statement with parameters.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/unified/execute/{statement_id} (the `ExecutePreparedStatement` operationId).
+	ExecutePreparedStatementWithResponse(ctx context.Context, statementId string, params *ExecutePreparedStatementParams, body ExecutePreparedStatementJSONRequestBody, reqEditors ...RequestEditorFn) (*ExecutePreparedStatementHTTPResp, error)
+
+	// ExplainUnifiedQueryWithBodyWithResponse Explain a unified query (plan, no execution).
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/unified/explain (the `ExplainUnifiedQuery` operationId).
+	ExplainUnifiedQueryWithBodyWithResponse(ctx context.Context, params *ExplainUnifiedQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExplainUnifiedQueryHTTPResp, error)
+
+	// ExplainUnifiedQueryWithResponse Explain a unified query (plan, no execution).
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/unified/explain (the `ExplainUnifiedQuery` operationId).
+	ExplainUnifiedQueryWithResponse(ctx context.Context, params *ExplainUnifiedQueryParams, body ExplainUnifiedQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*ExplainUnifiedQueryHTTPResp, error)
+
+	// ExecuteFederatedQueryWithBodyWithResponse Execute a federated query.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/unified/federated (the `ExecuteFederatedQuery` operationId).
+	ExecuteFederatedQueryWithBodyWithResponse(ctx context.Context, params *ExecuteFederatedQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecuteFederatedQueryHTTPResp, error)
+
+	// ExecuteFederatedQueryWithResponse Execute a federated query.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/unified/federated (the `ExecuteFederatedQuery` operationId).
+	ExecuteFederatedQueryWithResponse(ctx context.Context, params *ExecuteFederatedQueryParams, body ExecuteFederatedQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*ExecuteFederatedQueryHTTPResp, error)
+
+	// ExecuteMultiModelQueryWithBodyWithResponse Execute a multi-model query (free-form body).
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/unified/multi-model (the `ExecuteMultiModelQuery` operationId).
+	ExecuteMultiModelQueryWithBodyWithResponse(ctx context.Context, params *ExecuteMultiModelQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecuteMultiModelQueryHTTPResp, error)
+
+	// ExecuteMultiModelQueryWithResponse Execute a multi-model query (free-form body).
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/unified/multi-model (the `ExecuteMultiModelQuery` operationId).
+	ExecuteMultiModelQueryWithResponse(ctx context.Context, params *ExecuteMultiModelQueryParams, body ExecuteMultiModelQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*ExecuteMultiModelQueryHTTPResp, error)
+
+	// PrepareStatementWithBodyWithResponse Prepare a statement for repeated execution.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/unified/prepare (the `PrepareStatement` operationId).
+	PrepareStatementWithBodyWithResponse(ctx context.Context, params *PrepareStatementParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PrepareStatementHTTPResp, error)
+
+	// PrepareStatementWithResponse Prepare a statement for repeated execution.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/unified/prepare (the `PrepareStatement` operationId).
+	PrepareStatementWithResponse(ctx context.Context, params *PrepareStatementParams, body PrepareStatementJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareStatementHTTPResp, error)
+
+	// GetPreparedStatsWithBodyWithResponse Prepared-statement execution statistics.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/unified/prepared/stats (the `GetPreparedStats` operationId).
+	GetPreparedStatsWithBodyWithResponse(ctx context.Context, params *GetPreparedStatsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GetPreparedStatsHTTPResp, error)
+
+	// GetPreparedStatsWithResponse Prepared-statement execution statistics.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v2/unified/prepared/stats (the `GetPreparedStats` operationId).
+	GetPreparedStatsWithResponse(ctx context.Context, params *GetPreparedStatsParams, body GetPreparedStatsJSONRequestBody, reqEditors ...RequestEditorFn) (*GetPreparedStatsHTTPResp, error)
+
+	// DeletePreparedStatementWithResponse Delete a prepared statement.
+	//
+	// The optional `X-Tenant-ID` header is not consulted by this
+	// handler — unified queries run without tenant selection.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v2/unified/prepared/{statement_id} (the `DeletePreparedStatement` operationId).
+	DeletePreparedStatementWithResponse(ctx context.Context, statementId string, params *DeletePreparedStatementParams, reqEditors ...RequestEditorFn) (*DeletePreparedStatementHTTPResp, error)
 
 	// GetHealthWithResponse Get server health.
 	//
@@ -25381,6 +26693,508 @@ func (r QueryTimeseriesHTTPResp) ContentType() string {
 	return ""
 }
 
+type ExecuteDistributedQueryHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UnifiedOpenValue
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *UnifiedBareError
+	// JSON501 the response for an HTTP 501 `application/json` response
+	JSON501 *UnifiedBareError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ExecuteDistributedQueryHTTPResp) GetJSON200() *UnifiedOpenValue {
+	return r.JSON200
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ExecuteDistributedQueryHTTPResp) GetJSON500() *UnifiedBareError {
+	return r.JSON500
+}
+
+// GetJSON501 returns the response for an HTTP 501 `application/json` response
+func (r ExecuteDistributedQueryHTTPResp) GetJSON501() *UnifiedBareError {
+	return r.JSON501
+}
+
+// GetBody returns the raw response body bytes
+func (r ExecuteDistributedQueryHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExecuteDistributedQueryHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExecuteDistributedQueryHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExecuteDistributedQueryHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ExecuteUnifiedQueryHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UnifiedOpenValue
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *UnifiedBareError
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *UnifiedBareError
+	// JSON501 the response for an HTTP 501 `application/json` response
+	JSON501 *UnifiedBareError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ExecuteUnifiedQueryHTTPResp) GetJSON200() *UnifiedOpenValue {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ExecuteUnifiedQueryHTTPResp) GetJSON400() *UnifiedBareError {
+	return r.JSON400
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ExecuteUnifiedQueryHTTPResp) GetJSON500() *UnifiedBareError {
+	return r.JSON500
+}
+
+// GetJSON501 returns the response for an HTTP 501 `application/json` response
+func (r ExecuteUnifiedQueryHTTPResp) GetJSON501() *UnifiedBareError {
+	return r.JSON501
+}
+
+// GetBody returns the raw response body bytes
+func (r ExecuteUnifiedQueryHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExecuteUnifiedQueryHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExecuteUnifiedQueryHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExecuteUnifiedQueryHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ExecutePreparedStatementHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UnifiedOpenValue
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *UnifiedBareError
+	// JSON501 the response for an HTTP 501 `application/json` response
+	JSON501 *UnifiedBareError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ExecutePreparedStatementHTTPResp) GetJSON200() *UnifiedOpenValue {
+	return r.JSON200
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ExecutePreparedStatementHTTPResp) GetJSON500() *UnifiedBareError {
+	return r.JSON500
+}
+
+// GetJSON501 returns the response for an HTTP 501 `application/json` response
+func (r ExecutePreparedStatementHTTPResp) GetJSON501() *UnifiedBareError {
+	return r.JSON501
+}
+
+// GetBody returns the raw response body bytes
+func (r ExecutePreparedStatementHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExecutePreparedStatementHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExecutePreparedStatementHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExecutePreparedStatementHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ExplainUnifiedQueryHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UnifiedOpenValue
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *UnifiedBareError
+	// JSON501 the response for an HTTP 501 `application/json` response
+	JSON501 *UnifiedBareError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ExplainUnifiedQueryHTTPResp) GetJSON200() *UnifiedOpenValue {
+	return r.JSON200
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ExplainUnifiedQueryHTTPResp) GetJSON500() *UnifiedBareError {
+	return r.JSON500
+}
+
+// GetJSON501 returns the response for an HTTP 501 `application/json` response
+func (r ExplainUnifiedQueryHTTPResp) GetJSON501() *UnifiedBareError {
+	return r.JSON501
+}
+
+// GetBody returns the raw response body bytes
+func (r ExplainUnifiedQueryHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExplainUnifiedQueryHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExplainUnifiedQueryHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExplainUnifiedQueryHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ExecuteFederatedQueryHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UnifiedOpenValue
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *UnifiedBareError
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *UnifiedBareError
+	// JSON501 the response for an HTTP 501 `application/json` response
+	JSON501 *UnifiedBareError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ExecuteFederatedQueryHTTPResp) GetJSON200() *UnifiedOpenValue {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ExecuteFederatedQueryHTTPResp) GetJSON400() *UnifiedBareError {
+	return r.JSON400
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ExecuteFederatedQueryHTTPResp) GetJSON500() *UnifiedBareError {
+	return r.JSON500
+}
+
+// GetJSON501 returns the response for an HTTP 501 `application/json` response
+func (r ExecuteFederatedQueryHTTPResp) GetJSON501() *UnifiedBareError {
+	return r.JSON501
+}
+
+// GetBody returns the raw response body bytes
+func (r ExecuteFederatedQueryHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExecuteFederatedQueryHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExecuteFederatedQueryHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExecuteFederatedQueryHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ExecuteMultiModelQueryHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UnifiedOpenValue
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *UnifiedBareError
+	// JSON501 the response for an HTTP 501 `application/json` response
+	JSON501 *UnifiedBareError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ExecuteMultiModelQueryHTTPResp) GetJSON200() *UnifiedOpenValue {
+	return r.JSON200
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ExecuteMultiModelQueryHTTPResp) GetJSON500() *UnifiedBareError {
+	return r.JSON500
+}
+
+// GetJSON501 returns the response for an HTTP 501 `application/json` response
+func (r ExecuteMultiModelQueryHTTPResp) GetJSON501() *UnifiedBareError {
+	return r.JSON501
+}
+
+// GetBody returns the raw response body bytes
+func (r ExecuteMultiModelQueryHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExecuteMultiModelQueryHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExecuteMultiModelQueryHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExecuteMultiModelQueryHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PrepareStatementHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *UnifiedPrepareResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *UnifiedBareError
+	// JSON501 the response for an HTTP 501 `application/json` response
+	JSON501 *UnifiedBareError
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r PrepareStatementHTTPResp) GetJSON201() *UnifiedPrepareResponse {
+	return r.JSON201
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r PrepareStatementHTTPResp) GetJSON500() *UnifiedBareError {
+	return r.JSON500
+}
+
+// GetJSON501 returns the response for an HTTP 501 `application/json` response
+func (r PrepareStatementHTTPResp) GetJSON501() *UnifiedBareError {
+	return r.JSON501
+}
+
+// GetBody returns the raw response body bytes
+func (r PrepareStatementHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PrepareStatementHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PrepareStatementHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PrepareStatementHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetPreparedStatsHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UnifiedOpenValue
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *UnifiedBareError
+	// JSON501 the response for an HTTP 501 `application/json` response
+	JSON501 *UnifiedBareError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetPreparedStatsHTTPResp) GetJSON200() *UnifiedOpenValue {
+	return r.JSON200
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetPreparedStatsHTTPResp) GetJSON500() *UnifiedBareError {
+	return r.JSON500
+}
+
+// GetJSON501 returns the response for an HTTP 501 `application/json` response
+func (r GetPreparedStatsHTTPResp) GetJSON501() *UnifiedBareError {
+	return r.JSON501
+}
+
+// GetBody returns the raw response body bytes
+func (r GetPreparedStatsHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPreparedStatsHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPreparedStatsHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPreparedStatsHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeletePreparedStatementHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *UnifiedBareError
+	// JSON501 the response for an HTTP 501 `application/json` response
+	JSON501 *UnifiedBareError
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeletePreparedStatementHTTPResp) GetJSON500() *UnifiedBareError {
+	return r.JSON500
+}
+
+// GetJSON501 returns the response for an HTTP 501 `application/json` response
+func (r DeletePreparedStatementHTTPResp) GetJSON501() *UnifiedBareError {
+	return r.JSON501
+}
+
+// GetBody returns the raw response body bytes
+func (r DeletePreparedStatementHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeletePreparedStatementHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeletePreparedStatementHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeletePreparedStatementHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetHealthHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -28473,6 +30287,278 @@ func (c *ClientWithResponses) QueryTimeseriesWithResponse(ctx context.Context, c
 		return nil, err
 	}
 	return ParseQueryTimeseriesHTTPResp(rsp)
+}
+
+// ExecuteDistributedQueryWithBodyWithResponse Execute a distributed query.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/unified/distributed (the `ExecuteDistributedQuery` operationId).
+func (c *ClientWithResponses) ExecuteDistributedQueryWithBodyWithResponse(ctx context.Context, params *ExecuteDistributedQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecuteDistributedQueryHTTPResp, error) {
+	rsp, err := c.ExecuteDistributedQueryWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExecuteDistributedQueryHTTPResp(rsp)
+}
+
+// ExecuteDistributedQueryWithResponse Execute a distributed query.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/unified/distributed (the `ExecuteDistributedQuery` operationId).
+func (c *ClientWithResponses) ExecuteDistributedQueryWithResponse(ctx context.Context, params *ExecuteDistributedQueryParams, body ExecuteDistributedQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*ExecuteDistributedQueryHTTPResp, error) {
+	rsp, err := c.ExecuteDistributedQuery(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExecuteDistributedQueryHTTPResp(rsp)
+}
+
+// ExecuteUnifiedQueryWithBodyWithResponse Execute a unified (UQL) query.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/unified/execute (the `ExecuteUnifiedQuery` operationId).
+func (c *ClientWithResponses) ExecuteUnifiedQueryWithBodyWithResponse(ctx context.Context, params *ExecuteUnifiedQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecuteUnifiedQueryHTTPResp, error) {
+	rsp, err := c.ExecuteUnifiedQueryWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExecuteUnifiedQueryHTTPResp(rsp)
+}
+
+// ExecuteUnifiedQueryWithResponse Execute a unified (UQL) query.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/unified/execute (the `ExecuteUnifiedQuery` operationId).
+func (c *ClientWithResponses) ExecuteUnifiedQueryWithResponse(ctx context.Context, params *ExecuteUnifiedQueryParams, body ExecuteUnifiedQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*ExecuteUnifiedQueryHTTPResp, error) {
+	rsp, err := c.ExecuteUnifiedQuery(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExecuteUnifiedQueryHTTPResp(rsp)
+}
+
+// ExecutePreparedStatementWithBodyWithResponse Execute a prepared statement with parameters.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/unified/execute/{statement_id} (the `ExecutePreparedStatement` operationId).
+func (c *ClientWithResponses) ExecutePreparedStatementWithBodyWithResponse(ctx context.Context, statementId string, params *ExecutePreparedStatementParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecutePreparedStatementHTTPResp, error) {
+	rsp, err := c.ExecutePreparedStatementWithBody(ctx, statementId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExecutePreparedStatementHTTPResp(rsp)
+}
+
+// ExecutePreparedStatementWithResponse Execute a prepared statement with parameters.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/unified/execute/{statement_id} (the `ExecutePreparedStatement` operationId).
+func (c *ClientWithResponses) ExecutePreparedStatementWithResponse(ctx context.Context, statementId string, params *ExecutePreparedStatementParams, body ExecutePreparedStatementJSONRequestBody, reqEditors ...RequestEditorFn) (*ExecutePreparedStatementHTTPResp, error) {
+	rsp, err := c.ExecutePreparedStatement(ctx, statementId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExecutePreparedStatementHTTPResp(rsp)
+}
+
+// ExplainUnifiedQueryWithBodyWithResponse Explain a unified query (plan, no execution).
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/unified/explain (the `ExplainUnifiedQuery` operationId).
+func (c *ClientWithResponses) ExplainUnifiedQueryWithBodyWithResponse(ctx context.Context, params *ExplainUnifiedQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExplainUnifiedQueryHTTPResp, error) {
+	rsp, err := c.ExplainUnifiedQueryWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExplainUnifiedQueryHTTPResp(rsp)
+}
+
+// ExplainUnifiedQueryWithResponse Explain a unified query (plan, no execution).
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/unified/explain (the `ExplainUnifiedQuery` operationId).
+func (c *ClientWithResponses) ExplainUnifiedQueryWithResponse(ctx context.Context, params *ExplainUnifiedQueryParams, body ExplainUnifiedQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*ExplainUnifiedQueryHTTPResp, error) {
+	rsp, err := c.ExplainUnifiedQuery(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExplainUnifiedQueryHTTPResp(rsp)
+}
+
+// ExecuteFederatedQueryWithBodyWithResponse Execute a federated query.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/unified/federated (the `ExecuteFederatedQuery` operationId).
+func (c *ClientWithResponses) ExecuteFederatedQueryWithBodyWithResponse(ctx context.Context, params *ExecuteFederatedQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecuteFederatedQueryHTTPResp, error) {
+	rsp, err := c.ExecuteFederatedQueryWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExecuteFederatedQueryHTTPResp(rsp)
+}
+
+// ExecuteFederatedQueryWithResponse Execute a federated query.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/unified/federated (the `ExecuteFederatedQuery` operationId).
+func (c *ClientWithResponses) ExecuteFederatedQueryWithResponse(ctx context.Context, params *ExecuteFederatedQueryParams, body ExecuteFederatedQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*ExecuteFederatedQueryHTTPResp, error) {
+	rsp, err := c.ExecuteFederatedQuery(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExecuteFederatedQueryHTTPResp(rsp)
+}
+
+// ExecuteMultiModelQueryWithBodyWithResponse Execute a multi-model query (free-form body).
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/unified/multi-model (the `ExecuteMultiModelQuery` operationId).
+func (c *ClientWithResponses) ExecuteMultiModelQueryWithBodyWithResponse(ctx context.Context, params *ExecuteMultiModelQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecuteMultiModelQueryHTTPResp, error) {
+	rsp, err := c.ExecuteMultiModelQueryWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExecuteMultiModelQueryHTTPResp(rsp)
+}
+
+// ExecuteMultiModelQueryWithResponse Execute a multi-model query (free-form body).
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/unified/multi-model (the `ExecuteMultiModelQuery` operationId).
+func (c *ClientWithResponses) ExecuteMultiModelQueryWithResponse(ctx context.Context, params *ExecuteMultiModelQueryParams, body ExecuteMultiModelQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*ExecuteMultiModelQueryHTTPResp, error) {
+	rsp, err := c.ExecuteMultiModelQuery(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExecuteMultiModelQueryHTTPResp(rsp)
+}
+
+// PrepareStatementWithBodyWithResponse Prepare a statement for repeated execution.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/unified/prepare (the `PrepareStatement` operationId).
+func (c *ClientWithResponses) PrepareStatementWithBodyWithResponse(ctx context.Context, params *PrepareStatementParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PrepareStatementHTTPResp, error) {
+	rsp, err := c.PrepareStatementWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePrepareStatementHTTPResp(rsp)
+}
+
+// PrepareStatementWithResponse Prepare a statement for repeated execution.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/unified/prepare (the `PrepareStatement` operationId).
+func (c *ClientWithResponses) PrepareStatementWithResponse(ctx context.Context, params *PrepareStatementParams, body PrepareStatementJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareStatementHTTPResp, error) {
+	rsp, err := c.PrepareStatement(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePrepareStatementHTTPResp(rsp)
+}
+
+// GetPreparedStatsWithBodyWithResponse Prepared-statement execution statistics.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/unified/prepared/stats (the `GetPreparedStats` operationId).
+func (c *ClientWithResponses) GetPreparedStatsWithBodyWithResponse(ctx context.Context, params *GetPreparedStatsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GetPreparedStatsHTTPResp, error) {
+	rsp, err := c.GetPreparedStatsWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPreparedStatsHTTPResp(rsp)
+}
+
+// GetPreparedStatsWithResponse Prepared-statement execution statistics.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v2/unified/prepared/stats (the `GetPreparedStats` operationId).
+func (c *ClientWithResponses) GetPreparedStatsWithResponse(ctx context.Context, params *GetPreparedStatsParams, body GetPreparedStatsJSONRequestBody, reqEditors ...RequestEditorFn) (*GetPreparedStatsHTTPResp, error) {
+	rsp, err := c.GetPreparedStats(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPreparedStatsHTTPResp(rsp)
+}
+
+// DeletePreparedStatementWithResponse Delete a prepared statement.
+//
+// The optional `X-Tenant-ID` header is not consulted by this
+// handler — unified queries run without tenant selection.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v2/unified/prepared/{statement_id} (the `DeletePreparedStatement` operationId).
+func (c *ClientWithResponses) DeletePreparedStatementWithResponse(ctx context.Context, statementId string, params *DeletePreparedStatementParams, reqEditors ...RequestEditorFn) (*DeletePreparedStatementHTTPResp, error) {
+	rsp, err := c.DeletePreparedStatement(ctx, statementId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeletePreparedStatementHTTPResp(rsp)
 }
 
 // GetHealthWithResponse Get server health.
@@ -32974,6 +35060,376 @@ func ParseQueryTimeseriesHTTPResp(rsp *http.Response) (*QueryTimeseriesHTTPResp,
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseExecuteDistributedQueryHTTPResp parses an HTTP response from a ExecuteDistributedQueryWithResponse call
+func ParseExecuteDistributedQueryHTTPResp(rsp *http.Response) (*ExecuteDistributedQueryHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExecuteDistributedQueryHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UnifiedOpenValue
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest UnifiedBareError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
+		var dest UnifiedBareError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON501 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseExecuteUnifiedQueryHTTPResp parses an HTTP response from a ExecuteUnifiedQueryWithResponse call
+func ParseExecuteUnifiedQueryHTTPResp(rsp *http.Response) (*ExecuteUnifiedQueryHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExecuteUnifiedQueryHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UnifiedOpenValue
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest UnifiedBareError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest UnifiedBareError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
+		var dest UnifiedBareError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON501 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseExecutePreparedStatementHTTPResp parses an HTTP response from a ExecutePreparedStatementWithResponse call
+func ParseExecutePreparedStatementHTTPResp(rsp *http.Response) (*ExecutePreparedStatementHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExecutePreparedStatementHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UnifiedOpenValue
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest UnifiedBareError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
+		var dest UnifiedBareError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON501 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseExplainUnifiedQueryHTTPResp parses an HTTP response from a ExplainUnifiedQueryWithResponse call
+func ParseExplainUnifiedQueryHTTPResp(rsp *http.Response) (*ExplainUnifiedQueryHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExplainUnifiedQueryHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UnifiedOpenValue
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest UnifiedBareError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
+		var dest UnifiedBareError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON501 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseExecuteFederatedQueryHTTPResp parses an HTTP response from a ExecuteFederatedQueryWithResponse call
+func ParseExecuteFederatedQueryHTTPResp(rsp *http.Response) (*ExecuteFederatedQueryHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExecuteFederatedQueryHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UnifiedOpenValue
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest UnifiedBareError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest UnifiedBareError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
+		var dest UnifiedBareError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON501 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseExecuteMultiModelQueryHTTPResp parses an HTTP response from a ExecuteMultiModelQueryWithResponse call
+func ParseExecuteMultiModelQueryHTTPResp(rsp *http.Response) (*ExecuteMultiModelQueryHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExecuteMultiModelQueryHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UnifiedOpenValue
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest UnifiedBareError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
+		var dest UnifiedBareError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON501 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePrepareStatementHTTPResp parses an HTTP response from a PrepareStatementWithResponse call
+func ParsePrepareStatementHTTPResp(rsp *http.Response) (*PrepareStatementHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PrepareStatementHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest UnifiedPrepareResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest UnifiedBareError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
+		var dest UnifiedBareError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON501 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetPreparedStatsHTTPResp parses an HTTP response from a GetPreparedStatsWithResponse call
+func ParseGetPreparedStatsHTTPResp(rsp *http.Response) (*GetPreparedStatsHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPreparedStatsHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UnifiedOpenValue
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest UnifiedBareError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
+		var dest UnifiedBareError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON501 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeletePreparedStatementHTTPResp parses an HTTP response from a DeletePreparedStatementWithResponse call
+func ParseDeletePreparedStatementHTTPResp(rsp *http.Response) (*DeletePreparedStatementHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeletePreparedStatementHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest UnifiedBareError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
+		var dest UnifiedBareError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON501 = &dest
 
 	}
 
