@@ -362,9 +362,18 @@ become eval-eligible when they ship.
   workstream, not this program).
 * **prepared-SQL / unified query** — `/api/v2/unified/*` (9 routes:
   execute, multi-model, federated, distributed, explain, prepare,
-  execute/{id}, prepared/{id} DELETE, prepared/stats) ALL return honest
-  501s today (root-crate port returns Not Implemented until Phase
-  9.9/9.10). Stub rule: exposed when wired, not before.
+  execute/{id}, prepared/{id} DELETE, prepared/stats). CORRECTED
+  (wave-8 round-2 review): these are LIVE production routes, not stubs —
+  the port has been wired in both server modes since Phase 9.9
+  (`multi_server.rs` always passes `query_adapter: Some(...)`; the v2
+  router mounts them unconditionally; `UnifiedQueryPortImpl` executes
+  real UQL→SQL→federated queries, `prepare_statement` returns 201 and
+  prepared DELETE returns 204). The earlier "ALL return honest 501s"
+  premise was stale — the 501 branch fires only on port-error string
+  matches, not by default. Disposition: **live, needs wave-9 exposure**
+  (they are exactly the live-but-unspec'd condition this program
+  exists to close; exposing them is a spec+SDK wave, not a wiring
+  change).
 * **events** — no REST surface exists (gRPC/eventlog only).
 * **model-registries** — already exposed (4 utoipa-annotated paths in
   the generated core).
