@@ -14,12 +14,17 @@ use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use proximadb_data_model::ProximaValue;
 use proximadb_runtime::UnifiedQueryPort;
+// The FILTER-lowering spelling (int-array binary, ns temporals) — named
+// for what it IS, mirroring the SqlValue twin sql_value_to_filter_literal;
+// the canonical (base64) renderer lives in records under a different name.
+use proximadb_search_types::sql_value_filter::proxima_value_to_filter_literal as proxima_filter_literal;
 use tracing::{debug, info};
 
 use crate::catalog::CatalogManager;
 use crate::query::authority_context::{AuthoritySource, resolve_catalog_authority_context};
 use crate::query::explain::StorageAuthorityExplanation;
 use crate::query::multimodal::plan::PlanContext;
+use crate::query::prepared::statement::{escape_sql_text, sql_quote};
 use crate::query::unified::uql::{
     ComparisonOperator, Condition, SelectStatement, UQLParser, UQLStatement, Value,
 };
@@ -29,6 +34,19 @@ use crate::query::{
 };
 
 // ── Conversion helpers ────────────────────────────────────────────────────────
+
+/// The filter-lowering JSON as param/literal TEXT: strings come out BARE
+/// (double-quoting the JSON text would embed the quotes in the literal
+/// itself), structured values as their JSON text. One home for BOTH SQL
+/// binding paths (they must render the same text for federated equality);
+/// the embedded Python TEXT surface keeps its own policy (Json payloads
+/// stay JSON-quoted there — see binding's proxima_value_to_string).
+fn filter_literal_text(json: serde_json::Value) -> String {
+    match json {
+        serde_json::Value::String(s) => s,
+        json => json.to_string(),
+    }
+}
 
 fn proxima_value_to_param(value: &ProximaValue) -> ParameterValue {
     match value {
@@ -47,53 +65,34 @@ fn proxima_value_to_param(value: &ProximaValue) -> ParameterValue {
         ProximaValue::Float64(v) => ParameterValue::Float(*v),
         ProximaValue::Boolean(v) => ParameterValue::Bool(*v),
         ProximaValue::DenseVector(values) => ParameterValue::Vector(values.clone()),
+        // Json params lower to the same filter-literal TEXT as the
+        // literal path (a root-string Json is BARE — the serde spelling
+        // embedded double quotes and could never match).
         ProximaValue::Json(value) | ProximaValue::Jsonb(value) => {
-            ParameterValue::Json(value.clone())
+            ParameterValue::String(filter_literal_text(value.clone()))
         }
         ProximaValue::Array(values) => ParameterValue::Json(serde_json::Value::Array(
-            values.iter().map(proxima_value_to_json).collect(),
+            values.iter().map(proxima_filter_literal).collect(),
         )),
         ProximaValue::Map(values) | ProximaValue::Struct(values) => {
             ParameterValue::Json(serde_json::Value::Object(
                 values
                     .iter()
-                    .map(|(key, value)| (key.clone(), proxima_value_to_json(value)))
+                    .map(|(key, value)| (key.clone(), proxima_filter_literal(value)))
                     .collect(),
             ))
         }
         ProximaValue::Null => ParameterValue::Null,
-        other => ParameterValue::String(format!("{other:?}")),
-    }
-}
-
-fn proxima_value_to_json(value: &ProximaValue) -> serde_json::Value {
-    match value {
-        ProximaValue::String(s) | ProximaValue::Symbol(s) => serde_json::Value::String(s.clone()),
-        ProximaValue::Int8(v) => serde_json::json!(v),
-        ProximaValue::Int16(v) => serde_json::json!(v),
-        ProximaValue::Int32(v) => serde_json::json!(v),
-        ProximaValue::Int64(v) => serde_json::json!(v),
-        ProximaValue::UInt8(v) => serde_json::json!(v),
-        ProximaValue::UInt16(v) => serde_json::json!(v),
-        ProximaValue::UInt32(v) => serde_json::json!(v),
-        ProximaValue::UInt64(v) => serde_json::json!(v),
-        ProximaValue::Float16(v) => serde_json::json!(*v as f64),
-        ProximaValue::Float32(v) => serde_json::json!(*v as f64),
-        ProximaValue::Float64(v) => serde_json::json!(v),
-        ProximaValue::Boolean(v) => serde_json::json!(v),
-        ProximaValue::Json(value) | ProximaValue::Jsonb(value) => value.clone(),
-        ProximaValue::Array(values) => {
-            serde_json::Value::Array(values.iter().map(proxima_value_to_json).collect())
-        }
-        ProximaValue::Map(values) | ProximaValue::Struct(values) => serde_json::Value::Object(
-            values
-                .iter()
-                .map(|(key, value)| (key.clone(), proxima_value_to_json(value)))
-                .collect(),
-        ),
-        ProximaValue::DenseVector(values) => serde_json::json!(values),
-        ProximaValue::Null => serde_json::Value::Null,
-        other => serde_json::Value::String(format!("{other:?}")),
+        // Typed exotics (Binary/Uuid/ULID/temporals/SparseVector/Decimal)
+        // lower through the ONE shared filter spelling — the old Rust-Debug
+        // strings ("Binary([1, 2, 3])") could never equal a stored value's
+        // rendering, so such parameters silently matched nothing. Structured
+        // values map to their JSON TEXT as a String param — with
+        // to_sql_string quoting both String and Json params, the direct and
+        // literal paths agree on QUOTING (numeric-array text and
+        // UInt64>i64::MAX spellings still differ between them; the literal
+        // path's f32 vector coercion is pre-existing).
+        other => ParameterValue::String(filter_literal_text(proxima_filter_literal(other))),
     }
 }
 
@@ -128,10 +127,6 @@ fn proxima_value_to_f32_vector(value: &ProximaValue) -> Option<Vec<f32>> {
     }
 }
 
-fn sql_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
-}
-
 fn proxima_value_to_sql_literal(value: &ProximaValue) -> Result<String> {
     match value {
         ProximaValue::String(value) | ProximaValue::Symbol(value) => Ok(sql_quote(value)),
@@ -143,27 +138,64 @@ fn proxima_value_to_sql_literal(value: &ProximaValue) -> Result<String> {
         ProximaValue::UInt16(value) => Ok(value.to_string()),
         ProximaValue::UInt32(value) => Ok(value.to_string()),
         ProximaValue::UInt64(value) => Ok(value.to_string()),
-        ProximaValue::Float16(value) | ProximaValue::Float32(value) => Ok(value.to_string()),
-        ProximaValue::Float64(value) => Ok(value.to_string()),
+        // Non-finite floats have no SQL literal (bare 'NaN' text is a
+        // parse error) — NULL, matching the canonical JSON rendering.
+        ProximaValue::Float16(value) | ProximaValue::Float32(value) => Ok(if value.is_finite() {
+            value.to_string()
+        } else {
+            "NULL".to_string()
+        }),
+        ProximaValue::Float64(value) => Ok(if value.is_finite() {
+            value.to_string()
+        } else {
+            "NULL".to_string()
+        }),
         ProximaValue::Boolean(value) => Ok(if *value { "TRUE" } else { "FALSE" }.to_string()),
-        ProximaValue::DenseVector(values) => Ok(sql_quote(&serde_json::to_string(values)?)),
-        ProximaValue::Array(values) => {
+        // Vector literals render via float text (serde_json nulls
+        // non-finite elements and our own parse_vector_literal rejects
+        // null — 'NaN' text parses fine; both binding paths agree).
+        ProximaValue::DenseVector(values) => Ok(sql_quote(&format!(
+            "[{}]",
+            values
+                .iter()
+                .map(|f| f.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        ))),
+        ProximaValue::Array(_) => {
             if let Some(vector) = proxima_value_to_f32_vector(value) {
-                Ok(sql_quote(&serde_json::to_string(&vector)?))
+                Ok(sql_quote(&format!(
+                    "[{}]",
+                    vector
+                        .iter()
+                        .map(|f| f.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )))
             } else {
-                Ok(sql_quote(&serde_json::to_string(&proxima_value_to_json(
-                    &ProximaValue::Array(values.clone()),
-                ))?))
+                Ok(sql_quote(&filter_literal_text(proxima_filter_literal(
+                    value,
+                ))))
             }
         }
-        ProximaValue::Json(value) | ProximaValue::Jsonb(value) => {
-            Ok(sql_quote(&serde_json::to_string(value)?))
-        }
-        ProximaValue::Map(_) | ProximaValue::Struct(_) => Ok(sql_quote(&serde_json::to_string(
-            &proxima_value_to_json(value),
-        )?)),
+        // Json/Jsonb and Map/Struct flow through the exotic catch-all:
+        // their literals must render exactly what the filter evaluator
+        // renders on the stored side (a root-string Json lowers to BARE
+        // text there — the old serde_json spelling embedded the quotes
+        // and could never match).
         ProximaValue::Null => Ok("NULL".to_string()),
-        other => Ok(sql_quote(&format!("{other:?}"))),
+        // Typed exotics: the shared filter spelling (dashed Uuid, int-array
+        // Binary, canonical sparse object) — the Debug fallback could never
+        // equal a stored rendering. Strings come out BARE (double-quoting
+        // the JSON text embedded the quotes in the literal itself). KNOWN
+        // GAPS (tracked in TD-PROTO-2, dialect-dependent): temporals splice
+        // as quoted epoch-numbers, and Binary/SparseVector splice as quoted
+        // JSON text — parseable SQL on every engine, but equality against a
+        // native binary/timestamp column needs the per-dialect literal form
+        // (e.g. ISO-8601 text for Postgres-style engines).
+        other => Ok(sql_quote(&filter_literal_text(proxima_filter_literal(
+            other,
+        )))),
     }
 }
 
@@ -347,11 +379,18 @@ fn uql_to_federated_sql(
             if vector.is_empty() {
                 return Err(anyhow!("UQL vector query parameter cannot be empty"));
             }
-            let vector_json = serde_json::to_string(&vector)?;
+            // Float text, not serde_json (serde nulls non-finite
+            // elements and parse_vector_literal rejects null — 'NaN'
+            // text parses; matches the literal and param paths).
+            let vector_text = vector
+                .iter()
+                .map(|f| f.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
             Ok(Some(format!(
                 "SELECT * FROM VECTOR_SEARCH({}, {}, {})",
                 sql_quote(&select.from.collection),
-                sql_quote(&vector_json),
+                sql_quote(&format!("[{vector_text}]")),
                 limit
             )))
         }
@@ -771,7 +810,9 @@ fn json_to_multi_model_sql(req: &serde_json::Value) -> Option<String> {
                 let top_k = config.get("top_k").and_then(|v| v.as_u64()).unwrap_or(10);
                 format!(
                     "SELECT * FROM VECTOR_SEARCH('{}', '[{}]', {})",
-                    collection, query_vec, top_k
+                    escape_sql_text(collection),
+                    query_vec,
+                    top_k
                 )
             }
             "document" => {
@@ -785,7 +826,8 @@ fn json_to_multi_model_sql(req: &serde_json::Value) -> Option<String> {
                     .unwrap_or("1=1");
                 format!(
                     "SELECT * FROM DOCUMENT_QUERY('{}', '{}')",
-                    collection, filter
+                    escape_sql_text(collection),
+                    escape_sql_text(filter)
                 )
             }
             "graph" => {
@@ -793,14 +835,14 @@ fn json_to_multi_model_sql(req: &serde_json::Value) -> Option<String> {
                     .get("cypher")
                     .and_then(|v| v.as_str())
                     .unwrap_or("MATCH (n) RETURN n LIMIT 10");
-                format!("SELECT * FROM GRAPH_QUERY('{}')", cypher)
+                format!("SELECT * FROM GRAPH_QUERY('{}')", escape_sql_text(cypher))
             }
             "observability" => {
                 let namespace = config
                     .get("namespace")
                     .and_then(|v| v.as_str())
                     .unwrap_or("default");
-                format!("SELECT * FROM LOGS('{}')", namespace)
+                format!("SELECT * FROM LOGS('{}')", escape_sql_text(namespace))
             }
             _ => continue,
         };

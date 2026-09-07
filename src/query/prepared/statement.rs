@@ -145,20 +145,45 @@ impl From<serde_json::Value> for ParameterValue {
     }
 }
 
+/// Single-quote SQL text with '' escaping — the ONE quoting rule shared by
+/// every parameter splice (String/Vector/Json) and the literal path in
+/// `unified_query_port_impl` (the direct and literal paths must agree on
+/// quoting for federated equality to be possible at all).
+pub(crate) fn escape_sql_text(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+pub(crate) fn sql_quote(value: &str) -> String {
+    format!("'{}'", escape_sql_text(value))
+}
+
 impl ParameterValue {
     /// Convert to SQL string representation
     pub fn to_sql_string(&self) -> String {
         match self {
-            ParameterValue::String(s) => format!("'{}'", s.replace('\'', "''")),
+            ParameterValue::String(s) => sql_quote(s),
             ParameterValue::Int(i) => i.to_string(),
+            // Non-finite floats have no SQL literal — bare 'NaN'/'inf'
+            // text is a parse error on Postgres-style engines ("column
+            // does not exist"). NULL is valid everywhere and, per SQL
+            // 3VL, compares to nothing — matching the canonical JSON
+            // rendering's null.
+            ParameterValue::Float(f) if !f.is_finite() => "NULL".to_string(),
             ParameterValue::Float(f) => f.to_string(),
             ParameterValue::Bool(b) => if *b { "true" } else { "false" }.to_string(),
             ParameterValue::Null => "NULL".to_string(),
+            // Quoted JSON-array TEXT (brackets kept — both internal
+            // vector parsers require '[' after quote-stripping; non-finite
+            // elements splice as their text inside the quotes — valid SQL,
+            // needs a cast to compare).
             ParameterValue::Vector(v) => {
                 let formatted: Vec<String> = v.iter().map(|f| f.to_string()).collect();
-                format!("[{}]", formatted.join(","))
+                sql_quote(&format!("[{}]", formatted.join(",")))
             }
-            ParameterValue::Json(v) => v.to_string(),
+            // JSON splices QUOTED: bare '[0,1,2]' / '{"x":1}' is a parse
+            // error on every engine (the text may still need a cast to
+            // compare — see the TD-tracked federated literal dialect gap).
+            ParameterValue::Json(v) => sql_quote(&v.to_string()),
         }
     }
 }
@@ -726,7 +751,7 @@ mod tests {
         assert_eq!(ParameterValue::Null.to_sql_string(), "NULL");
         assert_eq!(
             ParameterValue::Vector(vec![0.1, 0.2]).to_sql_string(),
-            "[0.1,0.2]"
+            "'[0.1,0.2]'"
         );
     }
 

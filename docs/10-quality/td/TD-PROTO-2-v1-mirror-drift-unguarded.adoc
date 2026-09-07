@@ -633,6 +633,470 @@ inherent:**
 * Fixed: the Not null-probe resolves once (probe only when the inner
   comparison denied — was double-resolution per record).
 
+**Consolidation landing (2026-09-06, PR fix/sqlvalue-converter-home):**
+the canonical `SqlValue`→JSON *rendering* now lives in ONE place —
+`proximadb_records::conversions::sql_value_to_json` (foundation tier,
+reachable from every crate). Eight sites delegate: arrow_conversion (compat
+re-export), pgwire protocol, REST canonical handlers + document, REST v2
+records (its NaN 500-error path becomes the canonical null rendering),
+query document_adapter, api hybrid, and the storage-common metadata helper
+(its "[binary data]"/"[jsonb data]" placeholders become the canonical
+base64/JSON — REST-visible, deliberate). The contract is pinned by a test
+in records (bytes→base64 "AAH/", NaN→null, Jsonb decode, unset-oneof→null).
+Deliberately NOT consolidated: `sql_value_filter::sql_val_to_json`
+(search-types) — the FILTER LOWERING renders bytes as an int-array for
+comparison semantics; conflating it with rendering would change filter
+behavior. The v1-conformance round-17 note's "two-authority" drift is
+closed for every rendering surface. Review round: two MISSED live copies
+delegated too (api document.rs — bare-hex bytes; the embedded binding —
+"0x"-hex bytes: a THIRD spelling), the hand-rolled base64 replaced by
+kernel's encoder via proto's re-export (equivalence pinned for all padding
+lengths), the arrow_conversion re-export deleted (one import path), all
+stale contract tests re-pinned, and the storage-common helper's
+key-PRESENCE flip documented: an unset oneof previously OMITTED the key;
+it now renders as an explicit null (raptor's experimental-gated Arrow
+cache bytes change shape; consumers see keys they did not before).
+ Correction (review round): the helper's consumers are NOT REST paths —
+raptor's experimental-gated convert_to_arrow_batch (whose "metadata" Utf8
+column nothing reads: only the vector column is consumed) and VIPER's
+caller-less evaluate_metadata_filter_with_config. The placeholder removal
+is correct, but the render is now O(metadata) per record for discarded
+output — dropping the unread column is a follow-up (needs a schema
+decision on the declared field).
+
+**Consolidation review round 2 (2026-09-06):** further census + fixes —
+- v1 simple-filter literals lowered bytes/arrays/objects to
+  BYTES(N)/empty-container placeholders that could never equal the stored
+  side's rendering — equality filters on those types silently matched
+  nothing; literals now lower with the filter-lowering semantics.
+- REST v2 SQL rows rendered Binary as a per-byte int-array (via
+  proxima_to_json) while every other row surface rendered base64 — SQL
+  rows now apply the canonical binary spelling.
+- Raptor row-group metadata: NaN-to-0 is now NaN-to-null; array/object
+  arms use the canonical converter (was the tagged prost envelope).
+- SST column-stats (dead code, zero callers) and the observability bytes
+  stringifier (lossy-UTF-8 to deterministic hex) canonicalized.
+- kernel base64: in-place from_utf8 (no validate-then-clone double
+  allocation on every rendered bytes value).
+**Consolidation review round 3 (2026-09-06):**
+- The filter-lowering copies collapsed: `sql_val_to_json` exported from
+  search-types and `from_v1_simple_filters` delegates — one lowering, the
+  same function the stored side renders through (the round-2 fix had
+  minted two new copies of it).
+- `proxima_value_to_json_canonical` added to records (the
+  ProximaValue-side twin: nested Binary as base64, Uuid/ULID
+  dashed-hex); the SQL-row path delegates — closing the nested-Binary
+  int-array hole and the four-way uuid spelling drift.
+- All eight one-line delegating shims deleted (plain `use` imports) —
+  the production `fn sql_value_to_json` count is one (records); the filter-lowering wrapper is separately named `sql_value_to_filter_literal`, and a pre-existing dead copy sits behind `#![cfg(any())]` in the parity test (revival must import the canonical).
+- Raptor row-group metadata renders only what its typed-column dispatch
+  stores; the observability bytes arm uses `hex::encode` (the crate
+  already depends on it); SST's dead stats fn collapsed to a
+  null-arms + delegate match.
+
+**Consolidation review round 4 (2026-09-06):**
+- v2 API-version binary symmetry restored: /api/v2/sql rows spell binary
+  as the per-byte int-array, matching /api/v2/records' read AND write
+  contract (the round-3 canonical-base64 change broke the SELECT→write
+  round trip inside one API version — base64 stays the v1/pgwire/Arrow
+  convention; v2 keeps its own symmetric int-array spelling until a
+  versioned v3 surface).
+- The canonical Uuid rendering is DASHED (kernel's Uuid helper — one
+  allocation), matching the cross-surface text convention the wrapper's
+  doc names; pinned by canonical_uuid_is_dashed. ULID stays hex (no
+  dash convention exists for it).
+- Raptor's 9-arm match collapsed to one sql_value_to_json call (the
+  round-3 edit had updated 3 arms and left the duplicate standing).
+- from_v1_simple_filters delegates through the exported unset-oneof
+  wrapper (the sentinel re-derived the null rule a third time);
+  orphaned doc comments on the new `use` statements removed.
+
+**Consolidation review round 5 (2026-09-06) — 10 findings: 7 fixed,
+3 dispositioned:**
+- Raptor NaN: the canonical NaN→null would have re-routed NaN rows from
+  numeric_columns into the string `_` arm — shifting every later numeric
+  entry one row in the POSITIONAL columnar layout. Numbers keep their
+  numeric identity in that one local arm (the only deliberate one).
+- v2 SQL rows: Uuid now renders DASHED (the canonical wrapper) matching
+  /api/v2/records' read; Binary stays the v2 int-array spelling (the
+  versioned-surface split) — composed at the one call site.
+- The observability crate's OTHER two bytes stringifiers (group-by keys,
+  tantivy _all) aligned to the same hex as the filter path (was
+  `<bytes:N>` length buckets collapsing distinct values — the exact bug
+  their adjacent JsonbValue comments say was fixed).
+- The stored-side Binary rendering in the filter evaluator aligned to
+  the int-array spelling (was `[binary:N]` — bytes equality filters
+  silently matched nothing on the ProximaTree seam).
+- The exported filter-lowering wrapper renamed
+  sql_value_to_filter_literal (no silent wrong-import trap against
+  records' canonical sql_value_to_json, whose bytes semantics differ).
+- The embedded binding's ProximaValue→JSON twin deleted (delegates to
+  proximadb-embedded-common's existing helper).
+- The contract test's padding loop replaced with hardcoded literals (the
+  loop asserted the same function against itself).
+- Dispositioned: the api observability clone-per-field and the 5-copy
+  sql_object_to_json walk are the tracked owned-entry/object-walk
+  follow-ups; the v2-vs-v1 binary spelling split is the documented
+  versioned-surface policy.
+
+**Consolidation review round 6 (2026-09-06):**
+- Raptor NaN→0 restored (the round-5 'numeric identity' arm was
+  token-identical to the canonical NaN→null — the positional misalignment
+  it claimed to prevent was still live).
+- v2 SQL rows: whole-cell delegation to proxima_to_json (int-array
+  binary at ALL depths — the round-5 composition made nested Binary
+  base64 inside one row) with the Uuid dashed arm composed on top.
+- The observability crate's three stringifiers now share ONE scalar
+  rendering fn (sql_scalar_to_string); container arms stay per-site with
+  comments. The shared Null→"" unifies the group-by bucket spelling with
+  the filter path's convention ("<null>"/"<empty>" no longer diverge from
+  the filter's ""); this changes group-by KEYS for null-valued fields.
+- The document-adapter filter literals lower through
+  sql_value_to_filter_literal (was the RENDERING converter — latent
+  bytes never-match once wired).
+- ULID arm deleted from the canonical wrapper (a no-op duplicate of the
+  fallthrough); its doc corrected (Uuid dashed; ULID hex). Duplicate
+  contract assert removed.
+- Tracked: the Binary stored-side render's per-record allocation
+  (allocation-free native comparison path pending).
+
+**Consolidation review round 7 (2026-09-06):**
+- v2 SQL rows: one recursive local renderer (v2_row_render) — int-array
+  Binary and dashed Uuid at ALL depths (the round-6 compose left nested
+  uuids undashed inside one response).
+- The filter evaluator's Uuid/ULID arm rendered the Rust Debug string
+  '[85, 14, …]' — no literal could ever match; Uuid now renders dashed
+  (kernel helper), ULID hex.
+- The observability REST log response's wire shape changed with the
+  round-6 delegation (bytes/arrays/objects were clamped to null; now
+  base64/real containers) — recorded here as deliberate: null-clamping
+  was the silent-data-loss bug class, the new shapes match every other
+  surface.
+- The attribute-filter null spelling changed 'null' → '' with the shared
+  scalar fn (filter and group-by now agree; recorded).
+- Dead post-early-return arms removed from the stringifiers (mod,
+  tantivy); service.rs's trace-attribute stringifier delegates to the
+  shared fn (bytes/Jsonb were silently dropped by its wildcard).
+- Round-6 residue fixed: the ULID no-op arm, doc, and duplicate assert
+  (the round-6 TD entry recorded edits that had not landed — this round
+  landed them).
+- Tracked: pgwire text_encode and proxima_arrow format_uuid hand-roll
+  the dashed form (pgwire also dashes ULIDs — a live cross-surface
+  disagreement); a converter-count guard script for CI.
+
+**Consolidation review round 8 + round 9 (2026-09-06):**
+Round 8 (9 confirmed findings) corrected the round-6/7 unification — it had
+over-consolidated arms the four observability stringifier sites never agreed
+on. The shared scalar fn now covers EXACTLY the pre-consolidation agreement
+(String/Int64/Number/Bool text; Jsonb → JSON text; bytes → lossy UTF-8, the
+live attribute-filter matching spelling); null/unset/containers return None
+and every site spells its own policy, restored verbatim from develop:
+- mod.rs (attribute matching): null 'null', unset '', '[array]'/'{object}'.
+- logs.rs (group-by keys): '<null>'/'<empty>'/'<bytes:N>' buckets — three
+  DISTINCT buckets (the round-7 comment claiming they were never distinct
+  was wrong; collapsing null with '' changed bucket counts).
+- tantivy: bytes '<bytes:N>' placeholder, null/unset '', containers
+  RECURSED (the round-7 scalar-only flattening dropped depth-2+ tokens
+  from the _all index — caught by review, regression test added).
+- service.rs (trace attrs): null/unset/containers still DROP (persisting
+  '' made null indistinguishable from empty and created new matches);
+  bytes/Jsonb render (deliberate round-6 improvement, kept).
+Other round-8/9 fixes:
+- SparseVector filter literal: canonical {indices, values} object (was a
+  '[sparse_vector]' placeholder no literal could match — same bug class
+  rounds 5-7 fixed for Binary/Uuid).
+- The unified-query-port literal family (proxima_value_to_sql_literal /
+  _to_param / _to_json) delegated to the shared filter spelling — its
+  Rust-Debug wildcards ('Binary([1, 2, 3])') bound literals that could
+  never equal a stored rendering.
+- records' proxima_value_to_json_canonical DELETED (zero production
+  callers since round 7's v2_row_render; its doc invited a future
+  delegation that would re-break the v2 binary round-trip). v2_row_render
+  trimmed to the single dashed-Uuid-at-depth override over proxima_to_json;
+  depth-consistency pinned by test.
+- New pins: search-types exotic_filter_literals_render_matchably (bytes
+  int-array, Uuid dashed, ULID hex, sparse object), v2_row_render depth
+  test, tantivy nested-container test.
+- Tracked (cross-seam): the dashed-Uuid literal spelling holds on the
+  ProximaTree seam only — crossing the v1 SqlValue bridge
+  (proxima_to_sql_value → BytesValue) loses the type and the SqlValue
+  seam renders raw bytes, so the same stored uuid needs a different
+  literal per engine until the bridge is type-preserving.
+- Tracked (perf): the Binary stored-side int-array render allocates one
+  serde_json::Value per byte per record on scans; an allocation-free
+  native bytes comparison needs the resolved-field contract to carry
+  bytes natively (evaluate_filter_resolved's resolver returns a rendered
+  Value today) — its own PR now that the renderings share one home.
+- Tracked (on-disk): the ArrowBlock SST bridge's private
+  proxima_value_to_json falls through to serde-of-enum
+  ({'Uuid': [...]}), losing exotic type identity across a write→read
+  cycle (pre-existing); fixing it is a graph-format change under the
+  mixed-read-safe migration discipline, not a consolidation edit.
+
+**Consolidation review round 10 (2026-09-06):**
+- A parallel session's equivalent null/nested-semantics fix was
+  cherry-picked (its group-by null-bucket + tantivy nested tests kept;
+  authorship preserved on the shared branch).
+- Tantivy's bytes placeholder now PRE-EMPTS the shared fn (the early
+  return rendered bytes as lossy content first, leaving the '<bytes:N>'
+  arm dead — the round-9 restoration had not actually landed for that
+  arm).
+- The embedded binding's two Rust-Debug wildcards (proxima_value_to_string
+  in binding/embedded, proxima_value_to_json in embedded-common) delegate
+  to records' canonical API-facing rendering — re-created for this caller
+  (base64 binary, dashed uuid; v2 REST still must not use it — int-array
+  binary there). Exotic-typed metadata through the Python API previously
+  rendered 'Uuid([85, 14, …])'.
+- ULID hex render is single-pass (the per-byte format! allocated one
+  intermediate String per byte on the per-record filter path).
+- Tracked (federated temporals): the unified-port SQL literal renders
+  temporals as quoted epoch-numbers; the matchable literal is
+  dialect-dependent (ISO-8601 text for Postgres-style engines) — needs a
+  per-dialect decision, not a silent swap.
+
+**Consolidation review round 11 (2026-09-06):**
+- Build break: deleting the embedded binding's local json fn without a
+  re-export broke the python feature compile (CI's SDK legs are commented
+  out, so only review caught it) — re-export added.
+- The unified-port exotic SQL literal DOUBLE-QUOTED string-rendering
+  exotics (serde_json::to_string embeds the quotes inside sql_quote) —
+  uuid/ulid literals could still never match; strings now come out bare.
+- RAPTOR READ PATH: the canonical switch renders NaN metadata as JSON
+  null and json_to_proto_metadata DROPS nulls — the key silently vanished
+  from point reads. The helper pre-arms non-finite floats as their string
+  spelling ('NaN'/'inf'), the round-trip form this site always had.
+- The embedded binding's Binary arm still rendered a '<N bytes>'
+  placeholder (content unrecoverable, inconsistent with nested base64) —
+  deleted; containers + exotics all flow through the canonical fallback.
+- embedded-common's fn collapsed to a one-line canonical delegation (its
+  arm-for-arm copy was a new split-brain converter).
+- records' proxima_to_json Uuid/ULID hex is single-pass (same fix as
+  search-types; this one sits on the v2 row-render path).
+- The canonical fn's doc now names its FULL caller set — the root crate's
+  legacy v1 REST search path reaches it transitively
+  (proxima_values_to_json_map → embedded-common); the legacy REST exotic
+  rendering changed from Rust-Debug to base64/dashed/epoch with round 10.
+- v2 records read spelling pinned by test (int-array binary + dashed
+  uuid — the intra-version symmetry with v2_row_render was unguarded);
+  v2_row_render's doc no longer overclaims temporal symmetry.
+- Tracked: the converter-count guard script for CI (still not landed);
+  aligning v2 SQL temporal rendering with the records read path's typed
+  objects (a contract change, not a cleanup).
+
+**Consolidation review round 12 (2026-09-06):**
+- LIVE regression (rounds 1-11 missed it): the exotic ParameterValue::Json
+  params spliced into prepared-statement SQL UNQUOTED (to_sql_string) —
+  bare '[0,1,2]' is a parse error on every engine (develop's Debug string
+  was at least quoted). Structured exotics now map to their JSON TEXT as
+  a String param.
+- The trace-attribute site renders bytes as HEX, not the shared fn's
+  lossy UTF-8 — lossy writes U+FFFD irreversibly into PERSISTED spans;
+  the lossy spelling is for the filter-matching path only.
+- ~22 v2 records.rs converter tests deleted (ten render pins + two
+  roundtrip families duplicating records' canonical contract pins —
+  per-site contract tests duplicating the canonical pins are the drift
+  this TD exists to delete; the v2-local parse-direction tests and the
+  v2 symmetry pin stay).
+- The caller-less evaluate_metadata_filter_with_config (viper) DELETED —
+  it rendered the STORED side through the rendering converter while
+  literals lower through the filter spelling: a pre-conflated
+  never-match trap waiting for its first caller.
+- kernel's Uuid::to_simple_string is single-pass (the per-byte format!
+  pattern).
+- Tracked: (a) raptor NaN has three spellings across its two write
+  layouts (rowgroup columnar 0, Arrow-cache 'NaN' string, canonical
+  null) — the layouts have different consumers, but compaction moving a
+  record between them flips the value; unifying is a raptor-internal
+  layout change. (b) metadata_item::Value has no null variant —
+  explicit-null metadata keys drop on the raptor read path (pre-existing;
+  proto-level gap). (c) ONE parameterized ProximaValue renderer
+  (binary/uuid spelling policy enum) to absorb the four recursions
+  (canonical, filter, v2 REST typed, v2_row_render) — natural companion
+  to the tracked parse-direction consolidation. (d) the four plain-hex
+  formatters (records loop, search-types loop, kernel to_simple_string,
+  data-model jsonb fallback) want one home in kernel.
+
+**Consolidation review round 13 (2026-09-06):**
+- The round-12 param-splice fix was at the wrong altitude: Json/Jsonb/
+  Array/Map params (and the REST multimodal producer) still spliced
+  UNQUOTED. Fixed at the one splice point every producer flows through:
+  ParameterValue::to_sql_string's Json arm quotes; non-finite Float
+  params splice NULL (bare 'NaN' text is a parse error on Postgres-style
+  engines).
+- The SST/RAPTOR extractor rendered API metadata through the
+  FILTER-lowering converter (binary int-array where every other v1 API
+  surface returns base64) — now the canonical rendering, including a
+  canonical tree walk for Object subtrees.
+- Bytes moved OUT of the observability shared scalar fn (the one scalar
+  arm the four sites disagree on): attribute matching spells lossy
+  content, group-by/tantivy placeholders, trace persistence hex — no
+  destructive default for future call sites.
+- records gained proxima_value_to_json_canonical_owned (moves String/
+  Json/container contents; the by-ref fn deep-cloned per call — embedded
+  search results paid it per result × per field); embedded-common uses
+  it. sql_val_to_json re-privatized (zero external callers; the export
+  invited bypassing the unset-oneof wrapper). The embedded stringifier
+  cut to its load-bearing arms; python.rs imports embedded-common
+  directly (the cfg-gated re-export aliased a name CI never compiles).
+- Tracked (added to the resolved-field-contract item): bytes filter
+  OP-SEMANTICS — rendered as arrays, bytes flow into compare_json_op's
+  array arms, so IN/NOT-IN/CONTAINS take byte-level element-membership
+  semantics that can contradict Equals; op-aware bytes routing needs the
+  same contract change as the allocation-free path.
+
+**Consolidation review round 14 (2026-09-06):**
+- REVERTED round 13's extractor switch: the SST/RAPTOR extractor's JSON
+  is a REHYDRATION format (the AXIS consumer re-parses it into
+  ProximaValue), so the FILTER spelling keeps extraction-recovered
+  records filtering identically to live ones — the canonical base64
+  string rehydrated as String and silently diverged (Binary → int-array
+  on live records vs 'AAEC' on recovered ones). Display surfaces read
+  the canonical converter; this extractor does not.
+- ParameterValue::to_sql_string's Vector arm quotes (the same
+  unquoted-array parse-error class the Json-arm fix closed).
+- The Python binding's get_vector props walk is OWNED (mem::take +
+  into_iter) — each leaf flowed into the owned canonical converter via
+  a full deep clone, the exact cost the owned twin exists to remove.
+- Doc corrections: the unified-port paths agree on QUOTING, not
+  byte-identity (numeric-array text and UInt64>i64::MAX spellings still
+  differ — the literal path's f32 coercion is pre-existing); the Python
+  float arms keep Rust Display text (finite f32s differ from canonical
+  JSON's f64 widening — deliberate surface spelling); the observability
+  shared fn's doc no longer claims a bytes default; the filter-spelling
+  import in the unified port is aliased proxima_filter_json (an
+  identically-named canonical renderer exists — the wrong-import trap).
+- Tracked: substitute_parameters does a global '$N' str::replace — it
+  rewrites placeholders inside single-quoted literals and can clobber
+  $10 via $1's prefix (pre-existing; needs a tokenizer, its own test
+  surface). Span attributes persisted as text (hex bytes, JSON text)
+  read back as StringValue — shape divergence recorded here (strictly
+  better than the old silent drop; REST trace endpoints are 501).
+
+**Consolidation review round 15 (2026-09-06):**
+- Round 14's Vector quoting dropped the '[...]' brackets — the branch's
+  own test_parameter_value_to_sql proved it (both internal vector
+  parsers require '[' after quote-stripping). Now sql_quote of the
+  bracketed text, matching the literal path; ONE shared sql_quote
+  (query::prepared::statement, pub(crate)) replaces four inline copies
+  across the two paths.
+- The by-ref proxima_value_to_json_canonical deleted (zero production
+  callers once embedded-common moved to the owned twin — the dead-twin
+  class rounds 8/9 deleted, re-shipped by round 10). The owned twin is
+  THE canonical; the dashed-uuid pin points at it; Symbol/Decimal got
+  move arms.
+- Tantivy's stringifier flattened to the early-return shape; mod.rs's
+  dead unset arm merged into the wildcard; the filter-spelling import
+  moved to the top import block; the literal Array arm stopped
+  deep-cloning the array to re-wrap it by reference.
+- Tracked: v2 SQL rows key by BARE column name — duplicate result
+  columns (self-joins) collapse silently in the row objects while
+  response.columns lists both (pre-existing keying on the line this PR
+  rewrote; positional pgwire unaffected; fixing means a response-shape
+  decision — disambiguated keys vs array rows). Extractor-family
+  rehydration divergence: helix/swift render the canonical spelling and
+  raptor a raw prost envelope while SST renders the filter spelling —
+  all feed the same AXIS rehydration, so recovered-record filtering
+  diverges per engine until the family converges (pre-existing,
+  byte-identical to develop).
+
+**Consolidation review round 16 (2026-09-06):**
+- The filter renderer RENAMED proxima_value_to_json →
+  proxima_value_to_filter_literal (the ProximaValue twin of round 3's
+  sql_value_to_filter_literal rename) — the generic name collided with
+  embedded-common's canonical fn of the same name, the wrong-import
+  trap six unaliased importers carried.
+- The multimodal UQL producers ESCAPE the spliced DOCUMENT_QUERY filter
+  and GRAPH_QUERY cypher (a single quote in either broke out of the SQL
+  string literal — pre-existing injection vector in the file this PR
+  brought sql_quote into; escape_sql_text split out beside it).
+- Dashed uuids render via to_hyphenated_string directly (one
+  allocation; Display wrapped it in a second fmt allocation) at the
+  three sites the PR introduced.
+- Dead convert_metadata_to_fields (executor) deleted (round-12
+  precedent: a dead fn rendering DISPLAY through the filter spelling is
+  a pre-conflated trap for its first future caller). The embedded
+  stringifier's redundant String/Json arms deleted (byte-identical to
+  the canonical fallback). The bare-text unwrap hoisted to ONE in-file
+  helper (filter_literal_text) for the param + literal paths.
+- Tracked: (a) the v1 unversioned hybrid REST SQL surface changed its
+  NaN/inf cell spelling Number(0) → null with the canonical delegation
+  — a wire-shape change on a surface with no version boundary; recorded
+  here, clients doing non-null-checked numeric arithmetic see null.
+  (b) group-by sentinel spellings ('<null>', '<bytes:N>', …) collide
+  with real StringValues of the same text (inherent to the develop
+  spellings; untracked until now). (c) sql_quote wants a foundation-crate
+  home — four other splice sites (pgwire $N substitution,
+  information_schema, two cypher splices) still hand-roll the rule.
+  (d) the literal lowering wants derivation from the param lowering
+  (two ~25-arm matches with documented drift: bool TRUE/true, UInt64
+  overflow bare/quoted) — extends the tracked parameterized-renderer
+  item.
+
+**Consolidation review round 17 (2026-09-06):**
+- Round 16's escaping covered only 2 of the 4 multimodal splice arms —
+  VECTOR_SEARCH collection and LOGS namespace now escaped too.
+- Vector LITERALS render via float text (serde_json nulls non-finite
+  elements and parse_vector_literal rejects null — '[NaN]' text parses;
+  both binding paths now agree; the round-13 'valid SQL' comment was
+  false on the ?-path).
+- The literal path's Json/Jsonb + Map/Struct arms folded into the exotic
+  catch-all — their serde_json spellings could never match the stored
+  filter rendering (a root-string Json lowers to BARE text there).
+- Embedded's Json arm RESTORED (round 16 deleted it as 'byte-identical'
+  — false for a root-string Json document: the bare unwrap returned
+  hello where every consumer expects '"hello"'; Python json.loads broke).
+- Tracked: (a) the escaped splices round-trip LOSSY — no downstream
+  consumer un-escapes '' (DocumentStrategy's trim_matches eats trailing
+  escaped quotes; the federated quote-toggle splitter mis-phases on '');
+  escaping closed the injection vector, the unescape is a parser change
+  on those two consumers. (b) query_vector's filter_map silently drops
+  non-numeric elements (dimension mismatch downstream instead of a
+  rejected request). (c) the v1 hybrid REST SQL bytes cell ALSO changed
+  (int-array → base64, test re-pinned to 'AQI=') — the round-16 note
+  recorded only the NaN half of this surface's wire change. (d) the
+  service.rs trace-hex loop is a FIFTH hex site — added to the tracked
+  kernel-unification inventory.
+
+**Consolidation review round 18 (2026-09-06):**
+- The REST TWIN of the multimodal SQL builder (convert_multi_model_to_sql,
+  /api/v1/unified/multi-model) escaped at all four unescaped arms — the
+  round-17 fix covered only the port-side builder; the two 'mirrors'
+  disagreed on escaping.
+- Json PARAMS lower to the same filter-literal text as the literal path
+  (the ParameterValue::Json splice embedded double quotes for root-string
+  documents — the exact never-match spelling round 17 folded out of the
+  literal path).
+- The UQL VECTOR_SEARCH splice renders vector text via floats (was
+  serde_json — nulls non-finite elements, our parser rejects null).
+- Embedded's Float16 joined the deliberate Rust-Display float arms (it
+  fell to the canonical fallback and widened differently than its
+  sibling floats on the same surface).
+- legacy.rs's alias+shim indirection dropped (the in-method 'as
+  proxima_value_to_json' alias recreated the wrong-import trap the
+  round-16 rename eliminated).
+- Tracked (security note): fixing the never-match exotic spellings flips
+  DEPLOYED ABAC/RLS predicates on exotic-typed attributes from constant
+  (never matched ⇒ deny) to value-dependent — the rule author's intent,
+  but an access-posture change with no migration note. Same class: NDV
+  statistics for binary/sparse columns (same-length values previously
+  collapsed to one distinct count; now per-content) — join-plan
+  cardinalities change with no data change. The documents() props-column
+  spelling (pax provider + cross_modal) changed with the arm fixes —
+  recorded here, pinned nowhere. The REST/gRPC parity harness carries a
+  TENTH converter (int-array bytes, NaN→0) that now disagrees with both
+  surfaces it reconciles — latent (mock strategies return only
+  strings/numbers). filter_literal_text vs the embedded catch-all unwrap
+  remain two homes (policies intentionally differ: Json stays
+  JSON-quoted on the Python surface) — folds into the tracked
+  parameterized-renderer item.
+
+- Tracked (follow-up scale): the JSON-to-SqlValue PARSE direction still
+  has 4+ hand-rolled copies with divergent number fallbacks (nullify /
+  stringify / drop) — the render consolidation's mirror image, needs its
+  own canonical home; per-site contract tests duplicating records' pinned
+  contract (delete as touched); the owned-input converter entry point
+  (executor/log-response clone-per-field).
+
 **Round 19 follow-up (2026-09-05, PR fix/dot-walker-consolidation):** the
 two unconsolidated dot-path walkers now delegate to the shared
 `json_get_path` — auth `oidc.rs claim_at_path` (OIDC claim traversal) and
