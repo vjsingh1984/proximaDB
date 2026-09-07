@@ -179,6 +179,12 @@ execution; MLflow auth pass-through (tenant identity stays ours).
   conformance battery; structural tenant isolation pinned; concurrent
   metric appends all retained (`tests/mlflow_run_store_test.rs`, wired into
   the storage integration lane's explicit list).
+* **Slice 1 adversarial review (2026-09-06)**: rebased onto current `develop`;
+  removed the production panic on a poisoned process-global lock; corrected
+  strict-Clippy doc/mutability failures; and made existing tracking documents
+  with absent or non-string payloads fail as corruption instead of masquerading
+  as unknown records or disappearing from indexed listings. Both regressions
+  are pinned by focused red-to-green tests.
 
 == Next action
 
