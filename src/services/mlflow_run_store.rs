@@ -9,11 +9,11 @@
 //! Document layout (one collection per tenant):
 //! * `meta`              — `{next_experiment_id}`
 //! * `exp-{id}`          — experiment record (serde JSON in `payload` +
-//!                          indexed `name` / `stage` fields)
+//!   indexed `name` / `stage` fields)
 //! * `run-{run_id}`      — run record (payload + indexed `experiment_id` /
-//!                          `stage` / per-run append counters)
+//!   `stage` / per-run append counters)
 //! * `mtr-{run}-{seq}`   — one append-only metric sample (indexed `run_id`,
-//!                          `key`, `seq`) — history is a filtered query
+//!   `key`, `seq`) — history is a filtered query
 //! * `ds-{run}-{n}`      — dataset lineage input (indexed `run_id`)
 //!
 //! Mutations serialize under one process mutex: tracking is low-frequency
@@ -38,6 +38,23 @@ use crate::storage::document::{DocumentRecord, DocumentService};
 
 const COLLECTION: &str = "mlflow_tracking_system";
 
+fn lock_unpoisoned<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn payload_json(record: &DocumentRecord) -> Result<&str> {
+    match record.props.get("payload") {
+        Some(ProximaTreeNode::Value(ProximaValue::String(json))) => Ok(json),
+        other => Err(anyhow::anyhow!(
+            "tracking document '{}' has no string payload ({other:?})",
+            record.id
+        )),
+    }
+}
+
 /// Process-global mutation locks keyed by collection: two `for_tenant`
 /// instances over the same (service, tenant) must serialize their RMW
 /// cycles against EACH OTHER, not just themselves.
@@ -46,7 +63,7 @@ fn mutation_lock_for(collection: &str) -> Arc<Mutex<()>> {
         std::sync::Mutex<std::collections::HashMap<String, Arc<Mutex<()>>>>,
     > = std::sync::OnceLock::new();
     let registry = LOCKS.get_or_init(Default::default);
-    let mut guard = registry.lock().unwrap();
+    let mut guard = lock_unpoisoned(registry);
     guard
         .entry(collection.to_string())
         .or_insert_with(|| Arc::new(Mutex::new(())))
@@ -138,11 +155,7 @@ impl SubstrateRunStore {
         else {
             return Ok(None);
         };
-        let Some(ProximaTreeNode::Value(ProximaValue::String(json))) = record.props.get("payload")
-        else {
-            return Ok(None);
-        };
-        Ok(Some(serde_json::from_str(json)?))
+        Ok(Some(serde_json::from_str(payload_json(&record)?)?))
     }
 
     async fn next_experiment_id(&self) -> Result<u64> {
@@ -166,13 +179,9 @@ impl SubstrateRunStore {
             .await?;
         let mut records = Vec::new();
         for doc in result.documents {
-            if let Some(ProximaTreeNode::Value(ProximaValue::String(json))) =
-                doc.props.get("payload")
-            {
-                let record: ExperimentRecord = serde_json::from_str(json)
-                    .with_context(|| format!("corrupt experiment doc '{}'", doc.id))?;
-                records.push(record);
-            }
+            let record: ExperimentRecord = serde_json::from_str(payload_json(&doc)?)
+                .with_context(|| format!("corrupt experiment doc '{}'", doc.id))?;
+            records.push(record);
         }
         records.sort_by_key(|r| r.experiment_id);
         Ok(records)
@@ -201,13 +210,9 @@ impl SubstrateRunStore {
             .await?;
         let mut records = Vec::new();
         for doc in result.documents {
-            if let Some(ProximaTreeNode::Value(ProximaValue::String(json))) =
-                doc.props.get("payload")
-            {
-                let record: RunRecord = serde_json::from_str(json)
-                    .with_context(|| format!("corrupt run doc '{}'", doc.id))?;
-                records.push(record);
-            }
+            let record: RunRecord = serde_json::from_str(payload_json(&doc)?)
+                .with_context(|| format!("corrupt run doc '{}'", doc.id))?;
+            records.push(record);
         }
         records.sort_by_key(|r| r.start_time_ms);
         Ok(records)
@@ -582,7 +587,7 @@ impl RunStore for SubstrateRunStore {
         input: RunDatasetInput,
     ) -> Result<(), RunStoreError> {
         let _guard = self.mutation_lock.lock().await;
-        let (mut run, mut counters) = self.run_with_counters(run_id).await?;
+        let (run, mut counters) = self.run_with_counters(run_id).await?;
         let n = counters.get("ds").copied().unwrap_or(0) + 1;
         counters.insert("ds".to_string(), n);
         self.put_run(&run, &counters).await.map_err(Self::err)?;
@@ -709,4 +714,26 @@ fn counter_key(key: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::lock_unpoisoned;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn poisoned_registry_lock_is_recovered_without_panicking() {
+        let registry = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let poison_target = Arc::clone(&registry);
+        let _ = std::thread::spawn(move || {
+            let _guard = poison_target
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            panic!("poison registry for recovery test");
+        })
+        .join();
+
+        lock_unpoisoned(&registry).push(7);
+        assert_eq!(*lock_unpoisoned(&registry), vec![7]);
+    }
 }

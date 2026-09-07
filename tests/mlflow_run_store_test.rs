@@ -6,9 +6,9 @@
 use std::sync::Arc;
 
 use proximadb::services::mlflow_run_store::SubstrateRunStore;
-use proximadb::storage::document::DocumentService;
+use proximadb::storage::document::{DocumentRecord, DocumentService};
 use proximadb::storage::engines::sst::SstEngine;
-use proximadb_catalog::run_store::RunStore;
+use proximadb_catalog::run_store::{RunStore, RunStoreError};
 
 #[tokio::test]
 async fn substrate_run_store_passes_port_conformance() {
@@ -113,4 +113,33 @@ async fn substrate_run_store_isolates_tenants_structurally() {
     assert_eq!(beta_runs[0].run_id, "run-b");
     assert!(beta.get_run("run-a").await.is_err());
     assert!(alpha.get_run("run-b").await.is_err());
+}
+
+#[tokio::test]
+async fn existing_run_without_payload_is_reported_as_corrupt_not_unknown() {
+    let engine = Arc::new(SstEngine::new().await.unwrap());
+    let document = Arc::new(DocumentService::new(engine));
+    let store = SubstrateRunStore::for_tenant(document.clone(), "default").unwrap();
+    store
+        .create_experiment("ensure-tracking-collection", None, Default::default())
+        .await
+        .unwrap();
+
+    let corrupt = DocumentRecord::from_tree(
+        "run-corrupt".to_string(),
+        Default::default(),
+        "mlflow_tracking_system".to_string(),
+        None,
+        Some("mlflow_tracking_system".to_string()),
+    );
+    document
+        .insert_document_record("mlflow_tracking_system", corrupt)
+        .await
+        .unwrap();
+
+    let error = store.get_run("corrupt").await.unwrap_err();
+    assert!(
+        matches!(error, RunStoreError::Internal { .. }),
+        "existing corrupt records must not masquerade as unknown: {error:?}"
+    );
 }
