@@ -18,31 +18,21 @@ T = TypeVar("T", bound="UnifiedDistributedRequest")
 
 @_attrs_define
 class UnifiedDistributedRequest:
-    """Like the federated request, plus an optional row limit the impl
-    applies to the distributed result.
+    """A distributed query plus an optional row limit the implementation
+    applies to the result. Parameter binding is not supported on this
+    operation; use the federated or prepared surface when needed.
 
         Attributes:
             query (str):
-            parameters (list[Any] | None | Unset):
             limit (int | None | Unset):
     """
 
     query: str
-    parameters: list[Any] | None | Unset = UNSET
     limit: int | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         query = self.query
-
-        parameters: list[Any] | None | Unset
-        if isinstance(self.parameters, Unset):
-            parameters = UNSET
-        elif isinstance(self.parameters, list):
-            parameters = self.parameters
-
-        else:
-            parameters = self.parameters
 
         limit: int | None | Unset
         if isinstance(self.limit, Unset):
@@ -57,8 +47,6 @@ class UnifiedDistributedRequest:
                 "query": query,
             }
         )
-        if parameters is not UNSET:
-            field_dict["parameters"] = parameters
         if limit is not UNSET:
             field_dict["limit"] = limit
 
@@ -68,23 +56,6 @@ class UnifiedDistributedRequest:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
         query = d.pop("query")
-
-        def _parse_parameters(data: object) -> list[Any] | None | Unset:
-            if data is None:
-                return data
-            if isinstance(data, Unset):
-                return data
-            try:
-                if not isinstance(data, list):
-                    raise TypeError()
-                parameters_type_0 = cast(list[Any], data)
-
-                return parameters_type_0
-            except (TypeError, ValueError, AttributeError, KeyError):
-                pass
-            return cast(list[Any] | None | Unset, data)
-
-        parameters = _parse_parameters(d.pop("parameters", UNSET))
 
         def _parse_limit(data: object) -> int | None | Unset:
             if data is None:
@@ -97,7 +68,6 @@ class UnifiedDistributedRequest:
 
         unified_distributed_request = cls(
             query=query,
-            parameters=parameters,
             limit=limit,
         )
 

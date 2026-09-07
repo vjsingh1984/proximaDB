@@ -635,9 +635,9 @@ impl OidcTokenVerifier {
 /// if any segment is missing or not an object. A path with no dots is a
 /// simple top-level lookup (unchanged behavior).
 pub fn claim_at_path<'a>(root: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
-    // TD-PROTO-2 follow-up: delegate to the shared dot-path walker —
-    // identical semantics (object-only segments; non-objects dead-end), one
-    // home for future traversal rules (array indices, escapes).
+    // TD-PROTO-2 follow-up: delegate to the shared object-only dot-path
+    // walker. Non-objects, including arrays, remain a dead end so query-side
+    // traversal changes cannot silently broaden authorization semantics.
     proximadb_search_types::sql_value_filter::json_get_path(root, path.split('.'))
 }
 
@@ -799,6 +799,10 @@ mod tests {
         // Missing segments → None (not an error)
         assert!(claim_at_path(&root, "nonexistent.roles").is_none());
         assert!(claim_at_path(&root, "realm_access.nonexistent").is_none());
+        // Authorization paths are object-only: numeric segments do not index
+        // arrays, and scalar values cannot be traversed.
+        assert!(claim_at_path(&root, "groups.0").is_none());
+        assert!(claim_at_path(&root, "tid.child").is_none());
     }
 
     /// C (portability): audience accepts any-of from the list.

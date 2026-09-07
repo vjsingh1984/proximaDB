@@ -57,6 +57,16 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 415:
+        response_415 = ErrorResponse.from_dict(response.json())
+
+        return response_415
+
+    if response.status_code == 422:
+        response_422 = ErrorResponse.from_dict(response.json())
+
+        return response_422
+
     if response.status_code == 500:
         response_500 = ErrorResponse.from_dict(response.json())
 
@@ -103,8 +113,8 @@ def sync_detailed(
     The optional `X-Tenant-ID` header is not consulted by this
     handler beyond the standard tenant middleware context.
     Extractor rejections (malformed JSON, missing required field,
-    wrong content-type) are axum plain-text 400/415/422 — not the
-    JSON envelope.
+    wrong content-type) are normalized to the canonical JSON error
+    envelope with status 400/415/422.
 
     Args:
         x_tenant_id (str | Unset):
@@ -149,8 +159,8 @@ def sync(
     The optional `X-Tenant-ID` header is not consulted by this
     handler beyond the standard tenant middleware context.
     Extractor rejections (malformed JSON, missing required field,
-    wrong content-type) are axum plain-text 400/415/422 — not the
-    JSON envelope.
+    wrong content-type) are normalized to the canonical JSON error
+    envelope with status 400/415/422.
 
     Args:
         x_tenant_id (str | Unset):
@@ -190,8 +200,8 @@ async def asyncio_detailed(
     The optional `X-Tenant-ID` header is not consulted by this
     handler beyond the standard tenant middleware context.
     Extractor rejections (malformed JSON, missing required field,
-    wrong content-type) are axum plain-text 400/415/422 — not the
-    JSON envelope.
+    wrong content-type) are normalized to the canonical JSON error
+    envelope with status 400/415/422.
 
     Args:
         x_tenant_id (str | Unset):
@@ -234,8 +244,8 @@ async def asyncio(
     The optional `X-Tenant-ID` header is not consulted by this
     handler beyond the standard tenant middleware context.
     Extractor rejections (malformed JSON, missing required field,
-    wrong content-type) are axum plain-text 400/415/422 — not the
-    JSON envelope.
+    wrong content-type) are normalized to the canonical JSON error
+    envelope with status 400/415/422.
 
     Args:
         x_tenant_id (str | Unset):

@@ -5,7 +5,7 @@
 [cols="1,3", options="header"]
 |===
 | Field | Value
-| Status | Waves 1-9 landed; wave 10 (unified query) landing
+| Status | Waves 1-10 landed; wave 8 closed the original census, while its expanded router sweep remains tracked for waves 11+
 | Severity | Medium — ~100 route literals across ~15 areas are live on the wire but invisible to every SDK
 | Component | `src/network/rest/openapi_supplement.yaml`; `docs/openapi/proximadb-openapi.yaml`; `clients/*` (regenerated)
 | Relates to | [[TD-SSO-3]] (the census that surfaced the gap); TD-126 (spec-from-code); ADR-041
@@ -339,15 +339,18 @@ Rationalization notes:
   `/aggregate`. Pre-existing, not introduced here — the published spec
   is what makes the divergence visible; the facade fix is a follow-up.
 
-== Wave 8: rank search + program census resolution (landed)
+== Wave 8: rank search + original census resolution (landed)
 
 **Exposed (1 path / 1 operation; spec 79 → 80):**
 `POST /api/v2/rank/search` — the multi-phase ranking pipeline
 (R-7c.1): candidate retrieval (vector + optional BM25 text leg) →
 global composition → optional profile-driven second phase. Retrieval-
 only mode (no `rank_profile`) omits score vectors (NFR-9
-zero-cost-when-unused). Statuses: 200/400/404/501 (RankServices not
-injected — default deployments)/500. Ranked-surface note (mandate 13):
+zero-cost-when-unused). Statuses: 200/400/404/415/422/501 (RankServices
+not injected — non-default constructions)/500. The route normalizes
+axum's 400/415/422 JSON extractor rejections into the canonical error
+envelope so generated clients have one typed error boundary. Ranked-surface
+note (mandate 13):
 the pipeline itself is deterministic; profiles embedding MODEL scorers
 become eval-eligible when they ship.
 
@@ -370,7 +373,7 @@ become eval-eligible when they ship.
   real UQL→SQL→federated queries, `prepare_statement` returns 201 and
   prepared DELETE returns 204). The earlier "ALL return honest 501s"
   premise was stale — the 501 branch fires only on port-error string
-  matches, not by default. Disposition: **live, needs wave-9 exposure**
+  matches, not by default. Disposition: **live, needs a future exposure wave**
   (they are exactly the live-but-unspec'd condition this program
   exists to close; exposing them is a spec+SDK wave, not a wiring
   change).
@@ -389,10 +392,10 @@ become eval-eligible when they ship.
 full router sweep (this review) found ~27 MORE mounted unexposed
 paths beyond the original 15-area census list. The closure is
 corrected to: *wave 8 closes the ORIGINAL census list only*. The
-additional areas now enumerated for waves 9+ (each needs
+additional areas now enumerated for waves 10+ (each needs
 expose/defer/never disposition):
 
-* Document CRUD — api-crate `document.rs`: `/{collection}`
+* **Resolved in wave 9:** Document CRUD — api-crate `document.rs`: `/{collection}`
   GET/DELETE, `/{collection}/documents/{id}` GET/PATCH/DELETE,
   `documents/batch`, `documents/aggregate`, `/{collection}/indexes`
   POST/GET (5 paths / 10 ops; only the 2 free-form passthrough paths
@@ -439,7 +442,7 @@ Rationalization notes:
 * Collection info bodies are open objects (serialized port records).
 * No per-route permission gate; extractor rejections plain text.
 
-== Wave 10: unified query surface (this PR)
+== Wave 10: unified query surface (landed)
 
 **Exposed (9 paths / 9 operations; spec 85 → 94):** the complete
 `/api/v2/unified/*` surface (api-crate `multimodal_query.rs`, mounted
@@ -453,12 +456,16 @@ corrected from "all-501 stubs" to LIVE (the port impl at
 Rationalization notes:
 
 * **BARE error shape, documented as its own schema** — the surface's
-  400/500/501 bodies are `{error: "<string>"}`, NOT the canonical
-  envelope (UnifiedBareError). 400 exists only on execute/federated
-  (empty-query validation).
+  400/415/422/500/501 bodies are `{error: "<string>"}`, NOT the canonical
+  envelope (UnifiedBareError). JSON extractor rejections are normalized
+  into that envelope: malformed JSON is 400, wrong content type is 415,
+  and request-schema failure is 422.
 * **Most success bodies are free-form** (the port returns
   serde_json::Value) — typed where the handler is typed (prepare 201
   {statement_id}); everything else open.
+* The distributed request exposes only `query` and `limit`; the production
+  port does not bind a `parameters` member, so the review removed that
+  previously advertised no-op from every generated SDK.
 * 501 fires only when the port itself returns not-implemented
   (non-default constructions); the default server returns 200s.
 * The wave-8 negative-space ratchet (no /unified paths) is superseded
